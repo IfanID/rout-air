@@ -3,6 +3,7 @@ package com.rout.air.engine
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.Matrix
+import com.rout.air.core.BlendMode
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -29,14 +30,17 @@ class GlCompositor {
     private var externalTexture = 0
     private var externalUvScale = 0
     private var externalUvBias = 0
+    private var externalAlpha = 0
 
     private var textureMvp = 0
     private var textureSampler = 0
     private var textureUvScale = 0
     private var textureUvBias = 0
+    private var textureAlpha = 0
 
     private var colorMvp = 0
     private var colorValue = 0
+    private var colorAlpha = 0
 
     private val quad: FloatBuffer = floatBuffer(
         floatArrayOf(
@@ -78,16 +82,19 @@ class GlCompositor {
         externalTexture = GLES20.glGetUniformLocation(externalProgram, "uTexture")
         externalUvScale = GLES20.glGetUniformLocation(externalProgram, "uUvScale")
         externalUvBias = GLES20.glGetUniformLocation(externalProgram, "uUvBias")
+        externalAlpha = GLES20.glGetUniformLocation(externalProgram, "uAlpha")
 
         textureProgram = GlUtil.compileProgram(VERTEX_TEXTURE, FRAGMENT_TEXTURE)
         textureMvp = GLES20.glGetUniformLocation(textureProgram, "uMvp")
         textureSampler = GLES20.glGetUniformLocation(textureProgram, "uTexture")
         textureUvScale = GLES20.glGetUniformLocation(textureProgram, "uUvScale")
         textureUvBias = GLES20.glGetUniformLocation(textureProgram, "uUvBias")
+        textureAlpha = GLES20.glGetUniformLocation(textureProgram, "uAlpha")
 
         colorProgram = GlUtil.compileProgram(VERTEX_COLOR, FRAGMENT_COLOR)
         colorMvp = GLES20.glGetUniformLocation(colorProgram, "uMvp")
         colorValue = GLES20.glGetUniformLocation(colorProgram, "uColor")
+        colorAlpha = GLES20.glGetUniformLocation(colorProgram, "uAlpha")
     }
 
     fun setCanvasSize(width: Int, height: Int) {
@@ -112,9 +119,13 @@ class GlCompositor {
         cropBottom: Float,
         flipH: Boolean = false,
         flipV: Boolean = false,
+        blend: BlendMode = BlendMode.Normal,
+        opacity: Float = 1f,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(externalProgram)
+        applyBlend(blend)
+        GLES20.glUniform1f(externalAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(externalProgram)
         GLES20.glUniformMatrix4fv(externalMvp, 1, false, mvp, 0)
         GLES20.glUniformMatrix4fv(externalTexMatrix, 1, false, texMatrix, 0)
@@ -148,9 +159,13 @@ class GlCompositor {
         cropBottom: Float,
         flipH: Boolean = false,
         flipV: Boolean = false,
+        blend: BlendMode = BlendMode.Normal,
+        opacity: Float = 1f,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(textureProgram)
+        applyBlend(blend)
+        GLES20.glUniform1f(textureAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(textureProgram, quadUv2D)
         GLES20.glUniformMatrix4fv(textureMvp, 1, false, mvp, 0)
         val scaleU = (1f - cropLeft - cropRight) * if (flipH) -1f else 1f
@@ -178,9 +193,13 @@ class GlCompositor {
         width: Float,
         height: Float,
         rotation: Float,
+        blend: BlendMode = BlendMode.Normal,
+        opacity: Float = 1f,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(colorProgram)
+        applyBlend(blend)
+        GLES20.glUniform1f(colorAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(colorProgram)
         GLES20.glUniformMatrix4fv(colorMvp, 1, false, mvp, 0)
         GLES20.glUniform4f(colorValue, red, green, blue, alpha)
@@ -211,6 +230,26 @@ class GlCompositor {
         Matrix.scaleM(model, 0, width, height, 1f)
         Matrix.multiplyMM(tmp, 0, ortho, 0, model, 0)
         System.arraycopy(tmp, 0, mvp, 0, 16)
+    }
+
+    /**
+     * Menyalakan fungsi pencampuran sesuai mode layer. Pemanggil sudah
+     * mengaktifkan `GL_BLEND`; di sini hanya rumus campurannya yang dipilih.
+     */
+    private fun applyBlend(blend: BlendMode) {
+        when (blend) {
+            BlendMode.Normal -> GLES20.glBlendFunc(
+                GLES20.GL_SRC_ALPHA,
+                GLES20.GL_ONE_MINUS_SRC_ALPHA,
+            )
+
+            BlendMode.Add -> GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE)
+            BlendMode.Screen -> GLES20.glBlendFunc(GLES20.GL_ONE_MINUS_DST_COLOR, GLES20.GL_ONE)
+            BlendMode.Multiply -> GLES20.glBlendFunc(
+                GLES20.GL_DST_COLOR,
+                GLES20.GL_ONE_MINUS_SRC_ALPHA,
+            )
+        }
     }
 
     private fun bindQuad(program: Int, uv: FloatBuffer = quadUvExternal) {
@@ -258,9 +297,11 @@ class GlCompositor {
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             uniform samplerExternalOES uTexture;
+            uniform float uAlpha;
             varying vec2 vTexCoord;
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord);
+                vec4 c = texture2D(uTexture, vTexCoord);
+                gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """
 
@@ -280,9 +321,11 @@ class GlCompositor {
         const val FRAGMENT_TEXTURE = """
             precision mediump float;
             uniform sampler2D uTexture;
+            uniform float uAlpha;
             varying vec2 vTexCoord;
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord);
+                vec4 c = texture2D(uTexture, vTexCoord);
+                gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """
 
@@ -298,8 +341,9 @@ class GlCompositor {
         const val FRAGMENT_COLOR = """
             precision mediump float;
             uniform vec4 uColor;
+            uniform float uAlpha;
             void main() {
-                gl_FragColor = uColor;
+                gl_FragColor = vec4(uColor.rgb, uColor.a * uAlpha);
             }
         """
     }

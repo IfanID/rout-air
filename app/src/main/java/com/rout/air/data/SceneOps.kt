@@ -61,6 +61,40 @@ fun SceneCollection.addSource(source: SceneSource, item: SceneItem): SceneCollec
     )
 }
 
+/**
+ * Menambah sumber Layar ke scene aktif.
+ *
+ * Sumber layar hanya satu untuk seluruh collection (satu tangkapan layar),
+ * tetapi tiap scene punya item sendiri yang menunjuk sumber itu. Jadi
+ * menambah Layar di scene lain **bukan** duplikat sumber: hanya item baru.
+ * Mengembalikan id item baru agar UI bisa langsung memilihnya.
+ */
+fun SceneCollection.addScreenItem(): Pair<SceneCollection, String?> {
+    val scene = activeScene() ?: return this to null
+    // Satu scene hanya boleh punya satu item Layar.
+    val hasScreen = scene.items.any { item ->
+        source(item.sourceId)?.type == SourceType.Screen
+    }
+    if (hasScreen) return this to null
+    val existing = sources.firstOrNull { it.type == SourceType.Screen }
+    val item = SceneItem(
+        sourceId = existing?.id ?: "pending",
+        z = (scene.items.maxOfOrNull { it.z } ?: -1) + 1,
+        // Layar penuh dikunci default agar tidak ikut tergeser.
+        locked = true,
+    )
+    if (existing != null) {
+        val next = copy(
+            scenes = scenes.map {
+                if (it.id == scene.id) it.copy(items = it.items + item) else it
+            },
+        )
+        return next to item.id
+    }
+    val source = SceneSource(type = SourceType.Screen, name = "Layar")
+    return addSource(source, item) to item.id
+}
+
 /** Menghapus sumber sekaligus semua item yang memakainya. */
 fun SceneCollection.removeSource(sourceId: String): SceneCollection = copy(
     sources = sources.filterNot { it.id == sourceId },
@@ -128,3 +162,36 @@ fun SceneCollection.moveLayerToEdge(itemId: String, top: Boolean): SceneCollecti
         scene.copy(items = ordered.mapIndexed { z, item -> item.copy(z = z) })
     },
 )
+
+/**
+ * Menggeser urutan scene di daftar. `delta = -1` ke kiri (lebih awal),
+ * `+1` ke kanan (lebih akhir). Adegan aktif tidak berubah.
+ */
+fun SceneCollection.moveScene(sceneId: String, delta: Int): SceneCollection {
+    val index = scenes.indexOfFirst { it.id == sceneId }
+    if (index < 0) return this
+    val target = (index + delta).coerceIn(0, scenes.lastIndex)
+    if (target == index) return this
+    val ordered = scenes.toMutableList()
+    val moving = ordered.removeAt(index)
+    ordered.add(target, moving)
+    return copy(scenes = ordered)
+}
+
+/**
+ * Menduplikasi scene beserta itemnya. Item baru mendapat id baru tetapi tetap
+ * memakai sumber yang sama (sumber tidak ikut diduplikasi). Salinan
+ * ditempatkan tepat setelah aslinya dan langsung menjadi scene aktif.
+ */
+fun SceneCollection.duplicateScene(sceneId: String, name: String? = null): SceneCollection {
+    val index = scenes.indexOfFirst { it.id == sceneId }
+    if (index < 0) return this
+    val original = scenes[index]
+    val copy = original.copy(
+        id = newId("scene"),
+        name = name ?: "${original.name} (salinan)",
+        items = original.items.map { it.copy(id = newId("item")) },
+    )
+    val ordered = scenes.toMutableList().apply { add(index + 1, copy) }
+    return copy(scenes = ordered, activeSceneId = copy.id)
+}

@@ -67,6 +67,31 @@ object SourceBitmap {
             (bounds.outHeight / sample).coerceAtLeast(1)
     }
 
+    /**
+     * Tinggi teks hasil render tanpa membuat bitmap. Dipakai UI supaya kotak
+     * seleksi dan ukuran asli sumber sama dengan yang benar-benar digambar.
+     */
+    fun measureTextHeight(
+        text: String,
+        textSizeSp: Float,
+        maxWidth: Int,
+        density: Float,
+    ): Int {
+        val safeWidth = maxWidth.coerceIn(64, 8192)
+        val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
+            textSize = textSizeSp * density
+            this.color = Color.WHITE
+            isSubpixelText = true
+        }
+        val content = if (TextUtils.isEmpty(text)) " " else text
+        val layout = StaticLayout.Builder
+            .obtain(content, 0, content.length, paint, safeWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .build()
+        return layout.height.coerceAtLeast(1)
+    }
+
     /** Merender teks menjadi Bitmap transparan memakai StaticLayout. */    fun renderText(
         text: String,
         textSizeSp: Float,

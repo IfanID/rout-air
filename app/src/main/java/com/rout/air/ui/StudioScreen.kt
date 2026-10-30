@@ -45,9 +45,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.core.CaptureConfig
+import com.rout.air.core.Crop
 import com.rout.air.core.RecordingState
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
+import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
 
 /**
@@ -294,6 +296,11 @@ private fun RawPreview(
             onMenuDismiss = { menuTarget = null },
             onCollectionChange = onCollectionChange,
             selection = itemCanvasRect(collection, canvasConfig, selectedItemId),
+            onCropDrag = { id, crop ->
+                collection.item(id)?.let { target ->
+                    onCollectionChange(collection.updateItem(target.copy(crop = crop)))
+                }
+            },
             attach = { surface, width, height ->
                 CaptureEngine.attachPreview(surface, width, height)
             },
@@ -307,6 +314,11 @@ private fun RawPreview(
                 onSelectItem = onSelectItem,
                 onTransform = onTransform,
                 onItemMenu = openMenu,
+                onCropDrag = { id, crop ->
+                    collection.item(id)?.let { target ->
+                        onCollectionChange(collection.updateItem(target.copy(crop = crop)))
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             ItemMenuAnchor(
@@ -358,6 +370,7 @@ private fun PreviewPane(
     menuTarget: Pair<SceneItem, Offset>? = null,
     onMenuDismiss: () -> Unit = {},
     onCollectionChange: ((SceneCollection) -> Unit)? = null,
+    onCropDrag: ((String, Crop) -> Unit)? = null,
     attach: (Surface?, Int, Int) -> Unit,
 ) {
     val holderCallback = remember(attach) {
@@ -450,6 +463,12 @@ private fun PreviewPane(
                                     size = Size(width, height),
                                     style = Stroke(width = 2.dp.toPx()),
                                 )
+                                // Pegangan crop di tengah tiap tepi.
+                                if (collection.item(selectedItemId)?.locked != true &&
+                                    onCropDrag != null
+                                ) {
+                                    drawCropHandles(width, height)
+                                }
                             }
 
                             // Garis bantu rotasi: horizontal & vertikal lewat
@@ -490,6 +509,7 @@ private fun PreviewPane(
                         onSelectItem = onSelectItem,
                         onTransform = onTransform,
                         onItemMenu = onItemMenu,
+                        onCropDrag = onCropDrag,
                         frameWidthPx = frameWidthPx,
                         frameHeightPx = frameHeightPx,
                     )
@@ -525,6 +545,7 @@ private fun PreviewGestureLayer(
     onSelectItem: (String?) -> Unit,
     onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
     onItemMenu: ((SceneItem, Offset) -> Unit)?,
+    onCropDrag: ((String, Crop) -> Unit)? = null,
     frameWidthPx: Float,
     frameHeightPx: Float,
 ) {
@@ -533,6 +554,7 @@ private fun PreviewGestureLayer(
     val latestTransform by rememberUpdatedState(onTransform)
     val latestMenu by rememberUpdatedState(onItemMenu)
     val latestSelected by rememberUpdatedState(selectedItemId)
+    val latestCrop by rememberUpdatedState(onCropDrag)
 
     Box(
         modifier = Modifier
@@ -583,18 +605,22 @@ private fun PreviewGestureLayer(
 
                 var activeId: String? = null
                 var pendingSelect = false
+                var cropEdge: CropEdge? = null
+                var cropItemId: String? = null
+                var cropBase: Crop? = null
+                var cropRawWidth = 1f
+                var cropRawHeight = 1f
+                var cropScaleX = 1f
+                var cropScaleY = 1f
                 detectItemTransformGestures(
                     onStart = { offset ->
                         val insideFrame = scale > 0f &&
                             offset.x >= offsetLeft && offset.x <= offsetLeft + frameWidthPx &&
                             offset.y >= offsetTop && offset.y <= offsetTop + frameHeightPx
+                        val canvasX = (offset.x - offsetLeft) / scale
+                        val canvasY = (offset.y - offsetTop) / scale
                         val hits = if (insideFrame) {
-                            hitTestItems(
-                                latestCollection,
-                                canvas,
-                                (offset.x - offsetLeft) / scale,
-                                (offset.y - offsetTop) / scale,
-                            )
+                            hitTestItems(latestCollection, canvas, canvasX, canvasY)
                         } else {
                             emptyList()
                         }
@@ -605,15 +631,67 @@ private fun PreviewGestureLayer(
                         val direct = hits.firstOrNull { !it.locked }
                         val fallback = latestCollection.item(latestSelected)
                             ?.takeIf { !it.locked && it.visible }
-                        activeId = (direct ?: fallback)?.id
+                        val candidate = direct ?: fallback
+                        activeId = candidate?.id
                         pendingSelect = direct != null
+
+                        // Sentuhan tepat di pegangan crop mengubah crop.
+                        cropEdge = null
+                        cropBase = null
+                        cropItemId = null
+                        if (candidate != null && !candidate.locked &&
+                            insideFrame && scale > 0f
+                        ) {
+                            val edge = cropHandleAt(
+                                latestCollection,
+                                canvas,
+                                candidate.id,
+                                canvasX,
+                                canvasY,
+                                26.dp.toPx() / scale,
+                            )
+                            val source = latestCollection.source(candidate.sourceId)
+                            if (edge != null && source != null) {
+                                val (rawWidth, rawHeight) = naturalSize(source, canvas)
+                                cropEdge = edge
+                                cropItemId = candidate.id
+                                cropBase = candidate.crop
+                                cropRawWidth = rawWidth.coerceAtLeast(1f)
+                                cropRawHeight = rawHeight.coerceAtLeast(1f)
+                                cropScaleX = candidate.transform.scaleX.coerceAtLeast(0.01f)
+                                cropScaleY = candidate.transform.scaleY.coerceAtLeast(0.01f)
+                                pendingSelect = false
+                            }
+                        }
                     },
                     onEnd = {
                         activeId = null
                         pendingSelect = false
+                        cropEdge = null
+                        cropItemId = null
+                        cropBase = null
                     },
                 ) { pan, zoom, rotation ->
                     val id = activeId ?: return@detectItemTransformGestures
+
+                    val edge = cropEdge
+                    val base = cropBase
+                    val cropId = cropItemId
+                    if (edge != null && base != null && cropId != null) {
+                        val dx = pan.x / scale
+                        val dy = pan.y / scale
+                        val delta = when (edge) {
+                            CropEdge.Left -> dx / (cropRawWidth * cropScaleX)
+                            CropEdge.Right -> -dx / (cropRawWidth * cropScaleX)
+                            CropEdge.Top -> dy / (cropRawHeight * cropScaleY)
+                            CropEdge.Bottom -> -dy / (cropRawHeight * cropScaleY)
+                        }
+                        val next = base.adjustCrop(edge, delta)
+                        cropBase = next
+                        latestCrop?.invoke(cropId, next)
+                        return@detectItemTransformGestures
+                    }
+
                     if (pendingSelect) {
                         pendingSelect = false
                         latestSelect(id)

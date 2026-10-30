@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import com.rout.air.core.Align
+import com.rout.air.core.BlendMode
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.Crop
 import com.rout.air.core.SceneCollection
@@ -29,8 +30,8 @@ import com.rout.air.data.updateItem
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Halaman menu konteks: utama, submenu Transformasi, submenu Urutan. */
-private enum class MenuPage { Main, Transform, Order }
+/** Halaman menu konteks: utama, submenu Transformasi, Urutan, dan Blend. */
+private enum class MenuPage { Main, Transform, Order, Blend }
 
 /**
  * Menempatkan menu konteks pada titik ketukan di dalam pratinjau. Dipakai
@@ -102,6 +103,10 @@ internal fun ItemContextMenu(
                 DropdownMenuItem(
                     text = { Text("Urutan  ›") },
                     onClick = { page = MenuPage.Order },
+                )
+                DropdownMenuItem(
+                    text = { Text("Blend: ${item.blend.label}  ›") },
+                    onClick = { page = MenuPage.Blend },
                 )
                 if (source?.type != SourceType.Screen) {
                     // Layar tidak boleh diduplikat: satu sumber tangkap layar
@@ -251,6 +256,23 @@ internal fun ItemContextMenu(
                     onClick = { apply(collection.moveLayerToEdge(item.id, top = false)) },
                 )
             }
+
+            MenuPage.Blend -> {
+                DropdownMenuItem(
+                    text = { Text("‹ Kembali") },
+                    onClick = { page = MenuPage.Main },
+                )
+                BlendMode.values().forEach { mode ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (item.blend == mode) "✓ ${mode.label}" else mode.label,
+                            )
+                        },
+                        onClick = { applyItem(item.copy(blend = mode)) },
+                    )
+                }
+            }
         }
     }
 }
@@ -268,7 +290,7 @@ private fun fitToScreen(
     canvas: CaptureConfig,
 ): SceneItem {
     if (source == null) return item
-    val (width, height) = naturalSize(source, canvas)
+    val (width, height) = croppedNaturalSize(source, item, canvas)
     if (width <= 0f || height <= 0f) return item
     val scale = min(canvas.width / width, canvas.height / height)
     return item.copy(
@@ -289,7 +311,7 @@ private fun stretchToScreen(
     canvas: CaptureConfig,
 ): SceneItem {
     if (source == null) return item
-    val (width, height) = naturalSize(source, canvas)
+    val (width, height) = croppedNaturalSize(source, item, canvas)
     if (width <= 0f || height <= 0f) return item
     return item.copy(
         transform = item.transform.copy(

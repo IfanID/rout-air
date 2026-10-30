@@ -244,3 +244,25 @@ internal fun ScreenIcon(
         drawLine(color, Offset(12f * u, 17.5f * u), Offset(12f * u, 20.5f * u), stroke, StrokeCap.Round)
     }
 }
+
+/** Tiga garis sejajar: pegangan untuk menggeser urutan sumber. */
+@Composable
+internal fun DragHandleIcon(
+    color: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 20.dp,
+) {
+    Canvas(modifier = modifier.size(size)) {
+        val u = this.size.minDimension / 24f
+        val stroke = 2f * u
+        listOf(7f, 12f, 17f).forEach { y ->
+            drawLine(
+                color = color,
+                start = Offset(5f * u, y * u),
+                end = Offset(19f * u, y * u),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}

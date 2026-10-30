@@ -29,9 +29,17 @@ enum class Align {
     BottomRight,
 }
 
-/** Mode pencampuran layer; tahap ini baru Normal. */
-enum class BlendMode {
-    Normal,
+/**
+ * Mode pencampuran layer, mengikuti pilihan Blend Mode di OBS.
+ *
+ * `Add` dan `Screen` mencerahkan, `Multiply` menggelapkan. Nilai `name`
+ * dipakai apa adanya di JSON, jadi jangan diubah tanpa migrasi.
+ */
+enum class BlendMode(val label: String) {
+    Normal("Normal"),
+    Add("Add (tambah)"),
+    Screen("Screen"),
+    Multiply("Multiply"),
 }
 
 /**
@@ -72,6 +80,8 @@ data class SceneItem(
     val transform: Transform = Transform(),
     val crop: Crop = Crop(),
     val blend: BlendMode = BlendMode.Normal,
+    /** Opasitas 0..1 seperti slider Opacity di OBS. */
+    val opacity: Float = 1f,
 )
 
 /**
@@ -107,7 +117,7 @@ data class Scene(
 
 /** Scene collection berversi, disimpan sebagai JSON. */
 data class SceneCollection(
-    val version: Int = 2,
+    val version: Int = 4,
     val activeSceneId: String,
     val scenes: List<Scene>,
     val sources: List<SceneSource>,
@@ -132,7 +142,8 @@ data class SceneCollection(
             val screen = SceneSource(type = SourceType.Screen, name = "Layar")
             val scene = Scene(
                 name = "Adegan 1",
-                // Layar dikunci default supaya tidak tergeser tanpa sengaja.
+                // Layar dikunci default supaya komposisi tidak bergeser saat
+                // mengatur item lain. Buka lewat ikon gembok bila perlu digeser.
                 items = listOf(SceneItem(sourceId = screen.id, z = 0, locked = true)),
             )
             return SceneCollection(

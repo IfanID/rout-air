@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,10 +52,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.rout.air.core.Align
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.Crop
@@ -66,7 +69,10 @@ import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
 import com.rout.air.data.SceneStore
 import com.rout.air.data.addScene
+import com.rout.air.data.addScreenItem
 import com.rout.air.data.addSource
+import com.rout.air.data.duplicateScene
+import com.rout.air.data.moveScene
 import com.rout.air.data.moveLayer
 import com.rout.air.data.removeItem
 import com.rout.air.data.removeScene
@@ -108,6 +114,9 @@ fun ScenesScreen(
     var replaceSourceId by remember { mutableStateOf<String?>(null) }
 
     val activeScene = collection.activeScene()
+    val hasScreenInActiveScene = activeScene?.items?.any { item ->
+        collection.source(item.sourceId)?.type == SourceType.Screen
+    } == true
     val selectedItem = collection.item(selectedItemId)
     val selectedSource = selectedItem?.let { collection.source(it.sourceId) }
 
@@ -250,8 +259,35 @@ fun ScenesScreen(
         }
 
         Spacer(Modifier.height(8.dp))
-        Row {
-            TextButton(onClick = { showRenameScene = true }) { Text("Ganti nama scene") }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { showRenameScene = true }) { Text("Ganti nama") }
+            if (collection.scenes.size > 1) {
+                TextButton(
+                    onClick = {
+                        // Urutan scene di daftar: kiri = lebih awal.
+                        activeScene?.let { onCollectionChange(collection.moveScene(it.id, -1)) }
+                    },
+                ) {
+                    Text("‹ Kiri")
+                }
+                TextButton(
+                    onClick = {
+                        activeScene?.let { onCollectionChange(collection.moveScene(it.id, +1)) }
+                    },
+                ) {
+                    Text("Kanan ›")
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(
+                onClick = {
+                    activeScene?.let { onCollectionChange(collection.duplicateScene(it.id)) }
+                    onSelectItem(null)
+                },
+            ) {
+                Text("Duplikat scene")
+            }
             if (collection.scenes.size > 1) {
                 TextButton(
                     onClick = {
@@ -274,13 +310,14 @@ fun ScenesScreen(
                     expanded = addMenuOpen,
                     onDismissRequest = { addMenuOpen = false },
                 ) {
-                    SourceMenuItem("Layar", hasScreen(collection)) {
+                    SourceMenuItem("Layar", hasScreenInActiveScene) {
                         addMenuOpen = false
-                        val source = SceneSource(type = SourceType.Screen, name = "Layar")
-                        // Layar dikunci default: ukurannya sudah memenuhi kanvas.
-                        val item = SceneItem(sourceId = source.id, locked = true)
-                        onCollectionChange(collection.addSource(source, item))
-                        onSelectItem(item.id)
+                        // Satu scene hanya boleh punya satu Layar.
+                        val (next, itemId) = collection.addScreenItem()
+                        if (itemId != null) {
+                            onCollectionChange(next)
+                            onSelectItem(itemId)
+                        }
                     }
                     SourceMenuItem("Gambar", false) {
                         addMenuOpen = false
@@ -296,7 +333,12 @@ fun ScenesScreen(
                             text = "Teks baru",
                             textSize = 48f,
                             width = canvasConfig.width,
-                            height = approxTextHeight(48f, density),
+                            height = SourceBitmap.measureTextHeight(
+                                "Teks baru",
+                                48f,
+                                canvasConfig.width,
+                                density,
+                            ),
                         )
                         val source = SceneSource(
                             type = SourceType.Text,
@@ -380,14 +422,18 @@ fun ScenesScreen(
                         onCollectionChange(next)
                         if (selectedItemId == item.id) onSelectItem(null)
                     },
+                    onMove = { delta ->
+                        onCollectionChange(collection.moveLayer(item.id, delta))
+                    },
                 )
             }
         }
 
         Spacer(Modifier.height(16.dp))
         Hint(
-            "Urutan atas = paling depan. Geser/putar sumber langsung di panel " +
-                "Pratinjau pada halaman Studio.",
+            "Urutan atas = paling depan. Geser pegangan ☰ pada baris sumber " +
+                "untuk memindahkan lapisan. Geser/putar/crop sumber langsung " +
+                "di panel Pratinjau pada halaman Studio.",
         )
     }
 
@@ -436,6 +482,8 @@ private fun SourceRow(
     onToggleVisible: () -> Unit,
     onToggleLock: () -> Unit,
     onDelete: () -> Unit,
+    /** Geser urutan sumber: +1 naik (lebih depan), -1 turun. */
+    onMove: (Int) -> Unit,
 ) {
     // Geser baris sedikit ke kiri: tombol Hapus tersingkap, lalu diketuk
     // untuk menghapus. Tidak langsung terhapus seperti swipe-to-dismiss.
@@ -448,137 +496,180 @@ private fun SourceRow(
         animationSpec = if (dragging) snap() else tween(durationMillis = 180),
         label = "geser-hapus",
     )
+    // Geser pegangan naik/turun untuk memindahkan urutan lapisan.
+    var rowHeightPx by remember(item.id) { mutableFloatStateOf(0f) }
+    var dragY by remember(item.id) { mutableFloatStateOf(0f) }
+    var reordering by remember(item.id) { mutableStateOf(false) }
 
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .zIndex(if (reordering) 1f else 0f)
+            .onSizeChanged { rowHeightPx = it.height.toFloat() }
+            .offset { IntOffset(0, dragY.roundToInt()) },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Latar tombol hapus; menempel di belakang dan ikut tersingkap.
+        // Pegangan urutan berada di luar area geser-hapus. Jadi menarik
+        // pegangan tidak pernah ikut menyingkap tombol Hapus.
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.error)
-                .clickable {
-                    target = 0f
-                    onDelete()
-                },
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "Hapus",
-                    color = MaterialTheme.colorScheme.onError,
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                TrashIcon(color = MaterialTheme.colorScheme.onError)
-            }
-        }
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(offset.roundToInt(), 0) }
+                .size(32.dp)
                 .pointerInput(item.id) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragging = true },
+                    detectVerticalDragGestures(
+                        onDragStart = { reordering = true },
                         onDragEnd = {
-                            dragging = false
-                            target = if (target <= -revealWidthPx * 0.4f) {
-                                -revealWidthPx
-                            } else {
-                                0f
-                            }
+                            reordering = false
+                            val pitch = rowHeightPx + 8.dp.toPx()
+                            val step = -(dragY / pitch).roundToInt()
+                            dragY = 0f
+                            if (step != 0) onMove(step)
                         },
                         onDragCancel = {
-                            dragging = false
-                            target = 0f
+                            reordering = false
+                            dragY = 0f
                         },
                     ) { change, dragAmount ->
                         change.consume()
-                        target = (target + dragAmount).coerceIn(-revealWidthPx, 0f)
+                        dragY += dragAmount
                     }
-                }
-                .clickable {
-                    // Saat terbuka, ketukan pertama menutup tombol hapus.
-                    if (target != 0f) target = 0f else onSelect()
                 },
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
+            DragHandleIcon(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                size = 18.dp,
+            )
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            // Latar tombol hapus; menempel di belakang kartu dan ikut
+            // tersingkap saat kartu digeser ke kiri.
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.error)
+                    .clickable {
+                        target = 0f
+                        onDelete()
+                    },
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Hapus",
+                        color = MaterialTheme.colorScheme.onError,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    TrashIcon(color = MaterialTheme.colorScheme.onError)
+                }
+            }
+
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Surface(
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    },
-                    shape = CircleShape,
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (source.type == SourceType.Screen) {
-                            ScreenIcon(
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                size = 18.dp,
-                            )
-                        } else {
-                            Text(
-                                text = typeSymbol(source.type),
-                                style = MaterialTheme.typography.titleSmall,
-                            )
+                    .offset { IntOffset(offset.roundToInt(), 0) }
+                    .pointerInput(item.id) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragging = true },
+                            onDragEnd = {
+                                dragging = false
+                                target = if (target <= -revealWidthPx * 0.4f) {
+                                    -revealWidthPx
+                                } else {
+                                    0f
+                                }
+                            },
+                            onDragCancel = {
+                                dragging = false
+                                target = 0f
+                            },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            target = (target + dragAmount).coerceIn(-revealWidthPx, 0f)
                         }
                     }
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(source.name, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = "${typeLabel(source.type)} • ${intrinsicLabel(source)}",
-                        style = MaterialTheme.typography.bodySmall,
+                    .clickable {
+                        // Saat terbuka, ketukan pertama menutup tombol hapus.
+                        if (target != 0f) target = 0f else onSelect()
+                    },
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Surface(
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        },
+                        shape = CircleShape,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (source.type == SourceType.Screen) {
+                                ScreenIcon(
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    size = 18.dp,
+                                )
+                            } else {
+                                Text(
+                                    text = typeSymbol(source.type),
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(source.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "${typeLabel(source.type)} • ${intrinsicLabel(source)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // Tiga aksi per item, masing-masing dengan ikon yang jelas.
+                    RowIconAction(onClick = onReset) {
+                        ResetIcon(
+                            color = MaterialTheme.colorScheme.primary,
+                            size = 20.dp,
+                            description = "Reset posisi, skala, rotasi, dan crop",
+                        )
+                    }
+                    RowIconAction(onClick = onToggleVisible) {
+                        VisibilityIcon(
+                            visible = item.visible,
+                            color = if (item.visible) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    RowIconAction(onClick = onToggleLock) {
+                        LockIcon(
+                            locked = item.locked,
+                            color = if (item.locked) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    ChevronRightIcon(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 2.dp),
                     )
                 }
-                // Tiga aksi per item, masing-masing dengan ikon yang jelas.
-                RowIconAction(onClick = onReset) {
-                    ResetIcon(
-                        color = MaterialTheme.colorScheme.primary,
-                        size = 20.dp,
-                        description = "Reset posisi, skala, rotasi, dan crop",
-                    )
-                }
-                RowIconAction(onClick = onToggleVisible) {
-                    VisibilityIcon(
-                        visible = item.visible,
-                        color = if (item.visible) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-                RowIconAction(onClick = onToggleLock) {
-                    LockIcon(
-                        locked = item.locked,
-                        color = if (item.locked) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-                ChevronRightIcon(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 2.dp),
-                )
             }
         }
     }
@@ -645,6 +736,11 @@ private fun SourceEditor(
                 onSelectItem = {},
                 onTransform = onTransform,
                 onItemMenu = { target, position -> menuTarget = target to position },
+                onCropDrag = { id, crop ->
+                    collection.item(id)?.let { target ->
+                        updateItem(target.copy(crop = crop))
+                    }
+                },
                 gestureTargetItemId = item.id,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -698,7 +794,12 @@ private fun SourceEditor(
                             source.copy(
                                 settings = source.settings.copy(
                                     text = it,
-                                    height = approxTextHeight(textSize, density),
+                                    height = SourceBitmap.measureTextHeight(
+                                        it,
+                                        textSize,
+                                        source.settings.width,
+                                        density,
+                                    ),
                                 ),
                             ),
                         )
@@ -718,7 +819,12 @@ private fun SourceEditor(
                         source.copy(
                             settings = source.settings.copy(
                                 textSize = it,
-                                height = approxTextHeight(it, density),
+                                height = SourceBitmap.measureTextHeight(
+                                    text,
+                                    it,
+                                    source.settings.width,
+                                    density,
+                                ),
                             ),
                         ),
                     )
@@ -834,6 +940,15 @@ private fun SourceEditor(
             format = { "%.0f°".format(it) },
             onReset = { updateTransform { it.copy(rotation = 0f) } },
         ) { value -> updateTransform { it.copy(rotation = value) } }
+
+        // Opasitas per item, seperti slider Opacity di OBS.
+        LabeledSlider(
+            label = "Opasitas",
+            value = item.opacity,
+            range = 0f..1f,
+            format = { "%.0f%%".format(it * 100f) },
+            onReset = { updateItem(item.copy(opacity = 1f)) },
+        ) { value -> updateItem(item.copy(opacity = value)) }
 
         AlignGrid(item.transform.align) { align ->
             // Tombol jangkar sekaligus memindahkan item: titik jangkar yang
@@ -1058,8 +1173,6 @@ private fun Hint(text: String) {
 
 // --- Bantuan kecil ---
 
-private fun hasScreen(collection: SceneCollection): Boolean =
-    collection.sources.any { it.type == SourceType.Screen }
 
 private fun uniqueSourceName(collection: SceneCollection, base: String): String {
     if (collection.sources.none { it.name == base }) return base
@@ -1098,8 +1211,6 @@ internal fun defaultTransform(source: SceneSource, canvas: CaptureConfig): Trans
         else -> fitTransform(source.settings.width, source.settings.height, canvas)
     }
 
-private fun approxTextHeight(textSizeSp: Float, density: Float): Int =
-    max(16, (textSizeSp * density * 1.4f).toInt())
 
 private fun typeLabel(type: SourceType): String = when (type) {
     SourceType.Screen -> "Tangkap layar"

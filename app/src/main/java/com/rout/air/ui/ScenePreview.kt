@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.rout.air.core.Align
 import com.rout.air.core.CaptureConfig
+import com.rout.air.core.Crop
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
 import com.rout.air.core.SceneSource
@@ -46,7 +47,12 @@ import com.rout.air.core.SourceType
 import com.rout.air.engine.SourceBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * Pratinjau susunan scene di halaman Adegan, tanpa perlu pindah ke Studio.
@@ -63,6 +69,8 @@ fun ScenePreview(
     onSelectItem: (String?) -> Unit,
     onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
     onItemMenu: ((SceneItem, Offset) -> Unit)? = null,
+    /** Menarik pegangan crop di tepi item terpilih. */
+    onCropDrag: ((String, Crop) -> Unit)? = null,
     /** Jika diisi, gestur hanya untuk item ini (dipakai panel properti). */
     gestureTargetItemId: String? = null,
     modifier: Modifier = Modifier,
@@ -104,6 +112,16 @@ fun ScenePreview(
     val layers = remember(scene, sources, bitmaps, canvas) {
         buildPreviewLayers(scene?.items.orEmpty(), sources, bitmaps, canvas)
     }
+    // Saat mengedit satu sumber (panel properti), gambar item itu paling
+    // akhir agar tidak tertutup sumber layar penuh. Item lain diredupkan
+    // supaya yang sedang diedit tetap terlihat.
+    val drawLayers = remember(layers, gestureTargetItemId) {
+        if (gestureTargetItemId == null) {
+            layers
+        } else {
+            layers.sortedBy { if (it.item.id == gestureTargetItemId) 1 else 0 }
+        }
+    }
 
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
         val aspect = canvas.aspectRatio
@@ -120,6 +138,7 @@ fun ScenePreview(
         val transformState = rememberUpdatedState(onTransform)
         val selectState = rememberUpdatedState(onSelectItem)
         val menuState = rememberUpdatedState(onItemMenu)
+        val cropDragState = rememberUpdatedState(onCropDrag)
 
         Box(modifier = Modifier.fillMaxSize()) {
             // Kotak gambar mengikuti rasio kanvas dan berada di tengah panel.
@@ -134,13 +153,22 @@ fun ScenePreview(
                     val scale = size.width / canvas.width.toFloat()
                     drawRect(Color(0xFF060708), size = size)
 
-                    layers.forEach { layer ->
+                    drawLayers.forEach { layer ->
                         val transform = layer.item.transform
-                        val width = layer.naturalWidth * transform.scaleX * scale
-                        val height = layer.naturalHeight * transform.scaleY * scale
+                        val crop = layer.item.crop
+                        val croppedWidth = layer.naturalWidth * (1f - crop.left - crop.right)
+                        val croppedHeight = layer.naturalHeight * (1f - crop.top - crop.bottom)
+                        val width = croppedWidth.coerceAtLeast(1f) * transform.scaleX * scale
+                        val height = croppedHeight.coerceAtLeast(1f) * transform.scaleY * scale
                         val (anchorX, anchorY) = anchorOffset(transform.align, width, height)
                         val left = transform.x * scale - anchorX
                         val top = transform.y * scale - anchorY
+                        // Saat mengedit satu sumber, sumber lain diredupkan
+                        // agar item yang sedang diedit menonjol.
+                        val isEdited = gestureTargetItemId == null ||
+                            layer.item.id == gestureTargetItemId
+                        val opacity = (layer.item.opacity *
+                            if (isEdited) 1f else 0.3f).coerceIn(0f, 1f)
 
                         withTransform({
                             translate(left, top)
@@ -152,12 +180,13 @@ fun ScenePreview(
                                 SourceType.Color -> drawRect(
                                     color = Color(layer.colorArgb),
                                     size = Size(width, height),
+                                    alpha = opacity,
+                                    blendMode = layer.blend,
                                 )
 
-                                SourceType.Screen -> drawScreenPlaceholder(width, height)
+                                SourceType.Screen -> drawScreenPlaceholder(width, height, opacity)
 
                                 SourceType.Image, SourceType.Text -> layer.bitmap?.let { image ->
-                                    val crop = layer.item.crop
                                     val srcWidth = (image.width * (1f - crop.left - crop.right))
                                         .roundToInt()
                                         .coerceAtLeast(1)
@@ -176,6 +205,8 @@ fun ScenePreview(
                                             width.roundToInt().coerceAtLeast(1),
                                             height.roundToInt().coerceAtLeast(1),
                                         ),
+                                        alpha = opacity,
+                                        blendMode = layer.blend,
                                     )
                                 }
                             }
@@ -186,6 +217,11 @@ fun ScenePreview(
                                     size = Size(width, height),
                                     style = Stroke(width = 2f),
                                 )
+                                // Pegangan crop di tengah tiap tepi; hanya
+                                // item terpilih yang bisa ditarik.
+                                if (!layer.item.locked && onCropDrag != null) {
+                                    drawCropHandles(width, height)
+                                }
                             }
                         }
                     }
@@ -281,7 +317,10 @@ fun ScenePreview(
                         )
                     }
                     .pointerInput(
-                        layers,
+                        // Jangan pakai `layers`/`collection` sebagai kunci:
+                        // keduanya berubah tiap kali item digeser, sehingga
+                        // gestur akan terputus di tengah jalan (ini penyebab
+                        // pratinjau di panel properti tidak bisa digeser).
                         canvas,
                         gestureTargetItemId,
                         selectedItemId,
@@ -298,45 +337,103 @@ fun ScenePreview(
 
                         var activeId: String? = null
                         var pendingSelect = false
+                        var cropEdge: CropEdge? = null
+                        var cropItemId: String? = null
+                        var cropBase: Crop? = null
+                        var cropRawWidth = 1f
+                        var cropRawHeight = 1f
+                        var cropScaleX = 1f
+                        var cropScaleY = 1f
                         detectItemTransformGestures(
                             onStart = { offset ->
-                                if (gestureTargetItemId != null) {
-                                    activeId = gestureTargetItemId
-                                    pendingSelect = false
+                                val insideFrame = scale > 0f &&
+                                    offset.x >= offsetLeft &&
+                                    offset.x <= offsetLeft + frameWidthPx &&
+                                    offset.y >= offsetTop &&
+                                    offset.y <= offsetTop + frameHeightPx
+                                val canvasX = (offset.x - offsetLeft) / scale
+                                val canvasY = (offset.y - offsetTop) / scale
+                                val hits = if (insideFrame) {
+                                    hitTestItems(collection, canvas, canvasX, canvasY)
                                 } else {
-                                    val insideFrame = scale > 0f &&
-                                        offset.x >= offsetLeft &&
-                                        offset.x <= offsetLeft + frameWidthPx &&
-                                        offset.y >= offsetTop &&
-                                        offset.y <= offsetTop + frameHeightPx
-                                    val hits = if (insideFrame) {
-                                        hitTestItems(
-                                            collection,
-                                            canvas,
-                                            (offset.x - offsetLeft) / scale,
-                                            (offset.y - offsetTop) / scale,
-                                        )
-                                    } else {
-                                        emptyList()
+                                    emptyList()
+                                }
+                                // Item teratas yang bisa digeser menang. Bila
+                                // yang tersentuh justru item terkunci (mis.
+                                // sumber layar) atau area kosong, gestur
+                                // memakai item yang sedang terpilih supaya
+                                // jari boleh berada di luar item.
+                                val direct = hits.firstOrNull { !it.locked }
+                                val fallback = collection.item(selectedItemId)
+                                    ?.takeIf { !it.locked && it.visible }
+                                val candidate = if (gestureTargetItemId != null) {
+                                    collection.item(gestureTargetItemId)
+                                } else {
+                                    direct ?: fallback
+                                }
+                                activeId = candidate?.id
+                                pendingSelect = gestureTargetItemId == null && direct != null
+
+                                // Sentuhan tepat di pegangan crop mengubah crop,
+                                // bukan menggeser item.
+                                cropEdge = null
+                                cropBase = null
+                                cropItemId = null
+                                if (candidate != null && !candidate.locked &&
+                                    insideFrame && scale > 0f
+                                ) {
+                                    val edge = cropHandleAt(
+                                        collection,
+                                        canvas,
+                                        candidate.id,
+                                        canvasX,
+                                        canvasY,
+                                        26.dp.toPx() / scale,
+                                    )
+                                    val source = collection.source(candidate.sourceId)
+                                    if (edge != null && source != null) {
+                                        val (rawWidth, rawHeight) = naturalSize(source, canvas)
+                                        cropEdge = edge
+                                        cropItemId = candidate.id
+                                        cropBase = candidate.crop
+                                        cropRawWidth = rawWidth.coerceAtLeast(1f)
+                                        cropRawHeight = rawHeight.coerceAtLeast(1f)
+                                        cropScaleX = candidate.transform.scaleX.coerceAtLeast(0.01f)
+                                        cropScaleY = candidate.transform.scaleY.coerceAtLeast(0.01f)
+                                        pendingSelect = false
                                     }
-                                    // Item teratas yang bisa digeser menang. Bila
-                                    // yang tersentuh justru item terkunci (mis.
-                                    // sumber layar) atau area kosong, gestur
-                                    // memakai item yang sedang terpilih supaya
-                                    // jari boleh berada di luar item.
-                                    val direct = hits.firstOrNull { !it.locked }
-                                    val fallback = collection.item(selectedItemId)
-                                        ?.takeIf { !it.locked && it.visible }
-                                    activeId = (direct ?: fallback)?.id
-                                    pendingSelect = direct != null
                                 }
                             },
                             onEnd = {
                                 activeId = null
                                 pendingSelect = false
+                                cropEdge = null
+                                cropItemId = null
+                                cropBase = null
                             },
                         ) { pan, zoom, rotation ->
                             val id = activeId ?: return@detectItemTransformGestures
+
+                            val edge = cropEdge
+                            val base = cropBase
+                            val cropId = cropItemId
+                            if (edge != null && base != null && cropId != null) {
+                                // Ubah jarak geser (piksel panel) menjadi
+                                // perubahan fraksi crop pada sumber asli.
+                                val dx = pan.x / scale
+                                val dy = pan.y / scale
+                                val delta = when (edge) {
+                                    CropEdge.Left -> dx / (cropRawWidth * cropScaleX)
+                                    CropEdge.Right -> -dx / (cropRawWidth * cropScaleX)
+                                    CropEdge.Top -> dy / (cropRawHeight * cropScaleY)
+                                    CropEdge.Bottom -> -dy / (cropRawHeight * cropScaleY)
+                                }
+                                val next = base.adjustCrop(edge, delta)
+                                cropBase = next
+                                cropDragState.value?.invoke(cropId, next)
+                                return@detectItemTransformGestures
+                            }
+
                             if (pendingSelect) {
                                 pendingSelect = false
                                 selectState.value(id)
@@ -363,7 +460,17 @@ private data class PreviewLayer(
     val naturalHeight: Float,
     val colorArgb: Long,
     val bitmap: ImageBitmap?,
+    val blend: androidx.compose.ui.graphics.BlendMode,
 )
+
+/** Terjemahan BlendMode item ke mode gambar Compose untuk pratinjau. */
+private fun com.rout.air.core.BlendMode.toComposeBlendMode(): androidx.compose.ui.graphics.BlendMode =
+    when (this) {
+        com.rout.air.core.BlendMode.Normal -> androidx.compose.ui.graphics.BlendMode.SrcOver
+        com.rout.air.core.BlendMode.Add -> androidx.compose.ui.graphics.BlendMode.Plus
+        com.rout.air.core.BlendMode.Screen -> androidx.compose.ui.graphics.BlendMode.Screen
+        com.rout.air.core.BlendMode.Multiply -> androidx.compose.ui.graphics.BlendMode.Multiply
+    }
 
 private fun buildPreviewLayers(
     items: List<SceneItem>,
@@ -384,6 +491,7 @@ private fun buildPreviewLayers(
                     naturalWidth = canvas.width.toFloat(),
                     naturalHeight = canvas.height.toFloat(),
                     colorArgb = 0,
+                    blend = item.blend.toComposeBlendMode(),
                     bitmap = null,
                 )
 
@@ -395,6 +503,7 @@ private fun buildPreviewLayers(
                         naturalWidth = bitmap.width.toFloat(),
                         naturalHeight = bitmap.height.toFloat(),
                         colorArgb = 0,
+                        blend = item.blend.toComposeBlendMode(),
                         bitmap = bitmap,
                     )
                 }
@@ -405,6 +514,7 @@ private fun buildPreviewLayers(
                     naturalWidth = source.settings.width.coerceAtLeast(1).toFloat(),
                     naturalHeight = source.settings.height.coerceAtLeast(1).toFloat(),
                     colorArgb = source.settings.color,
+                    blend = item.blend.toComposeBlendMode(),
                     bitmap = null,
                 )
             }
@@ -414,8 +524,9 @@ private fun buildPreviewLayers(
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScreenPlaceholder(
     width: Float,
     height: Float,
+    opacity: Float = 1f,
 ) {
-    drawRect(Color(0xFF151B22), size = Size(width, height))
+    drawRect(Color(0xFF151B22), size = Size(width, height), alpha = opacity)
     val stepX = width / 6f
     val stepY = height / 6f
     for (index in 1..5) {
@@ -424,12 +535,14 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScreenPlacehold
             start = Offset(stepX * index, 0f),
             end = Offset(stepX * index, height),
             strokeWidth = 1f,
+            alpha = opacity,
         )
         drawLine(
             color = Color(0x33FFFFFF),
             start = Offset(0f, stepY * index),
             end = Offset(width, stepY * index),
             strokeWidth = 1f,
+            alpha = opacity,
         )
     }
 }
@@ -448,24 +561,79 @@ internal fun anchorOffset(align: Align, width: Float, height: Float): Pair<Float
     return x to y
 }
 
-private fun hitTest(
-    layers: List<PreviewLayer>,
+/** Tepi item yang punya pegangan crop. */
+internal enum class CropEdge { Left, Top, Right, Bottom }
+
+/** Menggeser satu sisi crop; nilai dibatasi agar sisi berlawanan tetap ada. */
+internal fun Crop.adjustCrop(edge: CropEdge, delta: Float): Crop = when (edge) {
+    CropEdge.Left -> copy(left = (left + delta).coerceIn(0f, 0.98f - right))
+    CropEdge.Top -> copy(top = (top + delta).coerceIn(0f, 0.98f - bottom))
+    CropEdge.Right -> copy(right = (right + delta).coerceIn(0f, 0.98f - left))
+    CropEdge.Bottom -> copy(bottom = (bottom + delta).coerceIn(0f, 0.98f - top))
+}
+
+/**
+ * Tepi crop yang disentuh, atau null bila titik tidak mengenai pegangan.
+ * Posisi pegangan ada di tengah tiap tepi kotak item dan ikut rotasi.
+ */
+internal fun cropHandleAt(
+    collection: SceneCollection,
+    canvas: CaptureConfig,
+    itemId: String,
     x: Float,
     y: Float,
-): SceneItem? {
-    // Iterasi dari lapisan paling depan supaya item atas menang.
-    for (layer in layers.asReversed()) {
-        val transform = layer.item.transform
-        val width = layer.naturalWidth * transform.scaleX
-        val height = layer.naturalHeight * transform.scaleY
-        val (anchorX, anchorY) = anchorOffset(transform.align, width, height)
-        val left = transform.x - anchorX
-        val top = transform.y - anchorY
-        if (x in left..(left + width) && y in top..(top + height)) {
-            return layer.item
-        }
+    radius: Float,
+): CropEdge? {
+    val rect = itemCanvasRect(collection, canvas, itemId) ?: return null
+    val centerX = rect.left + rect.width / 2f
+    val centerY = rect.top + rect.height / 2f
+    val dx = x - centerX
+    val dy = y - centerY
+    val radians = Math.toRadians(rect.rotation.toDouble())
+    val cosValue = cos(radians).toFloat()
+    val sinValue = sin(radians).toFloat()
+    // Balik rotasi supaya pemeriksaan pegangan memakai koordinat lokal item.
+    val localX = dx * cosValue + dy * sinValue
+    val localY = -dx * sinValue + dy * cosValue
+    val halfWidth = rect.width / 2f
+    val halfHeight = rect.height / 2f
+    // Item kecil: kecilkan area pegangan agar seluruh badan item tidak
+    // berubah menjadi area crop dan tetap bisa digeser.
+    val effectiveRadius = radius.coerceAtMost(min(halfWidth, halfHeight) * 0.9f)
+    val handles = listOf(
+        CropEdge.Left to Offset(-halfWidth, 0f),
+        CropEdge.Right to Offset(halfWidth, 0f),
+        CropEdge.Top to Offset(0f, -halfHeight),
+        CropEdge.Bottom to Offset(0f, halfHeight),
+    )
+    return handles
+        .map { (edge, point) -> edge to hypot(localX - point.x, localY - point.y) }
+        .filter { it.second <= effectiveRadius }
+        .minByOrNull { it.second }
+        ?.first
+}
+
+/** Empat titik pegangan crop, sebagai isyarat visual di pratinjau. */
+internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropHandles(
+    width: Float,
+    height: Float,
+) {
+    val radius = 4.5.dp.toPx()
+    val stroke = 1.5.dp.toPx()
+    listOf(
+        Offset(0f, height / 2f),
+        Offset(width, height / 2f),
+        Offset(width / 2f, 0f),
+        Offset(width / 2f, height),
+    ).forEach { point ->
+        drawCircle(color = Color(0xFF00E5FF), radius = radius, center = point)
+        drawCircle(
+            color = Color(0xFF061014),
+            radius = radius,
+            center = point,
+            style = Stroke(width = stroke),
+        )
     }
-    return null
 }
 
 /** Kotak sumber di kanvas, dipakai untuk menggambar outline pilihan. */
@@ -492,7 +660,7 @@ internal fun itemCanvasRect(
 ): ItemRect? {
     val item = collection.item(itemId) ?: return null
     val source = collection.source(item.sourceId) ?: return null
-    val (naturalWidth, naturalHeight) = naturalSize(source, canvas)
+    val (naturalWidth, naturalHeight) = croppedNaturalSize(source, item, canvas)
     val width = naturalWidth * item.transform.scaleX
     val height = naturalHeight * item.transform.scaleY
     val (anchorX, anchorY) = anchorOffset(item.transform.align, width, height)
@@ -503,6 +671,22 @@ internal fun itemCanvasRect(
         height = height,
         rotation = item.transform.rotation,
     )
+}
+
+/**
+ * Ukuran sumber setelah crop. Crop memendekkan kotak item (seperti OBS),
+ * jadi skala dan jangkar dihitung dari ukuran ini, bukan ukuran asli.
+ */
+internal fun croppedNaturalSize(
+    source: SceneSource,
+    item: SceneItem,
+    canvas: CaptureConfig,
+): Pair<Float, Float> {
+    val (naturalWidth, naturalHeight) = naturalSize(source, canvas)
+    val crop = item.crop
+    val width = naturalWidth * (1f - crop.left - crop.right).coerceIn(0.02f, 1f)
+    val height = naturalHeight * (1f - crop.top - crop.bottom).coerceIn(0.02f, 1f)
+    return width to height
 }
 
 /** Ukuran asli sumber dalam piksel kanvas, tanpa memuat bitmap. */
@@ -548,14 +732,24 @@ internal fun hitTestItems(
     for (item in scene.items.sortedByDescending { it.z }) {
         if (!item.visible) continue
         val source = sources[item.sourceId] ?: continue
-        val (naturalWidth, naturalHeight) = naturalSize(source, canvas)
+        val (naturalWidth, naturalHeight) = croppedNaturalSize(source, item, canvas)
         val transform = item.transform
         val width = naturalWidth * transform.scaleX
         val height = naturalHeight * transform.scaleY
         val (anchorX, anchorY) = anchorOffset(transform.align, width, height)
         val left = transform.x - anchorX
         val top = transform.y - anchorY
-        if (x in left..(left + width) && y in top..(top + height)) {
+        val centerX = left + width / 2f
+        val centerY = top + height / 2f
+        val dx = x - centerX
+        val dy = y - centerY
+        val radians = Math.toRadians(transform.rotation.toDouble())
+        val cosValue = cos(radians).toFloat()
+        val sinValue = sin(radians).toFloat()
+        // Balik rotasi item supaya ketukan pada item miring tetap tepat.
+        val localX = dx * cosValue + dy * sinValue
+        val localY = -dx * sinValue + dy * cosValue
+        if (abs(localX) <= width / 2f && abs(localY) <= height / 2f) {
             hits += item
         }
     }

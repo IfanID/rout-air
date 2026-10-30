@@ -20,6 +20,7 @@ import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.rout.air.capture.ScreenCapture
 import com.rout.air.core.Align
+import com.rout.air.core.BlendMode
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.Crop
@@ -699,6 +700,8 @@ class RecordingPipeline(
                     transform = item.transform,
                     crop = item.crop,
                     colorArgb = 0,
+                    blend = item.blend,
+                    opacity = item.opacity,
                 )
 
                 SourceType.Image, SourceType.Text -> {
@@ -711,6 +714,8 @@ class RecordingPipeline(
                         transform = item.transform,
                         crop = item.crop,
                         colorArgb = 0,
+                        blend = item.blend,
+                        opacity = item.opacity,
                     )
                 }
 
@@ -722,6 +727,8 @@ class RecordingPipeline(
                     transform = item.transform,
                     crop = item.crop,
                     colorArgb = source.settings.color,
+                    blend = item.blend,
+                    opacity = item.opacity,
                 )
             }
         }
@@ -811,8 +818,21 @@ class RecordingPipeline(
             layer.naturalHeight.toFloat()
         }
 
-        val width = max(1f, naturalWidth * layer.transform.scaleX)
-        val height = max(1f, naturalHeight * layer.transform.scaleY)
+        val crop = layer.crop
+        val cLeft = crop.left.coerceIn(0f, 0.49f)
+        val cTop = crop.top.coerceIn(0f, 0.49f)
+        val cRight = crop.right.coerceIn(0f, 0.49f)
+        val cBottom = crop.bottom.coerceIn(0f, 0.49f)
+
+        // Crop memendekkan tepi kotak (seperti OBS), bukan meregangkan isi.
+        val width = max(
+            1f,
+            naturalWidth * (1f - cLeft - cRight) * layer.transform.scaleX,
+        )
+        val height = max(
+            1f,
+            naturalHeight * (1f - cTop - cBottom) * layer.transform.scaleY,
+        )
 
         val anchorX = when (layer.transform.align) {
             Align.Top, Align.Center, Align.Bottom -> width / 2f
@@ -847,11 +867,6 @@ class RecordingPipeline(
         }
 
         val bottom = canvasHeight - top - drawHeight
-        val crop = layer.crop
-        val cLeft = crop.left.coerceIn(0f, 0.49f)
-        val cTop = crop.top.coerceIn(0f, 0.49f)
-        val cRight = crop.right.coerceIn(0f, 0.49f)
-        val cBottom = crop.bottom.coerceIn(0f, 0.49f)
 
         when (layer.type) {
             SourceType.Screen -> painter.drawExternal(
@@ -868,6 +883,8 @@ class RecordingPipeline(
                 cropBottom = cBottom,
                 flipH = layer.transform.flipH,
                 flipV = layer.transform.flipV,
+                blend = layer.blend,
+                opacity = layer.opacity,
             )
 
             SourceType.Image, SourceType.Text -> painter.drawTexture2D(
@@ -883,18 +900,21 @@ class RecordingPipeline(
                 cropBottom = cBottom,
                 flipH = layer.transform.flipH,
                 flipV = layer.transform.flipV,
+                blend = layer.blend,
+                opacity = layer.opacity,
             )
 
             SourceType.Color -> painter.drawColor(
                 red = ((layer.colorArgb ushr 16) and 0xFF) / 255f,
                 green = ((layer.colorArgb ushr 8) and 0xFF) / 255f,
                 blue = (layer.colorArgb and 0xFF) / 255f,
-                alpha = ((layer.colorArgb ushr 24) and 0xFF) / 255f,
+                alpha = ((layer.colorArgb ushr 24) and 0xFF) / 255f * layer.opacity,
                 left = left,
                 bottom = bottom,
                 width = drawWidth,
                 height = drawHeight,
                 rotation = layer.transform.rotation,
+                blend = layer.blend,
             )
         }
     }
@@ -1318,6 +1338,8 @@ class RecordingPipeline(
         val transform: Transform,
         val crop: Crop,
         val colorArgb: Long,
+        val blend: BlendMode = BlendMode.Normal,
+        val opacity: Float = 1f,
     )
 
     private data class CachedTexture(
