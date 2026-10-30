@@ -1,0 +1,164 @@
+package com.rout.air.encode
+
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.os.Handler
+import android.os.HandlerThread
+import android.util.Log
+import android.view.Surface
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+/**
+ * Encoder H.264 dengan input berupa Surface, dipakai langsung sebagai target
+ * render GL. Output dikirim ke [Mp4Writer] lewat callback MediaCodec.
+ */
+class VideoEncoder(
+    width: Int,
+    height: Int,
+    fps: Int,
+    bitrate: Int,
+    private val muxer: Mp4Writer,
+    private val onEncoderError: (Throwable) -> Unit = {},
+    private val onFrameEncoded: () -> Unit = {},
+) {
+    private val thread = HandlerThread("rout-video-encoder").apply { start() }
+    private val handler = Handler(thread.looper)
+    private val eosLatch = CountDownLatch(1)
+
+    private val codec: MediaCodec
+    private var inputSurfaceRef: Surface? = null
+    private var trackIndex = -1
+
+    val inputSurface: Surface get() = checkNotNull(inputSurfaceRef)
+
+    init {
+        codec = createCodec(width, height, fps, bitrate)
+        inputSurfaceRef = codec.createInputSurface()
+        codec.start()
+    }
+
+    fun finish(timeoutMs: Long = 4_000) {
+        try {
+            codec.signalEndOfInputStream()
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "signalEndOfInputStream gagal: ${error.message}")
+        }
+
+        eosLatch.await(timeoutMs, TimeUnit.MILLISECONDS)
+
+        try {
+            codec.stop()
+        } catch (error: IllegalStateException) {
+            Log.w(TAG, "codec.stop gagal: ${error.message}")
+        }
+        codec.release()
+        inputSurfaceRef?.release()
+        inputSurfaceRef = null
+        handler.removeCallbacksAndMessages(null)
+        thread.quitSafely()
+    }
+
+    private fun createCodec(width: Int, height: Int, fps: Int, bitrate: Int): MediaCodec {
+        // Profil High lebih efisien, tetapi tidak semua encoder perangkat menerimanya.
+        val profiles = listOf(
+            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+            MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+            -1,
+        )
+
+        var lastError: Throwable? = null
+        for (profile in profiles) {
+            val codec = try {
+                MediaCodec.createEncoderByType(MIME)
+            } catch (error: Throwable) {
+                lastError = error
+                break
+            }
+
+            try {
+                // Callback harus dipasang sebelum configure agar codec masuk mode async.
+                codec.setCallback(newCallback(), handler)
+
+                val format = MediaFormat.createVideoFormat(MIME, width, height).apply {
+                    setInteger(
+                        MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
+                    )
+                    setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                    setInteger(
+                        MediaFormat.KEY_BITRATE_MODE,
+                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                    )
+                    if (profile >= 0) {
+                        setInteger(MediaFormat.KEY_PROFILE, profile)
+                    }
+                }
+
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                return codec
+            } catch (error: Throwable) {
+                lastError = error
+                codec.release()
+            }
+        }
+
+        throw IllegalStateException(
+            "Encoder H.264 tidak bisa disiapkan: ${lastError?.message}",
+            lastError,
+        )
+    }
+
+    /**
+     * Dibuat sebagai fungsi, bukan properti, karena dipakai saat konstruktor
+     * masih berjalan (urutan inisialisasi properti Kotlin).
+     */
+    private fun newCallback(): MediaCodec.Callback = object : MediaCodec.Callback() {
+        override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
+            // Input berasal dari Surface, bukan buffer biasa.
+        }
+
+        override fun onOutputBufferAvailable(
+            codec: MediaCodec,
+            index: Int,
+            info: MediaCodec.BufferInfo,
+        ) {
+            try {
+                val buffer = codec.getOutputBuffer(index)
+                if (buffer != null && info.size > 0) {
+                    muxer.write(trackIndex, buffer, info)
+                    onFrameEncoded()
+                }
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                    eosLatch.countDown()
+                }
+            } catch (error: IllegalStateException) {
+                Log.w(TAG, "Output video gagal diproses: ${error.message}")
+            } finally {
+                try {
+                    codec.releaseOutputBuffer(index, false)
+                } catch (_: IllegalStateException) {
+                    // Codec sudah dihentikan.
+                }
+            }
+        }
+
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            trackIndex = muxer.addVideoTrack(format)
+        }
+
+        override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {
+            Log.e(TAG, "Encoder video error: ${error.diagnosticInfo}", error)
+            eosLatch.countDown()
+            onEncoderError(error)
+        }
+    }
+
+    private companion object {
+        const val TAG = "RoutAirVideo"
+        const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
+    }
+}
