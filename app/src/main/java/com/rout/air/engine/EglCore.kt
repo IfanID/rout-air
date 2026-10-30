@@ -99,6 +99,22 @@ class EglCore(shareWith: EglCore? = null) {
         }
     }
 
+    /**
+     * Mengaktifkan konteks tanpa window surface. Diperlukan saat pratinjau
+     * berjalan tanpa encoder, misalnya untuk `updateTexImage` dan kompilasi
+     * shader di thread GL.
+     */
+    fun makeCurrentNoSurface() {
+        check(
+            EGL14.eglMakeCurrent(
+                display,
+                EGL14.EGL_NO_SURFACE,
+                EGL14.EGL_NO_SURFACE,
+                context,
+            ),
+        ) { "eglMakeCurrent (tanpa surface) gagal" }
+    }
+
     fun makeNothingCurrent() {
         EGL14.eglMakeCurrent(
             display,

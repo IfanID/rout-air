@@ -40,7 +40,10 @@ import com.rout.air.core.CanvasOrientation
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.RecordingState
+import com.rout.air.core.SceneCollection
+import com.rout.air.data.SceneManager
 import com.rout.air.data.SettingsStore
+import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
 import com.rout.air.service.CaptureService
 import kotlinx.coroutines.delay
@@ -66,9 +69,13 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     val activity = remember(context) { context.findActivity() }
     val store = remember(context) { SettingsStore(context) }
 
+    remember(context) { SceneManager.attach(context) }
+    val scenes by SceneManager.state.collectAsState()
+
     var config by remember { mutableStateOf(store.load()) }
     var tab by rememberSaveable { mutableStateOf(AppTab.Home) }
     var elapsedMs by remember { mutableStateOf(0L) }
+    var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val state by CaptureEngine.state.collectAsState()
 
@@ -91,10 +98,34 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
 
     var lockedCanvas by remember { mutableStateOf<CaptureConfig?>(null) }
     val canvasConfig = lockedCanvas ?: liveCanvas
-    val recordingActive = state is RecordingState.Recording || state is RecordingState.Preparing
+    val collection = scenes ?: SceneCollection.default(canvasConfig.width, canvasConfig.height)
 
-    LaunchedEffect(recordingActive) {
-        if (!recordingActive) lockedCanvas = null
+    // Program = snapshot yang sedang mengudara. Perubahan pratinjau baru masuk
+    // ke sini setelah tombol Transisi ditekan, seperti OBS Studio Mode.
+    val programScenes by SceneManager.program.collectAsState()
+    val programCollection = programScenes ?: collection
+
+    // Sesi pratinjau hidup selama aplikasi terlihat. Tombol rekam tidak perlu
+    // izin baru karena memakai sesi yang sama.
+    var appForeground by remember { mutableStateOf(true) }
+    var pendingAutoRecord by remember { mutableStateOf(false) }
+
+    // Otomatis membuka dialog izin hanya sekali per sesi foreground, supaya
+    // pembatalan tidak memunculkan dialog terus-menerus.
+    var autoPromptDone by remember { mutableStateOf(false) }
+
+    // Simpan scene otomatis setelah 500 ms tanpa perubahan (debounce).
+    LaunchedEffect(scenes) {
+        if (scenes != null) {
+            delay(500)
+            SceneManager.save()
+        }
+    }
+
+    // Kanvas mengikuti sesi (dikunci saat sesi dibuka) supaya pratinjau dan
+    // hasil rekaman selalu memakai ukuran yang sama.
+    LaunchedEffect(state) {
+        if (state is RecordingState.Idle) lockedCanvas = null
     }
 
     LaunchedEffect(config) { store.save(config) }
@@ -104,12 +135,23 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     ) { result ->
         val data: Intent? = result.data
         if (result.resultCode == Activity.RESULT_OK && data != null) {
-            // Ukuran video dikunci pada orientasi saat tombol rekam ditekan.
             lockedCanvas = canvasConfig
             ContextCompat.startForegroundService(
                 context,
-                CaptureService.startIntent(context, result.resultCode, data, canvasConfig),
+                CaptureService.startIntent(
+                    context = context,
+                    resultCode = result.resultCode,
+                    projectionData = data,
+                    config = canvasConfig,
+                    autoRecord = pendingAutoRecord,
+                ),
             )
+            pendingAutoRecord = false
+        } else {
+            pendingAutoRecord = false
+            // Izin dibatalkan: tidak ada tangkapan yang berjalan. Beri pesan
+            // dan biarkan pengguna mencoba lagi lewat tombol rekam.
+            CaptureEngine.reportPermissionCancelled()
         }
     }
 
@@ -120,7 +162,14 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         projectionLauncher.launch(manager.createScreenCaptureIntent())
     }
 
-    fun beginCapture() {
+    fun launchProjection() {
+        val manager = context.getSystemService(MediaProjectionManager::class.java)
+        projectionLauncher.launch(manager.createScreenCaptureIntent())
+    }
+
+    fun beginSession(autoRecord: Boolean) {
+        autoPromptDone = true
+        pendingAutoRecord = autoRecord
         val needed = buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -132,12 +181,34 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         }
 
         if (missing.isEmpty()) {
-            val manager = context.getSystemService(MediaProjectionManager::class.java)
-            projectionLauncher.launch(manager.createScreenCaptureIntent())
+            launchProjection()
         } else {
             permissionLauncher.launch(missing.toTypedArray())
         }
     }
+
+    // Buka sesi pratinjau otomatis saat aplikasi dibuka/kembali terlihat.
+    LaunchedEffect(appForeground, state) {
+        if (appForeground && !autoPromptDone && state is RecordingState.Idle &&
+            !CaptureEngine.sessionActive.value
+        ) {
+            autoPromptDone = true
+            beginSession(autoRecord = false)
+        }
+    }
+
+    // Tombol rekam: kalau sesi pratinjau belum ada (mis. izin tadi dibatalkan),
+    // buka sesi dulu — jangan langsung merekam. Rekaman dimulai oleh tekanan
+    // berikutnya setelah sesi siap.
+    val startRecording: () -> Unit = {
+        if (CaptureEngine.sessionActive.value) {
+            CaptureEngine.startRecording()
+        } else {
+            beginSession(autoRecord = false)
+        }
+    }
+    val stopRecording: () -> Unit = { CaptureEngine.stopRecording() }
+    val endSession: () -> Unit = { CaptureEngine.closeSession() }
 
     LaunchedEffect(state) {
         val recording = state as? RecordingState.Recording
@@ -168,11 +239,22 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> CaptureEngine.setPreviewVisible(true)
+                Lifecycle.Event.ON_START -> {
+                    appForeground = true
+                    CaptureEngine.setPreviewVisible(true)
+                }
+
                 Lifecycle.Event.ON_STOP -> {
+                    appForeground = false
                     CaptureEngine.setPreviewVisible(false)
                     CaptureEngine.attachPreview(null, 0, 0)
                     CaptureEngine.attachProgram(null, 0, 0)
+                    // Sesi sengaja TIDAK ditutup saat ke background. Izin
+                    // MediaProjection hanya berlaku sekali per persetujuan;
+                    // menutup sesi berarti dialog izin muncul lagi setiap
+                    // kembali ke aplikasi. Transparansinya lewat notifikasi
+                    // foreground yang selalu terlihat, dan pengguna bisa
+                    // mengakhiri sesi lewat tombol di aplikasi/notifikasi.
                 }
 
                 else -> Unit
@@ -180,6 +262,27 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Gestur di pratinjau (Studio maupun halaman Adegan) memakai logika yang
+    // sama: item di bawah jari otomatis dipilih, lalu digeser/dicubit/diputar.
+    val applyTransform: (String?, Float, Float, Float, Float, Float) -> Unit = transform@{
+            itemId, panX, panY, zoom, rotation, paneWidthPx ->
+        if (paneWidthPx <= 0f) return@transform
+        val current = SceneManager.current()
+        val item = current.item(itemId) ?: return@transform
+        if (item.locked) return@transform
+
+        val pxToCanvas = canvasConfig.width / paneWidthPx
+        val t = item.transform
+        val next = t.copy(
+            x = t.x + panX * pxToCanvas,
+            y = t.y + panY * pxToCanvas,
+            scaleX = (t.scaleX * zoom).coerceIn(0.05f, 8f),
+            scaleY = (t.scaleY * zoom).coerceIn(0.05f, 8f),
+            rotation = ((t.rotation + rotation + 540f) % 360f) - 180f,
+        )
+        SceneManager.update(current.updateItem(item.copy(transform = next)))
     }
 
     Scaffold(
@@ -204,8 +307,9 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
-                    onStart = { beginCapture() },
-                    onStop = { context.startService(CaptureService.stopIntent(context)) },
+                    onStart = startRecording,
+                    onStop = stopRecording,
+                    onEndSession = endSession,
                     onClearError = { CaptureEngine.clearError() },
                 )
 
@@ -214,12 +318,26 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
-                    onStart = { beginCapture() },
-                    onStop = { context.startService(CaptureService.stopIntent(context)) },
+                    collection = collection,
+                    programCollection = programCollection,
+                    selectedItemId = selectedItemId,
+                    onSelectItem = { selectedItemId = it },
+                    onTransform = applyTransform,
+                    onCollectionChange = { SceneManager.update(it) },
+                    onCommitProgram = { SceneManager.commitToProgram() },
+                    onStart = startRecording,
+                    onStop = stopRecording,
                     onClearError = { CaptureEngine.clearError() },
                 )
 
-                AppTab.Scenes -> ScenesScreen(canvasConfig = canvasConfig)
+                AppTab.Scenes -> ScenesScreen(
+                    canvasConfig = canvasConfig,
+                    collection = collection,
+                    selectedItemId = selectedItemId,
+                    onSelectItem = { selectedItemId = it },
+                    onCollectionChange = { SceneManager.update(it) },
+                    onTransform = applyTransform,
+                )
 
                 AppTab.Audio -> AudioScreen(
                     state = state,

@@ -39,19 +39,27 @@ class CaptureService : Service() {
             CaptureEngine.state.collect { state ->
                 when (state) {
                     RecordingState.Preparing,
+                    RecordingState.Previewing,
                     is RecordingState.Recording,
-                    -> sawActiveState = true
+                    -> {
+                        sawActiveState = true
+                        notificationManager().notify(NOTIFICATION_ID, buildNotification(state))
+                    }
 
                     RecordingState.Idle,
                     is RecordingState.Error,
-                    -> if (sawActiveState) {
-                        stopForeground(Service.STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
+                    -> Unit
                 }
+            }
+        }
 
-                if (sawActiveState && state !is RecordingState.Idle) {
-                    notificationManager().notify(NOTIFICATION_ID, buildNotification(state))
+        // Sesi berakhir (pratinjau ditutup atau gagal disiapkan): matikan
+        // foreground service. Error tetap tampil di aplikasi.
+        scope.launch {
+            CaptureEngine.sessionActive.collect { active ->
+                if (!active && sawActiveState) {
+                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }
@@ -60,8 +68,13 @@ class CaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                CaptureEngine.stop()
-                stopSelf()
+                // Saat merekam, tombol notifikasi menghentikan rekaman;
+                // saat hanya pratinjau, tombol menutup sesi.
+                if (CaptureEngine.state.value is RecordingState.Recording) {
+                    CaptureEngine.stopRecording()
+                } else {
+                    CaptureEngine.closeSession()
+                }
                 return START_NOT_STICKY
             }
         }
@@ -101,14 +114,19 @@ class CaptureService : Service() {
             }.getOrDefault(ContentMode.Fit),
         )
 
-        CaptureEngine.start(this, resultCode, projectionData, config)
+        CaptureEngine.startSession(
+            context = this,
+            resultCode = resultCode,
+            projectionData = projectionData,
+            config = config,
+            autoRecord = request.getBooleanExtra(EXTRA_AUTO_RECORD, false),
+        )
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        val state = CaptureEngine.state.value
-        if (state is RecordingState.Recording || state is RecordingState.Preparing) {
-            CaptureEngine.stop()
+        if (CaptureEngine.sessionActive.value) {
+            CaptureEngine.closeSession()
         }
         scope.cancel()
         super.onDestroy()
@@ -133,10 +151,12 @@ class CaptureService : Service() {
 
         val text = when (state) {
             RecordingState.Preparing -> "Menyiapkan tangkap layar"
+            RecordingState.Previewing -> "Pratinjau aktif, siap merekam"
             is RecordingState.Recording -> "Merekam layar"
             is RecordingState.Error -> state.message
             RecordingState.Idle -> "Tidak ada rekaman"
         }
+        val actionLabel = if (state is RecordingState.Recording) "Stop" else "Tutup"
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RoutAir")
@@ -144,7 +164,7 @@ class CaptureService : Service() {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setContentIntent(contentIntent)
-            .addAction(0, "Stop", stopIntent)
+            .addAction(0, actionLabel, stopIntent)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
@@ -176,6 +196,7 @@ class CaptureService : Service() {
         const val EXTRA_BITRATE = "bitrate"
         const val EXTRA_RECORD_AUDIO = "record_audio"
         const val EXTRA_CONTENT_MODE = "content_mode"
+        const val EXTRA_AUTO_RECORD = "auto_record"
 
         private const val CHANNEL_ID = "rout_air_capture"
         private const val NOTIFICATION_ID = 1001
@@ -186,6 +207,7 @@ class CaptureService : Service() {
             resultCode: Int,
             projectionData: Intent,
             config: CaptureConfig,
+            autoRecord: Boolean = false,
         ): Intent = Intent(context, CaptureService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_RESULT_CODE, resultCode)
@@ -196,6 +218,7 @@ class CaptureService : Service() {
             putExtra(EXTRA_BITRATE, config.videoBitrate)
             putExtra(EXTRA_RECORD_AUDIO, config.recordAudio)
             putExtra(EXTRA_CONTENT_MODE, config.contentMode.name)
+            putExtra(EXTRA_AUTO_RECORD, autoRecord)
         }
 
         fun stopIntent(context: Context): Intent =

@@ -47,11 +47,13 @@ fun HomeScreen(
     elapsedMs: Long,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onEndSession: () -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var previewReady by remember { mutableStateOf(false) }
-    val isActive = state is RecordingState.Recording || state is RecordingState.Preparing
+    val isActive = state is RecordingState.Recording
+    val sessionOnly = state is RecordingState.Previewing
 
     Column(
         modifier = modifier
@@ -73,6 +75,11 @@ fun HomeScreen(
             }
             if (state is RecordingState.Error) {
                 TextButton(onClick = onClearError) { Text("Tutup") }
+            }
+            // Mengakhiri sesi tangkap layar secara sengaja. Setelah ini izin
+            // harus diminta ulang karena token MediaProjection sekali pakai.
+            if (sessionOnly) {
+                TextButton(onClick = onEndSession) { Text("Akhiri sesi") }
             }
         }
 
@@ -120,12 +127,16 @@ fun HomeScreen(
 
                                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                                     previewReady = false
-                                    CaptureEngine.attachPreview(null, 0, 0)
+                                    // Lepas hanya surface ini, bukan surface lain
+                                    // yang mungkin sudah terpasang dari tab lain.
+                                    CaptureEngine.attachProgram(holder.surface, 0, 0)
                                 }
 
                                 private fun attachPreview(holder: SurfaceHolder) {
                                     val frame = holder.surfaceFrame
-                                    CaptureEngine.attachPreview(
+                                    // Halaman Siaran menampilkan keluaran Program,
+                                    // bukan hasil edit pratinjau.
+                                    CaptureEngine.attachProgram(
                                         holder.surface,
                                         frame.width(),
                                         frame.height(),
@@ -139,7 +150,7 @@ fun HomeScreen(
 
                 if (!previewReady) {
                     Text(
-                        text = if (isActive) "Pratinjau disiapkan" else "Pratinjau",
+                        text = if (isActive) "Program disiapkan" else "Program",
                         color = Color.White,
                         textAlign = TextAlign.Center,
                     )
@@ -176,37 +187,9 @@ fun HomeScreen(
     }
 }
 
-@Composable
-internal fun RecordButton(
-    isActive: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(72.dp)
-            .clip(CircleShape)
-            .background(
-                when {
-                    !enabled -> MaterialTheme.colorScheme.surfaceVariant
-                    isActive -> Color(0xFFE53935)
-                    else -> MaterialTheme.colorScheme.primary
-                },
-            )
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(if (isActive) 22.dp else 26.dp)
-                .clip(if (isActive) RoundedCornerShape(4.dp) else CircleShape)
-                .background(Color.White),
-        )
-    }
-}
-
 private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Idle -> "Siap merekam layar"
+    RecordingState.Previewing -> "Pratinjau aktif • tekan rekam"
     RecordingState.Preparing -> "Menyiapkan tangkap layar…"
     is RecordingState.Recording -> if (state.audioActive) {
         "Merekam layar + audio internal"

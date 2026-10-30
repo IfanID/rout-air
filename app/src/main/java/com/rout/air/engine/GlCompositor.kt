@@ -8,19 +8,37 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /**
- * Menggambar satu layer sumber (tekstur eksternal) ke kanvas 16:9.
- * Tahap ini hanya mendukung satu layer layar penuh; layer tambahan
- * menyusul di M2.
+ * Kompositor multi-layer sederhana.
+ *
+ * Mendukung tiga jenis gambar:
+ * - tekstur eksternal (`GL_TEXTURE_EXTERNAL_OES`) untuk tangkapan layar/kamera;
+ * - tekstur 2D untuk gambar dan teks hasil render Bitmap;
+ * - warna solid untuk sumber latar.
+ *
+ * Semua layer digambar dengan satu quad 0..1 dan matriks MVP kanvas, jadi
+ * posisi, skala, dan rotasi item dihitung di sini. Crop diterapkan lewat
+ * koordinat UV, meniru crop per sumber di OBS.
  */
 class GlCompositor {
-    private var program = 0
-    private var positionHandle = 0
-    private var texCoordHandle = 0
-    private var mvpHandle = 0
-    private var texMatrixHandle = 0
-    private var textureHandle = 0
+    private var externalProgram = 0
+    private var textureProgram = 0
+    private var colorProgram = 0
 
-    private val vertexBuffer: FloatBuffer = floatBuffer(
+    private var externalMvp = 0
+    private var externalTexMatrix = 0
+    private var externalTexture = 0
+    private var externalUvScale = 0
+    private var externalUvBias = 0
+
+    private var textureMvp = 0
+    private var textureSampler = 0
+    private var textureUvScale = 0
+    private var textureUvBias = 0
+
+    private var colorMvp = 0
+    private var colorValue = 0
+
+    private val quad: FloatBuffer = floatBuffer(
         floatArrayOf(
             0f, 0f,
             1f, 0f,
@@ -28,7 +46,18 @@ class GlCompositor {
             1f, 1f,
         ),
     )
-    private val texCoordBuffer: FloatBuffer = floatBuffer(
+
+    /** Koordinat tekstur 2D dibalik: baris bitmap pertama (atas) di v = 0. */
+    private val quadUv2D: FloatBuffer = floatBuffer(
+        floatArrayOf(
+            0f, 1f,
+            1f, 1f,
+            0f, 0f,
+            1f, 0f,
+        ),
+    )
+
+    private val quadUvExternal: FloatBuffer = floatBuffer(
         floatArrayOf(
             0f, 0f,
             1f, 0f,
@@ -40,68 +69,164 @@ class GlCompositor {
     private val ortho = FloatArray(16)
     private val model = FloatArray(16)
     private val mvp = FloatArray(16)
+    private val tmp = FloatArray(16)
 
     fun init() {
-        program = GlUtil.compileProgram(VERTEX_SHADER, FRAGMENT_SHADER)
-        positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
-        texCoordHandle = GLES20.glGetAttribLocation(program, "aTexCoord")
-        mvpHandle = GLES20.glGetUniformLocation(program, "uMvp")
-        texMatrixHandle = GLES20.glGetUniformLocation(program, "uTexMatrix")
-        textureHandle = GLES20.glGetUniformLocation(program, "uTexture")
+        externalProgram = GlUtil.compileProgram(VERTEX_EXTERNAL, FRAGMENT_EXTERNAL)
+        externalMvp = GLES20.glGetUniformLocation(externalProgram, "uMvp")
+        externalTexMatrix = GLES20.glGetUniformLocation(externalProgram, "uTexMatrix")
+        externalTexture = GLES20.glGetUniformLocation(externalProgram, "uTexture")
+        externalUvScale = GLES20.glGetUniformLocation(externalProgram, "uUvScale")
+        externalUvBias = GLES20.glGetUniformLocation(externalProgram, "uUvBias")
+
+        textureProgram = GlUtil.compileProgram(VERTEX_TEXTURE, FRAGMENT_TEXTURE)
+        textureMvp = GLES20.glGetUniformLocation(textureProgram, "uMvp")
+        textureSampler = GLES20.glGetUniformLocation(textureProgram, "uTexture")
+        textureUvScale = GLES20.glGetUniformLocation(textureProgram, "uUvScale")
+        textureUvBias = GLES20.glGetUniformLocation(textureProgram, "uUvBias")
+
+        colorProgram = GlUtil.compileProgram(VERTEX_COLOR, FRAGMENT_COLOR)
+        colorMvp = GLES20.glGetUniformLocation(colorProgram, "uMvp")
+        colorValue = GLES20.glGetUniformLocation(colorProgram, "uColor")
     }
 
-    /** Matriks MVP untuk kanvas berukuran width x height (sumbu Y ke atas). */
     fun setCanvasSize(width: Int, height: Int) {
-        // Ortho standar (bottom = 0). Sebelumnya sumbu Y dibalik sehingga
-        // hasil rekaman tertangkap terbalik.
         Matrix.orthoM(ortho, 0, 0f, width.toFloat(), 0f, height.toFloat(), -1f, 1f)
-        Matrix.setIdentityM(model, 0)
-        Matrix.scaleM(model, 0, width.toFloat(), height.toFloat(), 1f)
-        Matrix.multiplyMM(mvp, 0, ortho, 0, model, 0)
     }
 
-    fun draw(textureId: Int, textureMatrix: FloatArray) {
-        GLES20.glUseProgram(program)
-
-        vertexBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(positionHandle)
-        GLES20.glVertexAttribPointer(
-            positionHandle,
-            2,
-            GLES20.GL_FLOAT,
-            false,
-            0,
-            vertexBuffer,
+    /**
+     * Menggambar tekstur eksternal. `left`/`bottom` memakai koordinat OpenGL
+     * (kiri-bawah), `rotation` derajat searah jarum jam di layar.
+     */
+    fun drawExternal(
+        textureId: Int,
+        texMatrix: FloatArray,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+        rotation: Float,
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+    ) {
+        buildMvp(left, bottom, width, height, rotation)
+        GLES20.glUseProgram(externalProgram)
+        bindQuad(externalProgram)
+        GLES20.glUniformMatrix4fv(externalMvp, 1, false, mvp, 0)
+        GLES20.glUniformMatrix4fv(externalTexMatrix, 1, false, texMatrix, 0)
+        // Cermin dikerjakan lewat UV (skala negatif + bias), jadi tidak
+        // mengubah posisi/rotasi item.
+        val scaleU = (1f - cropLeft - cropRight) * if (flipH) -1f else 1f
+        val scaleV = (1f - cropTop - cropBottom) * if (flipV) -1f else 1f
+        GLES20.glUniform2f(externalUvScale, scaleU, scaleV)
+        GLES20.glUniform2f(
+            externalUvBias,
+            if (flipH) 1f - cropLeft else cropLeft,
+            if (flipV) 1f - cropBottom else cropBottom,
         )
-
-        texCoordBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(texCoordHandle)
-        GLES20.glVertexAttribPointer(
-            texCoordHandle,
-            2,
-            GLES20.GL_FLOAT,
-            false,
-            0,
-            texCoordBuffer,
-        )
-
-        GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvp, 0)
-        GLES20.glUniformMatrix4fv(texMatrixHandle, 1, false, textureMatrix, 0)
-
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
-        GLES20.glUniform1i(textureHandle, 0)
-
+        GLES20.glUniform1i(externalTexture, 0)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+    }
 
-        GLES20.glDisableVertexAttribArray(positionHandle)
-        GLES20.glDisableVertexAttribArray(texCoordHandle)
+    /** Menggambar tekstur 2D (gambar/teks) dengan crop UV. */
+    fun drawTexture2D(
+        textureId: Int,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+        rotation: Float,
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+    ) {
+        buildMvp(left, bottom, width, height, rotation)
+        GLES20.glUseProgram(textureProgram)
+        bindQuad(textureProgram, quadUv2D)
+        GLES20.glUniformMatrix4fv(textureMvp, 1, false, mvp, 0)
+        val scaleU = (1f - cropLeft - cropRight) * if (flipH) -1f else 1f
+        val scaleV = (1f - cropTop - cropBottom) * if (flipV) -1f else 1f
+        GLES20.glUniform2f(textureUvScale, scaleU, scaleV)
+        GLES20.glUniform2f(
+            textureUvBias,
+            if (flipH) 1f - cropLeft else cropLeft,
+            if (flipV) 1f - cropTop else cropTop,
+        )
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
+        GLES20.glUniform1i(textureSampler, 0)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    /** Menggambar warna solid (bisa transparan). */
+    fun drawColor(
+        red: Float,
+        green: Float,
+        blue: Float,
+        alpha: Float,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+        rotation: Float,
+    ) {
+        buildMvp(left, bottom, width, height, rotation)
+        GLES20.glUseProgram(colorProgram)
+        bindQuad(colorProgram)
+        GLES20.glUniformMatrix4fv(colorMvp, 1, false, mvp, 0)
+        GLES20.glUniform4f(colorValue, red, green, blue, alpha)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
     fun release() {
-        if (program != 0) {
-            GLES20.glDeleteProgram(program)
-            program = 0
+        listOf(externalProgram, textureProgram, colorProgram).forEach {
+            if (it != 0) GLES20.glDeleteProgram(it)
+        }
+        externalProgram = 0
+        textureProgram = 0
+        colorProgram = 0
+    }
+
+    private fun buildMvp(
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+        rotation: Float,
+    ) {
+        Matrix.setIdentityM(model, 0)
+        Matrix.translateM(model, 0, left + width / 2f, bottom + height / 2f, 0f)
+        // Rotasi GL positif berlawanan jarum jam; UI memakai derajat searah jam.
+        Matrix.rotateM(model, 0, -rotation, 0f, 0f, 1f)
+        Matrix.translateM(model, 0, -width / 2f, -height / 2f, 0f)
+        Matrix.scaleM(model, 0, width, height, 1f)
+        Matrix.multiplyMM(tmp, 0, ortho, 0, model, 0)
+        System.arraycopy(tmp, 0, mvp, 0, 16)
+    }
+
+    private fun bindQuad(program: Int, uv: FloatBuffer = quadUvExternal) {
+        val positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
+        val texCoordHandle = GLES20.glGetAttribLocation(program, "aTexCoord")
+
+        quad.position(0)
+        GLES20.glEnableVertexAttribArray(positionHandle)
+        GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 0, quad)
+
+        // Program warna tidak memakai tekstur; atribut bisa dioptimalkan
+        // keluar sehingga lokasinya -1 dan tidak boleh diaktifkan.
+        if (texCoordHandle >= 0) {
+            uv.position(0)
+            GLES20.glEnableVertexAttribArray(texCoordHandle)
+            GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 0, uv)
         }
     }
 
@@ -115,25 +240,66 @@ class GlCompositor {
             }
 
     private companion object {
-        const val VERTEX_SHADER = """
+        const val VERTEX_EXTERNAL = """
             uniform mat4 uMvp;
             uniform mat4 uTexMatrix;
+            uniform vec2 uUvScale;
+            uniform vec2 uUvBias;
             attribute vec4 aPosition;
             attribute vec2 aTexCoord;
             varying vec2 vTexCoord;
             void main() {
                 gl_Position = uMvp * aPosition;
-                vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
+                vTexCoord = (uTexMatrix * vec4(aTexCoord * uUvScale + uUvBias, 0.0, 1.0)).xy;
             }
         """
 
-        const val FRAGMENT_SHADER = """
+        const val FRAGMENT_EXTERNAL = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             uniform samplerExternalOES uTexture;
             varying vec2 vTexCoord;
             void main() {
                 gl_FragColor = texture2D(uTexture, vTexCoord);
+            }
+        """
+
+        const val VERTEX_TEXTURE = """
+            uniform mat4 uMvp;
+            uniform vec2 uUvScale;
+            uniform vec2 uUvBias;
+            attribute vec4 aPosition;
+            attribute vec2 aTexCoord;
+            varying vec2 vTexCoord;
+            void main() {
+                gl_Position = uMvp * aPosition;
+                vTexCoord = aTexCoord * uUvScale + uUvBias;
+            }
+        """
+
+        const val FRAGMENT_TEXTURE = """
+            precision mediump float;
+            uniform sampler2D uTexture;
+            varying vec2 vTexCoord;
+            void main() {
+                gl_FragColor = texture2D(uTexture, vTexCoord);
+            }
+        """
+
+        const val VERTEX_COLOR = """
+            uniform mat4 uMvp;
+            attribute vec4 aPosition;
+            attribute vec2 aTexCoord;
+            void main() {
+                gl_Position = uMvp * aPosition;
+            }
+        """
+
+        const val FRAGMENT_COLOR = """
+            precision mediump float;
+            uniform vec4 uColor;
+            void main() {
+                gl_FragColor = uColor;
             }
         """
     }

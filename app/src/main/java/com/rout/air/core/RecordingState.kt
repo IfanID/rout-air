@@ -4,6 +4,9 @@ package com.rout.air.core
 sealed interface RecordingState {
     data object Idle : RecordingState
 
+    /** Sesi tangkap layar aktif tanpa menulis file; pratinjau berjalan. */
+    data object Previewing : RecordingState
+
     data object Preparing : RecordingState
 
     data class Recording(
