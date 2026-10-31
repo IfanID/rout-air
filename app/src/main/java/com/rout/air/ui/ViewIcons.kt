@@ -4,7 +4,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -130,44 +133,44 @@ internal fun LockIcon(
             .semantics { contentDescription = if (locked) "Buka kunci" else "Kunci posisi" },
     ) {
         val u = this.size.minDimension / 24f
-        val stroke = 1.9f * u
-        val shackleColor = color
+        val stroke = 2.2f * u
 
-        if (locked) {
-            // Gembok terkunci: busur penuh di atas badan.
-            drawArc(
-                color = shackleColor,
-                startAngle = 180f,
-                sweepAngle = 180f,
-                useCenter = false,
-                topLeft = Offset(7f * u, 4.5f * u),
-                size = Size(10f * u, 10f * u),
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-        } else {
-            // Gembok terbuka: busur digeser dan hanya sebagian.
-            drawArc(
-                color = shackleColor,
-                startAngle = 200f,
-                sweepAngle = 160f,
-                useCenter = false,
-                topLeft = Offset(9f * u, 3.5f * u),
-                size = Size(10f * u, 10f * u),
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-        }
-
-        drawRoundRect(
+        // Badan gembok digambar sebagai path penuh supaya pasti terlihat.
+        drawPath(
+            path = Path().apply {
+                addRoundRect(
+                    RoundRect(
+                        rect = Rect(4.5f * u, 10.5f * u, 19.5f * u, 20.5f * u),
+                        cornerRadius = CornerRadius(2.8f * u),
+                    ),
+                )
+            },
             color = color,
-            topLeft = Offset(4.5f * u, 10.5f * u),
-            size = Size(15f * u, 9.5f * u),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.6f * u),
         )
-        // Lubang kunci kecil agar bentuknya terbaca.
+
+        // Pegangan: terkunci melengkung penuh, terbuka digeser ke kanan.
+        drawPath(
+            path = Path().apply {
+                if (locked) {
+                    moveTo(7.5f * u, 11f * u)
+                    lineTo(7.5f * u, 8f * u)
+                    cubicTo(7.5f * u, 3.2f * u, 16.5f * u, 3.2f * u, 16.5f * u, 8f * u)
+                    lineTo(16.5f * u, 11f * u)
+                } else {
+                    moveTo(10f * u, 11f * u)
+                    lineTo(10f * u, 8f * u)
+                    cubicTo(10f * u, 3.2f * u, 19f * u, 3.2f * u, 19f * u, 8f * u)
+                }
+            },
+            color = color,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+
+        // Lubang kunci supaya bentuknya jelas.
         drawCircle(
-            color = Color.Black.copy(alpha = 0.55f),
-            radius = 1.5f * u,
-            center = Offset(12f * u, 15.2f * u),
+            color = Color.Black.copy(alpha = 0.6f),
+            radius = 1.7f * u,
+            center = Offset(12f * u, 15.5f * u),
         )
     }
 }
@@ -264,5 +267,34 @@ internal fun DragHandleIcon(
                 cap = StrokeCap.Round,
             )
         }
+    }
+}
+
+/** Empat sudut mengarah keluar: tombol masuk pratinjau penuh. */
+@Composable
+internal fun FullscreenIcon(
+    color: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 20.dp,
+) {
+    Canvas(
+        modifier = modifier
+            .size(size)
+            .semantics { contentDescription = "Pratinjau penuh" },
+    ) {
+        val u = this.size.minDimension / 24f
+        val stroke = 2.2f * u
+        val len = 5f * u
+        val inset = 4f * u
+        val far = 20f * u
+        // Empat sudut siku-siku, seperti ikon maximize.
+        drawLine(color, Offset(inset, inset + len), Offset(inset, inset), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(inset, inset), Offset(inset + len, inset), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(far - len, inset), Offset(far, inset), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(far, inset), Offset(far, inset + len), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(inset, far - len), Offset(inset, far), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(inset, far), Offset(inset + len, far), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(far - len, far), Offset(far, far), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(color, Offset(far, far - len), Offset(far, far), strokeWidth = stroke, cap = StrokeCap.Round)
     }
 }

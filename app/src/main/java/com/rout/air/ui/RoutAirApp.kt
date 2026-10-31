@@ -41,6 +41,7 @@ import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.RecordingState
 import com.rout.air.core.SceneCollection
+import com.rout.air.data.AudioMixer
 import com.rout.air.data.SceneManager
 import com.rout.air.data.SettingsStore
 import com.rout.air.data.updateItem
@@ -70,12 +71,18 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     val store = remember(context) { SettingsStore(context) }
 
     remember(context) { SceneManager.attach(context) }
+    remember(context) { AudioMixer.attach(context) }
     val scenes by SceneManager.state.collectAsState()
+
+    val audioMix by AudioMixer.mix.collectAsState()
 
     var config by remember { mutableStateOf(store.load()) }
     var tab by rememberSaveable { mutableStateOf(AppTab.Home) }
     var elapsedMs by remember { mutableStateOf(0L) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Status pratinjau penuh disimpan di sini supaya tetap diingat saat
+    // berpindah tab lalu kembali ke Studio.
+    var studioFullscreen by rememberSaveable { mutableStateOf(false) }
 
     val state by CaptureEngine.state.collectAsState()
 
@@ -122,13 +129,24 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         }
     }
 
+    // Sumber audio di panel Sumber ikut menjadi kanal mixer, seperti OBS.
+    LaunchedEffect(scenes) {
+        scenes?.let { AudioMixer.syncFromScene(it) }
+    }
+
     // Kanvas mengikuti sesi (dikunci saat sesi dibuka) supaya pratinjau dan
     // hasil rekaman selalu memakai ukuran yang sama.
     LaunchedEffect(state) {
         if (state is RecordingState.Idle) lockedCanvas = null
     }
 
-    LaunchedEffect(config) { store.save(config) }
+    LaunchedEffect(config) {
+        store.save(config)
+        // Perubahan kanvas (mis. orientasi video) langsung dipakai selama
+        // tidak sedang merekam. Rekaman yang berjalan tetap memakai ukuran
+        // yang sudah dikunci saat sesi dimulai.
+        if (state !is RecordingState.Recording) lockedCanvas = null
+    }
 
     val projectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -172,6 +190,7 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         pendingAutoRecord = autoRecord
         val needed = buildList {
             add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -287,6 +306,7 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
 
     Scaffold(
         modifier = modifier,
+        // Navbar selalu tampil, termasuk saat pratinjau penuh di Studio.
         bottomBar = {
             NavigationBar {
                 AppTab.entries.forEach { item ->
@@ -310,6 +330,7 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                     onStart = startRecording,
                     onStop = stopRecording,
                     onEndSession = endSession,
+                    onRequestPermission = { beginSession(autoRecord = false) },
                     onClearError = { CaptureEngine.clearError() },
                 )
 
@@ -328,6 +349,8 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                     onStart = startRecording,
                     onStop = stopRecording,
                     onClearError = { CaptureEngine.clearError() },
+                    fullscreen = studioFullscreen,
+                    onFullscreenChange = { studioFullscreen = it },
                 )
 
                 AppTab.Scenes -> ScenesScreen(
@@ -341,8 +364,9 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
 
                 AppTab.Audio -> AudioScreen(
                     state = state,
-                    recordAudio = config.recordAudio,
-                    onRecordAudioChange = { config = config.copy(recordAudio = it) },
+                    mix = audioMix,
+                    onChannelChange = { AudioMixer.update(it) },
+                    onMasterEnabledChange = { AudioMixer.setMasterEnabled(it) },
                 )
 
                 AppTab.Recordings -> RecordingsScreen()
@@ -350,7 +374,10 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                 AppTab.Settings -> SettingsScreen(
                     config = config,
                     canvasConfig = canvasConfig,
+                    mix = audioMix,
                     onConfigChange = { config = it },
+                    onMixChange = { AudioMixer.update(it) },
+                    onMasterEnabledChange = { AudioMixer.setMasterEnabled(it) },
                 )
             }
         }

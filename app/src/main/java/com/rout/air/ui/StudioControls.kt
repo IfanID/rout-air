@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,10 +27,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.rout.air.R
 
 /**
  * Tombol Transisi ala OBS Studio Mode.
@@ -95,6 +99,7 @@ internal fun RecordButton(
     isActive: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    preparing: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -140,15 +145,29 @@ internal fun RecordButton(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // Ikon status: lingkaran saat siap, kotak saat merekam.
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .clip(if (isActive) RoundedCornerShape(3.dp) else CircleShape)
-                    .background(content.copy(alpha = indicatorAlpha)),
-            )
+            // Ikon berubah sesuai kondisi: rekam, stop, atau memuat.
+            when {
+                preparing -> CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = content,
+                )
+
+                else -> Icon(
+                    painter = painterResource(
+                        if (isActive) R.drawable.ic_stop else R.drawable.ic_record,
+                    ),
+                    contentDescription = null,
+                    tint = if (isActive) content.copy(alpha = indicatorAlpha) else content,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Text(
-                text = if (isActive) "Berhenti" else "Rekam",
+                text = when {
+                    preparing -> "Menyiapkan…"
+                    isActive -> "Berhenti"
+                    else -> "Rekam"
+                },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.res.Configuration
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -32,8 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,11 +55,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.rout.air.R
 import com.rout.air.core.Align
+import com.rout.air.core.AudioChannelId
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.Crop
 import com.rout.air.core.SceneCollection
@@ -82,6 +88,7 @@ import com.rout.air.data.setActiveScene
 import com.rout.air.data.updateItem
 import com.rout.air.data.updateSource
 import com.rout.air.engine.SourceBitmap
+import com.rout.air.data.AudioMixer
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -110,7 +117,8 @@ fun ScenesScreen(
 
     var showAddScene by remember { mutableStateOf(false) }
     var showRenameScene by remember { mutableStateOf(false) }
-    var addMenuOpen by remember { mutableStateOf(false) }
+    var showAddSource by remember { mutableStateOf(false) }
+    var showAppAudioPicker by remember { mutableStateOf(false) }
     var replaceSourceId by remember { mutableStateOf<String?>(null) }
 
     val activeScene = collection.activeScene()
@@ -304,79 +312,7 @@ fun ScenesScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Sumber", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.weight(1f))
-            Box {
-                TextButton(onClick = { addMenuOpen = true }) { Text("＋ Sumber") }
-                DropdownMenu(
-                    expanded = addMenuOpen,
-                    onDismissRequest = { addMenuOpen = false },
-                ) {
-                    SourceMenuItem("Layar", hasScreenInActiveScene) {
-                        addMenuOpen = false
-                        // Satu scene hanya boleh punya satu Layar.
-                        val (next, itemId) = collection.addScreenItem()
-                        if (itemId != null) {
-                            onCollectionChange(next)
-                            onSelectItem(itemId)
-                        }
-                    }
-                    SourceMenuItem("Gambar", false) {
-                        addMenuOpen = false
-                        imagePicker.launch(
-                            PickVisualMediaRequest(
-                                ActivityResultContracts.PickVisualMedia.ImageOnly,
-                            ),
-                        )
-                    }
-                    SourceMenuItem("Teks", false) {
-                        addMenuOpen = false
-                        val settings = SourceSettings(
-                            text = "Teks baru",
-                            textSize = 48f,
-                            width = canvasConfig.width,
-                            height = SourceBitmap.measureTextHeight(
-                                "Teks baru",
-                                48f,
-                                canvasConfig.width,
-                                density,
-                            ),
-                        )
-                        val source = SceneSource(
-                            type = SourceType.Text,
-                            name = uniqueSourceName(collection, "Teks"),
-                            settings = settings,
-                        )
-                        val item = SceneItem(
-                            sourceId = source.id,
-                            transform = Transform(
-                                x = canvasConfig.width / 2f,
-                                y = canvasConfig.height * 0.8f,
-                                align = Align.Center,
-                            ),
-                        )
-                        onCollectionChange(collection.addSource(source, item))
-                        onSelectItem(item.id)
-                    }
-                    SourceMenuItem("Warna", false) {
-                        addMenuOpen = false
-                        val settings = SourceSettings(
-                            color = 0xFF00E5FF,
-                            width = 640,
-                            height = 360,
-                        )
-                        val source = SceneSource(
-                            type = SourceType.Color,
-                            name = uniqueSourceName(collection, "Warna"),
-                            settings = settings,
-                        )
-                        val item = SceneItem(
-                            sourceId = source.id,
-                            transform = fitTransform(640, 360, canvasConfig),
-                        )
-                        onCollectionChange(collection.addSource(source, item))
-                        onSelectItem(item.id)
-                    }
-                }
-            }
+            TextButton(onClick = { showAddSource = true }) { Text("＋ Sumber") }
         }
 
         if (activeScene == null || activeScene.items.isEmpty()) {
@@ -405,6 +341,12 @@ fun ScenesScreen(
                         onCollectionChange(
                             collection.updateItem(item.copy(visible = !item.visible)),
                         )
+                        if (source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput) {
+                            AudioMixer.setEnabled(
+                                AudioChannelId.forSource(source.id),
+                                !item.visible,
+                            )
+                        }
                     },
                     onToggleLock = {
                         onCollectionChange(
@@ -461,15 +403,100 @@ fun ScenesScreen(
             },
         )
     }
-}
 
-@Composable
-private fun SourceMenuItem(label: String, disabled: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(if (disabled) "$label (sudah ada)" else label) },
-        enabled = !disabled,
-        onClick = onClick,
-    )
+    if (showAddSource) {
+        AddSourceDialog(
+            hasScreen = hasScreenInActiveScene,
+            onScreen = {
+                showAddSource = false
+                val (next, itemId) = collection.addScreenItem()
+                if (itemId != null) {
+                    onCollectionChange(next)
+                    onSelectItem(itemId)
+                }
+            },
+            onImage = {
+                showAddSource = false
+                imagePicker.launch(
+                    PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.ImageOnly,
+                    ),
+                )
+            },
+            onText = {
+                showAddSource = false
+                val settings = SourceSettings(
+                    text = "Teks baru",
+                    textSize = 48f,
+                    width = canvasConfig.width,
+                    height = SourceBitmap.measureTextHeight(
+                        "Teks baru",
+                        48f,
+                        canvasConfig.width,
+                        density,
+                    ),
+                )
+                val source = SceneSource(
+                    type = SourceType.Text,
+                    name = uniqueSourceName(collection, "Teks"),
+                    settings = settings,
+                )
+                val item = SceneItem(
+                    sourceId = source.id,
+                    transform = Transform(
+                        x = canvasConfig.width / 2f,
+                        y = canvasConfig.height * 0.8f,
+                        align = Align.Center,
+                    ),
+                )
+                onCollectionChange(collection.addSource(source, item))
+                onSelectItem(item.id)
+            },
+            onColor = {
+                showAddSource = false
+                val settings = SourceSettings(
+                    color = 0xFF00E5FF,
+                    width = 640,
+                    height = 360,
+                )
+                val source = SceneSource(
+                    type = SourceType.Color,
+                    name = uniqueSourceName(collection, "Warna"),
+                    settings = settings,
+                )
+                val item = SceneItem(
+                    sourceId = source.id,
+                    transform = fitTransform(640, 360, canvasConfig),
+                )
+                onCollectionChange(collection.addSource(source, item))
+                onSelectItem(item.id)
+            },
+            onApplicationAudio = {
+                showAddSource = false
+                showAppAudioPicker = true
+            },
+            onDismiss = { showAddSource = false },
+        )
+    }
+
+    if (showAppAudioPicker) {
+        ApplicationAudioPickerDialog(
+            onSelect = { app ->
+                AudioMixer.addApplicationAudio(
+                    uid = app.uid,
+                    packageName = app.packageName,
+                    label = app.label,
+                )
+                android.widget.Toast.makeText(
+                    context,
+                    "${app.label} ditambahkan ke tab Audio",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+                showAppAudioPicker = false
+            },
+            onDismiss = { showAppAudioPicker = false },
+        )
+    }
 }
 
 @Composable
@@ -604,7 +631,7 @@ private fun SourceRow(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Surface(
                         color = if (selected) {
@@ -630,11 +657,18 @@ private fun SourceRow(
                         }
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(source.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = source.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Text(
                             text = "${typeLabel(source.type)} • ${intrinsicLabel(source)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     // Tiga aksi per item, masing-masing dengan ikon yang jelas.
@@ -655,20 +689,34 @@ private fun SourceRow(
                             },
                         )
                     }
-                    RowIconAction(onClick = onToggleLock) {
-                        LockIcon(
-                            locked = item.locked,
-                            color = if (item.locked) {
+                    RowIconAction(
+                        onClick = onToggleLock,
+                        // Latar tipis saat terkunci supaya posisi tombol tetap
+                        // terlihat jelas walau ikon berubah warna.
+                        background = if (item.locked) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                        } else {
+                            null
+                        },
+                    ) {
+                        // Ikon vector (bukan Canvas) supaya pasti tergambar.
+                        Icon(
+                            painter = painterResource(
+                                if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
+                            ),
+                            contentDescription = if (item.locked) {
+                                "Buka kunci"
+                            } else {
+                                "Kunci posisi"
+                            },
+                            tint = if (item.locked) {
                                 MaterialTheme.colorScheme.primary
                             } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
+                                MaterialTheme.colorScheme.onSurface
                             },
+                            modifier = Modifier.size(22.dp),
                         )
                     }
-                    ChevronRightIcon(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 2.dp),
-                    )
                 }
             }
         }
@@ -677,11 +725,22 @@ private fun SourceRow(
 
 /** Tombol ikon ringkas dengan area sentuh yang nyaman. */
 @Composable
-private fun RowIconAction(onClick: () -> Unit, content: @Composable () -> Unit) {
+private fun RowIconAction(
+    onClick: () -> Unit,
+    background: Color? = null,
+    content: @Composable () -> Unit,
+) {
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(32.dp)
             .clip(CircleShape)
+            .then(
+                if (background != null) {
+                    Modifier.background(background)
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -706,6 +765,15 @@ private fun SourceEditor(
     var name by remember(source.id) { mutableStateOf(source.name) }
     var text by remember(source.id) { mutableStateOf(source.settings.text) }
     var textSize by remember(source.id) { mutableStateOf(source.settings.textSize) }
+    var showDevicePicker by remember(source.id) { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val previewHeight = if (portrait) {
+        (configuration.screenHeightDp * 0.46f).dp.coerceIn(300.dp, 440.dp)
+    } else {
+        (configuration.screenHeightDp * 0.55f).dp.coerceIn(220.dp, 380.dp)
+    }
+    val isAudioSource = source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput
 
     // Menu konteks dari pratinjau (tahan lama / klik dua kali).
     var menuTarget by remember(item.id) { mutableStateOf<Pair<SceneItem, Offset>?>(null) }
@@ -715,6 +783,19 @@ private fun SourceEditor(
     fun updateTransform(block: (Transform) -> Transform) =
         updateItem(item.copy(transform = block(item.transform)))
 
+    if (isAudioSource) {
+        AudioSourceEditor(
+            canvas = canvas,
+            collection = collection,
+            item = item,
+            source = source,
+            onCollectionChange = onCollectionChange,
+            onBack = onBack,
+            onDelete = onDelete,
+        )
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -722,13 +803,45 @@ private fun SourceEditor(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹ Kembali") }
-            Text(source.name, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = source.name,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // Kunci/unlock item langsung dari halaman sumber.
+            RowIconAction(
+                onClick = { updateItem(item.copy(locked = !item.locked)) },
+                background = if (item.locked) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                } else {
+                    null
+                },
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
+                    ),
+                    contentDescription = if (item.locked) "Buka kunci" else "Kunci posisi",
+                    tint = if (item.locked) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
 
         // Pratinjau menempel di atas, sedangkan pengaturan di bawahnya yang
         // bergulir. Hasil geser slider jadi selalu terlihat.
         Spacer(Modifier.height(8.dp))
-        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(previewHeight),
+        ) {
             ScenePreview(
                 canvas = canvas,
                 collection = collection,
@@ -736,11 +849,6 @@ private fun SourceEditor(
                 onSelectItem = {},
                 onTransform = onTransform,
                 onItemMenu = { target, position -> menuTarget = target to position },
-                onCropDrag = { id, crop ->
-                    collection.item(id)?.let { target ->
-                        updateItem(target.copy(crop = crop))
-                    }
-                },
                 gestureTargetItemId = item.id,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -761,6 +869,23 @@ private fun SourceEditor(
                         onSelectItem = onSelectItem,
                     )
                 }
+            }
+
+            val hasScreen = collection.activeScene()?.items?.any {
+                collection.source(it.sourceId)?.type == SourceType.Screen
+            } == true
+            if (hasScreen) {
+                Text(
+                    text = "Layar: pratinjau langsung ada di tab Studio",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFB8C2CC),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xCC000000))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
             }
         }
 
@@ -853,10 +978,70 @@ private fun SourceEditor(
 
             SourceType.Screen -> {
                 Spacer(Modifier.height(8.dp))
-                Hint("Tangkapan layar penuh. Ukuran mengikuti kanvas dan mode isi di Setelan.")
+                Hint(
+                    "Tangkapan layar penuh. Ukuran mengikuti kanvas dan mode isi di Setelan. " +
+                        "Layar default berada di lapisan paling bawah; ubah urutan lewat " +
+                        "pegangan ☰ di daftar Sumber atau tombol Naikkan/Turunkan lapisan.",
+                )
+            }
+
+            SourceType.AudioInput -> {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Perangkat input: ${source.settings.audioDeviceName ?: "Default"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = when (source.settings.audioDeviceType) {
+                        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
+                            "Bluetooth / TWS. Mic TWS memakai profil SCO; musik A2DP " +
+                                "bisa berhenti selama mic dipakai."
+
+                        android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Mikrofon bawaan perangkat"
+                        else -> "Volume, mute, filter, dan monitor diatur di halaman Audio."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showDevicePicker = true }) {
+                        Text("Ganti perangkat input")
+                    }
+                }
+                if (source.settings.audioDeviceType == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Aktifkan SCO (mic Bluetooth)")
+                            Text(
+                                "Coba aktifkan profil headset agar mic TWS bisa dipakai.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        androidx.compose.material3.Switch(
+                            checked = source.settings.audioScoEnabled,
+                            onCheckedChange = { enabled ->
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(audioScoEnabled = enabled),
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+
+            SourceType.AudioOutput -> {
+                Spacer(Modifier.height(8.dp))
+                Hint(
+                    "Audio Output Capture: audio dari aplikasi lain (AudioPlaybackCapture). " +
+                        "Volume dan filter diatur di halaman Audio.",
+                )
             }
         }
 
+        if (!isAudioSource) {
         Spacer(Modifier.height(20.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -869,11 +1054,12 @@ private fun SourceEditor(
             )
             TextButton(
                 onClick = {
-                    // Hanya transformasi; crop punya tombolnya sendiri.
+                    // Semua transformasi dikembalikan; crop punya tombolnya
+                    // sendiri di bagian Crop.
                     updateTransform { defaultTransform(source, canvas) }
                 },
             ) {
-                Text("Reset transform")
+                Text("Reset transformasi")
             }
         }
 
@@ -992,7 +1178,9 @@ private fun SourceEditor(
         CropSlider("Bawah", item.crop.bottom) { value ->
             updateItem(item.copy(crop = item.crop.copy(bottom = value)))
         }
+        }
 
+        if (!isAudioSource) {
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
@@ -1002,11 +1190,235 @@ private fun SourceEditor(
                 onClick = { onCollectionChange(collection.moveLayer(item.id, -1)) },
             ) { Text("Turunkan lapisan") }
         }
+        }
 
         Spacer(Modifier.height(8.dp))
         // Menghapus item ini saja; sumber dibuang hanya bila tak terpakai lagi.
         TextButton(onClick = onDelete) { Text("Hapus item") }
         }
+    }
+
+    if (showDevicePicker) {
+        AudioDevicePickerDialog(
+            currentId = source.settings.audioDeviceId,
+            onSelect = { option ->
+                updateSource(
+                    source.copy(
+                        settings = source.settings.copy(
+                            audioDeviceId = option?.id ?: 0,
+                            audioDeviceName = option?.name,
+                            audioDeviceType = option?.type ?: 0,
+                            audioScoEnabled = if (option?.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                                source.settings.audioScoEnabled
+                            } else {
+                                false
+                            },
+                        ),
+                    ),
+                )
+                showDevicePicker = false
+            },
+            onDismiss = { showDevicePicker = false },
+        )
+    }
+}
+
+@Composable
+private fun AudioSourceEditor(
+    canvas: CaptureConfig,
+    collection: SceneCollection,
+    item: SceneItem,
+    source: SceneSource,
+    onCollectionChange: (SceneCollection) -> Unit,
+    onBack: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember(source.id) { mutableStateOf(source.name) }
+    var showDevicePicker by remember(source.id) { mutableStateOf(false) }
+
+    val mix by AudioMixer.mix.collectAsState()
+    val levels by AudioMixer.levels.collectAsState()
+    val runtime by AudioMixer.runtime.collectAsState()
+
+    val channelId = AudioChannelId.forSource(source.id)
+    val channel = mix.channel(channelId)
+    val level = levels.forChannel(channelId)
+    val ready = runtime.running && runtime.ready(channelId)
+    val isBluetooth = source.settings.audioDeviceType == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+
+    fun updateSource(next: SceneSource) = onCollectionChange(collection.updateSource(next))
+    fun updateItem(next: SceneItem) = onCollectionChange(collection.updateItem(next))
+
+    val statusText = when {
+        !channel.enabled -> "Nonaktif"
+        !runtime.running -> "Sesi belum aktif"
+        !ready -> "Gagal dibuka — cek izin mikrofon/perangkat"
+        channel.muted -> "Aktif (muted)"
+        else -> "Aktif — mic mengirim suara"
+    }
+    val statusColor = when {
+        !channel.enabled || !runtime.running -> MaterialTheme.colorScheme.onSurfaceVariant
+        !ready -> MaterialTheme.colorScheme.error
+        channel.muted -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹ Kembali") }
+            Text(
+                text = source.name,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // Kunci/unlock item langsung dari halaman sumber audio.
+            RowIconAction(
+                onClick = { updateItem(item.copy(locked = !item.locked)) },
+                background = if (item.locked) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                } else {
+                    null
+                },
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
+                    ),
+                    contentDescription = if (item.locked) "Buka kunci" else "Kunci posisi",
+                    tint = if (item.locked) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    text = if (source.type == SourceType.AudioInput) {
+                        "Audio Input Capture"
+                    } else {
+                        "Audio Output Capture"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = if (source.type == SourceType.AudioInput) {
+                        "Sumber audio dari mikrofon / perangkat input. Tidak tampil di kanvas."
+                    } else {
+                        "Sumber audio playback dari aplikasi lain (AudioPlaybackCapture)."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        updateSource(source.copy(name = it))
+                    },
+                    label = { Text("Nama sumber") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                if (source.type == SourceType.AudioInput) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Perangkat: ${source.settings.audioDeviceName ?: "Default"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = when (source.settings.audioDeviceType) {
+                            android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Mikrofon bawaan"
+                            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth / TWS (SCO)"
+                            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Headset kabel"
+                            android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+                            android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+                            android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB"
+                            android.media.AudioDeviceInfo.TYPE_LINE_ANALOG,
+                            android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Line in"
+                            0 -> "Mengikuti perangkat input sistem"
+                            else -> "Audio input"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { showDevicePicker = true }) {
+                        Text("Ganti perangkat input")
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("Level input", style = MaterialTheme.typography.bodyMedium)
+                VolumeMeter(
+                    level = level,
+                    active = ready && channel.enabled && !channel.muted,
+                    decay = mix.meterDecay,
+                    vertical = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = statusColor,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Volume, mute, filter, balance, sync offset, track, dan monitoring " +
+                "diatur di tab Audio.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = onDelete) { Text("Hapus sumber") }
+    }
+
+    if (showDevicePicker) {
+        AudioDevicePickerDialog(
+            currentId = source.settings.audioDeviceId,
+            onSelect = { option ->
+                updateSource(
+                    source.copy(
+                        settings = source.settings.copy(
+                            audioDeviceId = option?.id ?: 0,
+                            audioDeviceName = option?.name,
+                            audioDeviceType = option?.type ?: 0,
+                            audioScoEnabled = if (option?.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                                source.settings.audioScoEnabled
+                            } else {
+                                false
+                            },
+                        ),
+                    ),
+                )
+                showDevicePicker = false
+            },
+            onDismiss = { showDevicePicker = false },
+        )
     }
 }
 
@@ -1217,6 +1629,8 @@ private fun typeLabel(type: SourceType): String = when (type) {
     SourceType.Image -> "Gambar"
     SourceType.Text -> "Teks"
     SourceType.Color -> "Warna"
+    SourceType.AudioInput -> "Audio input"
+    SourceType.AudioOutput -> "Audio output"
 }
 
 private fun typeSymbol(type: SourceType): String = when (type) {
@@ -1224,10 +1638,13 @@ private fun typeSymbol(type: SourceType): String = when (type) {
     SourceType.Image -> "▤"
     SourceType.Text -> "T"
     SourceType.Color -> "■"
+    SourceType.AudioInput -> "◉"
+    SourceType.AudioOutput -> "◎"
 }
 
 private fun intrinsicLabel(source: SceneSource): String = when (source.type) {
     SourceType.Screen -> "mengikuti kanvas"
+    SourceType.AudioInput, SourceType.AudioOutput -> "audio"
     else -> "${source.settings.width}x${source.settings.height}"
 }
 

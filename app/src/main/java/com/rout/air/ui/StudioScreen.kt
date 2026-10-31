@@ -4,8 +4,11 @@ import android.content.res.Configuration
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,15 +44,15 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.core.CaptureConfig
-import com.rout.air.core.Crop
 import com.rout.air.core.RecordingState
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
-import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
 
 /**
@@ -77,11 +80,18 @@ fun StudioScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onClearError: () -> Unit,
+    fullscreen: Boolean,
+    onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val isActive = state is RecordingState.Recording
     val sessionLive = state is RecordingState.Recording || state is RecordingState.Previewing
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Tombol kembali menutup mode pratinjau penuh, tanpa keluar aplikasi.
+    if (fullscreen) {
+        BackHandler { onFullscreenChange(false) }
+    }
 
     Column(
         modifier = modifier
@@ -104,16 +114,21 @@ fun StudioScreen(
             if (state is RecordingState.Error) {
                 TextButton(onClick = onClearError) { Text("Tutup") }
             }
+            // Satu tombol di header: ikon full screen saat normal, ikon ✕
+            // saat pratinjau penuh. Posisinya sama supaya konsisten.
+            PreviewFullscreenButton(
+                fullscreen = fullscreen,
+                onClick = { onFullscreenChange(!fullscreen) },
+            )
         }
 
         Spacer(Modifier.height(10.dp))
 
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            if (landscape) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
+            if (fullscreen) {
+                // Pratinjau penuh: panel Program disembunyikan supaya area
+                // edit jadi luas, tetapi header dan tombol bawah tetap ada.
+                Box(modifier = Modifier.fillMaxSize()) {
                     RawPreview(
                         isActive = sessionLive,
                         canvasConfig = canvasConfig,
@@ -122,8 +137,26 @@ fun StudioScreen(
                         onSelectItem = onSelectItem,
                         onTransform = onTransform,
                         onCollectionChange = onCollectionChange,
-                        modifier = Modifier.weight(1f).fillMaxSize(),
+                        modifier = Modifier.fillMaxSize(),
                     )
+                }
+            } else if (landscape) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                        RawPreview(
+                            isActive = sessionLive,
+                            canvasConfig = canvasConfig,
+                            collection = collection,
+                            selectedItemId = selectedItemId,
+                            onSelectItem = onSelectItem,
+                            onTransform = onTransform,
+                            onCollectionChange = onCollectionChange,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     ProgramPane(
                         isLive = sessionLive,
                         canvasConfig = canvasConfig,
@@ -136,16 +169,18 @@ fun StudioScreen(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    RawPreview(
-                        isActive = sessionLive,
-                        canvasConfig = canvasConfig,
-                        collection = collection,
-                        selectedItemId = selectedItemId,
-                        onSelectItem = onSelectItem,
-                        onTransform = onTransform,
-                        onCollectionChange = onCollectionChange,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        RawPreview(
+                            isActive = sessionLive,
+                            canvasConfig = canvasConfig,
+                            collection = collection,
+                            selectedItemId = selectedItemId,
+                            onSelectItem = onSelectItem,
+                            onTransform = onTransform,
+                            onCollectionChange = onCollectionChange,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     ProgramPane(
                         isLive = sessionLive,
                         canvasConfig = canvasConfig,
@@ -184,9 +219,42 @@ fun StudioScreen(
                 RecordButton(
                     isActive = isActive,
                     enabled = state !is RecordingState.Preparing,
+                    preparing = state is RecordingState.Preparing,
                     onClick = { if (isActive) onStop() else onStart() },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PreviewFullscreenButton(
+    fullscreen: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xE6000000))
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription =
+                    if (fullscreen) "Keluar pratinjau penuh" else "Pratinjau penuh"
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (fullscreen) {
+            // Ikon tutup sederhana, tanpa teks.
+            Text(
+                text = "✕",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        } else {
+            FullscreenIcon(color = Color.White, size = 18.dp)
         }
     }
 }
@@ -272,6 +340,7 @@ private fun RawPreview(
     onSelectItem: (String?) -> Unit,
     onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
     onCollectionChange: (SceneCollection) -> Unit,
+    showCaption: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val selected = collection.item(selectedItemId)
@@ -296,11 +365,7 @@ private fun RawPreview(
             onMenuDismiss = { menuTarget = null },
             onCollectionChange = onCollectionChange,
             selection = itemCanvasRect(collection, canvasConfig, selectedItemId),
-            onCropDrag = { id, crop ->
-                collection.item(id)?.let { target ->
-                    onCollectionChange(collection.updateItem(target.copy(crop = crop)))
-                }
-            },
+            showCaption = showCaption,
             attach = { surface, width, height ->
                 CaptureEngine.attachPreview(surface, width, height)
             },
@@ -314,11 +379,6 @@ private fun RawPreview(
                 onSelectItem = onSelectItem,
                 onTransform = onTransform,
                 onItemMenu = openMenu,
-                onCropDrag = { id, crop ->
-                    collection.item(id)?.let { target ->
-                        onCollectionChange(collection.updateItem(target.copy(crop = crop)))
-                    }
-                },
                 modifier = Modifier.fillMaxSize(),
             )
             ItemMenuAnchor(
@@ -370,7 +430,7 @@ private fun PreviewPane(
     menuTarget: Pair<SceneItem, Offset>? = null,
     onMenuDismiss: () -> Unit = {},
     onCollectionChange: ((SceneCollection) -> Unit)? = null,
-    onCropDrag: ((String, Crop) -> Unit)? = null,
+    showCaption: Boolean = true,
     attach: (Surface?, Int, Int) -> Unit,
 ) {
     val holderCallback = remember(attach) {
@@ -395,25 +455,27 @@ private fun PreviewPane(
     Column(modifier = modifier) {
         // Caption di luar kotak supaya tidak menutupi gambar, seperti label
         // panel OBS.
-        Row(
-            modifier = Modifier.padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (live) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFE53935)),
+        if (showCaption) {
+            Row(
+                modifier = Modifier.padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (live) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE53935)),
+                    )
+                }
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFB8C2CC),
+                    textAlign = TextAlign.Start,
                 )
             }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFFB8C2CC),
-                textAlign = TextAlign.Start,
-            )
         }
 
         BoxWithConstraints(
@@ -463,12 +525,6 @@ private fun PreviewPane(
                                     size = Size(width, height),
                                     style = Stroke(width = 2.dp.toPx()),
                                 )
-                                // Pegangan crop di tengah tiap tepi.
-                                if (collection.item(selectedItemId)?.locked != true &&
-                                    onCropDrag != null
-                                ) {
-                                    drawCropHandles(width, height)
-                                }
                             }
 
                             // Garis bantu rotasi: horizontal & vertikal lewat
@@ -509,7 +565,6 @@ private fun PreviewPane(
                         onSelectItem = onSelectItem,
                         onTransform = onTransform,
                         onItemMenu = onItemMenu,
-                        onCropDrag = onCropDrag,
                         frameWidthPx = frameWidthPx,
                         frameHeightPx = frameHeightPx,
                     )
@@ -545,7 +600,6 @@ private fun PreviewGestureLayer(
     onSelectItem: (String?) -> Unit,
     onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
     onItemMenu: ((SceneItem, Offset) -> Unit)?,
-    onCropDrag: ((String, Crop) -> Unit)? = null,
     frameWidthPx: Float,
     frameHeightPx: Float,
 ) {
@@ -554,7 +608,6 @@ private fun PreviewGestureLayer(
     val latestTransform by rememberUpdatedState(onTransform)
     val latestMenu by rememberUpdatedState(onItemMenu)
     val latestSelected by rememberUpdatedState(selectedItemId)
-    val latestCrop by rememberUpdatedState(onCropDrag)
 
     Box(
         modifier = Modifier
@@ -605,13 +658,6 @@ private fun PreviewGestureLayer(
 
                 var activeId: String? = null
                 var pendingSelect = false
-                var cropEdge: CropEdge? = null
-                var cropItemId: String? = null
-                var cropBase: Crop? = null
-                var cropRawWidth = 1f
-                var cropRawHeight = 1f
-                var cropScaleX = 1f
-                var cropScaleY = 1f
                 detectItemTransformGestures(
                     onStart = { offset ->
                         val insideFrame = scale > 0f &&
@@ -634,63 +680,13 @@ private fun PreviewGestureLayer(
                         val candidate = direct ?: fallback
                         activeId = candidate?.id
                         pendingSelect = direct != null
-
-                        // Sentuhan tepat di pegangan crop mengubah crop.
-                        cropEdge = null
-                        cropBase = null
-                        cropItemId = null
-                        if (candidate != null && !candidate.locked &&
-                            insideFrame && scale > 0f
-                        ) {
-                            val edge = cropHandleAt(
-                                latestCollection,
-                                canvas,
-                                candidate.id,
-                                canvasX,
-                                canvasY,
-                                26.dp.toPx() / scale,
-                            )
-                            val source = latestCollection.source(candidate.sourceId)
-                            if (edge != null && source != null) {
-                                val (rawWidth, rawHeight) = naturalSize(source, canvas)
-                                cropEdge = edge
-                                cropItemId = candidate.id
-                                cropBase = candidate.crop
-                                cropRawWidth = rawWidth.coerceAtLeast(1f)
-                                cropRawHeight = rawHeight.coerceAtLeast(1f)
-                                cropScaleX = candidate.transform.scaleX.coerceAtLeast(0.01f)
-                                cropScaleY = candidate.transform.scaleY.coerceAtLeast(0.01f)
-                                pendingSelect = false
-                            }
-                        }
                     },
                     onEnd = {
                         activeId = null
                         pendingSelect = false
-                        cropEdge = null
-                        cropItemId = null
-                        cropBase = null
                     },
                 ) { pan, zoom, rotation ->
                     val id = activeId ?: return@detectItemTransformGestures
-
-                    val edge = cropEdge
-                    val base = cropBase
-                    val cropId = cropItemId
-                    if (edge != null && base != null && cropId != null) {
-                        val dx = pan.x / scale
-                        val dy = pan.y / scale
-                        val delta = when (edge) {
-                            CropEdge.Left -> dx / (cropRawWidth * cropScaleX)
-                            CropEdge.Right -> -dx / (cropRawWidth * cropScaleX)
-                            CropEdge.Top -> dy / (cropRawHeight * cropScaleY)
-                            CropEdge.Bottom -> -dy / (cropRawHeight * cropScaleY)
-                        }
-                        val next = base.adjustCrop(edge, delta)
-                        cropBase = next
-                        latestCrop?.invoke(cropId, next)
-                        return@detectItemTransformGestures
-                    }
 
                     if (pendingSelect) {
                         pendingSelect = false
@@ -718,9 +714,9 @@ private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Previewing -> "Pratinjau aktif • tekan rekam"
     RecordingState.Preparing -> "Menyiapkan tangkap layar…"
     is RecordingState.Recording -> if (state.audioActive) {
-        "Merekam • program = file, audio internal aktif"
+        "Merekam • program = file, mixer audio aktif"
     } else {
-        "Merekam • program = file, tanpa audio internal"
+        "Merekam • program = file, tanpa audio"
     }
 
     is RecordingState.Error -> state.message

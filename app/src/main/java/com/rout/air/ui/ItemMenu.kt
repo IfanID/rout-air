@@ -197,21 +197,29 @@ internal fun ItemContextMenu(
                     onClick = { applyItem(centerToScreen(item, canvas)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset transform") },
+                    text = { Text("Reset posisi") },
                     onClick = {
-                        val reset = source?.let { defaultTransform(it, canvas) } ?: item.transform
-                        applyItem(item.copy(transform = reset))
+                        // Hanya lokasi X/Y; skala, rotasi, dan crop tetap.
+                        val reset = source?.let { defaultTransform(it, canvas) }
+                            ?: item.transform
+                        applyItem(
+                            item.copy(transform = item.transform.copy(x = reset.x, y = reset.y)),
+                        )
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset posisi") },
+                    text = { Text("Reset scale") },
                     onClick = {
-                        // Hanya X/Y yang dikembalikan; skala, rotasi, dan crop
-                        // tetap seperti hasil pengaturan sebelumnya.
-                        val base = source?.let { defaultTransform(it, canvas) }
+                        // Hanya skala yang dikembalikan ke ukuran awal.
+                        val reset = source?.let { defaultTransform(it, canvas) }
                             ?: item.transform
                         applyItem(
-                            item.copy(transform = item.transform.copy(x = base.x, y = base.y)),
+                            item.copy(
+                                transform = item.transform.copy(
+                                    scaleX = reset.scaleX,
+                                    scaleY = reset.scaleY,
+                                ),
+                            ),
                         )
                     },
                 )
@@ -222,13 +230,11 @@ internal fun ItemContextMenu(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset crop") },
-                    onClick = { applyItem(item.copy(crop = Crop())) },
-                )
-                DropdownMenuItem(
-                    text = { Text("Reset semua (transform + crop)") },
+                    text = { Text("Reset transformasi") },
                     onClick = {
-                        val reset = source?.let { defaultTransform(it, canvas) } ?: item.transform
+                        // Semua kembali ke kondisi awal, termasuk crop.
+                        val reset = source?.let { defaultTransform(it, canvas) }
+                            ?: item.transform
                         applyItem(item.copy(transform = reset, crop = Crop()))
                     },
                 )

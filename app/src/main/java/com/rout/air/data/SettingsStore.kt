@@ -5,7 +5,10 @@ import com.rout.air.core.CanvasOrientation
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 
-/** Menyimpan preset rekaman terakhir agar tidak perlu diatur ulang. */
+/**
+ * Menyimpan preset rekaman terakhir agar tidak perlu diatur ulang.
+ * Pengaturan mixer audio punya penyimpanan sendiri di [AudioMixStore].
+ */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -15,7 +18,6 @@ class SettingsStore(context: Context) {
         fps = prefs.getInt(KEY_FPS, DEFAULT_FPS),
         videoBitrate = prefs.getInt(KEY_BITRATE, DEFAULT_BITRATE),
         audioBitrate = prefs.getInt(KEY_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE),
-        recordAudio = prefs.getBoolean(KEY_RECORD_AUDIO, true),
         canvasOrientation = runCatching {
             CanvasOrientation.valueOf(
                 prefs.getString(KEY_ORIENTATION, CanvasOrientation.Auto.name)
@@ -36,7 +38,6 @@ class SettingsStore(context: Context) {
             .putInt(KEY_FPS, config.fps)
             .putInt(KEY_BITRATE, config.videoBitrate)
             .putInt(KEY_AUDIO_BITRATE, config.audioBitrate)
-            .putBoolean(KEY_RECORD_AUDIO, config.recordAudio)
             .putString(KEY_ORIENTATION, config.canvasOrientation.name)
             .putString(KEY_CONTENT_MODE, config.contentMode.name)
             .apply()
@@ -49,7 +50,6 @@ class SettingsStore(context: Context) {
         const val KEY_FPS = "fps"
         const val KEY_BITRATE = "bitrate"
         const val KEY_AUDIO_BITRATE = "audio_bitrate"
-        const val KEY_RECORD_AUDIO = "record_audio"
         const val KEY_ORIENTATION = "canvas_orientation"
         const val KEY_CONTENT_MODE = "content_mode"
 

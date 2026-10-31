@@ -38,7 +38,6 @@ data class CaptureConfig(
     val audioBitrate: Int = 128_000,
     val sampleRate: Int = 48_000,
     val channelCount: Int = 2,
-    val recordAudio: Boolean = true,
     val canvasOrientation: CanvasOrientation = CanvasOrientation.Auto,
     val contentMode: ContentMode = ContentMode.Fit,
 ) {

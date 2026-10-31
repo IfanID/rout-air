@@ -20,6 +20,7 @@ import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.rout.air.capture.ScreenCapture
 import com.rout.air.core.Align
+import com.rout.air.core.AudioRuntime
 import com.rout.air.core.BlendMode
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
@@ -29,9 +30,10 @@ import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
+import com.rout.air.data.AudioMixer
 import com.rout.air.data.DiagLog
 import com.rout.air.data.SceneManager
-import com.rout.air.encode.InternalAudioEncoder
+import com.rout.air.encode.AudioCaptureEngine
 import com.rout.air.encode.Mp4Writer
 import com.rout.air.encode.OutputTarget
 import com.rout.air.encode.VideoEncoder
@@ -39,9 +41,6 @@ import com.rout.air.engine.EglCore
 import com.rout.air.engine.GlCompositor
 import com.rout.air.engine.GlUtil
 import com.rout.air.engine.SourceBitmap
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -108,7 +107,7 @@ class RecordingPipeline(
     private var displayManager: DisplayManager? = null
     private var displayListener: DisplayManager.DisplayListener? = null
     private var videoEncoder: VideoEncoder? = null
-    private var audioEncoder: InternalAudioEncoder? = null
+    private var audioEncoder: AudioCaptureEngine? = null
     private var muxer: Mp4Writer? = null
     private var target: OutputTarget? = null
     private var encoderEglSurface: EGLSurface? = null
@@ -325,8 +324,8 @@ class RecordingPipeline(
         // Audio dihentikan di luar thread GL supaya tidak menahan swapBuffers
         // terakhir; video baru ditutup setelah semua frame masuk encoder.
         Thread({
-            runCatching { audioEncoder?.finish(stopPtsUs) }
-                .onFailure { Log.w(TAG, "Audio gagal dihentikan: ${it.message}") }
+            runCatching { audioEncoder?.endRecording(stopPtsUs) }
+                .onFailure { Log.w(TAG, "Trek audio gagal dihentikan: ${it.message}") }
             glHandler.post { endRecording() }
         }, "rout-stop").start()
     }
@@ -338,8 +337,8 @@ class RecordingPipeline(
         running = false
         val stopPtsUs = if (hasEncodedFrame) lastEncodedNs / 1_000L else Long.MAX_VALUE
         Thread({
-            runCatching { audioEncoder?.finish(stopPtsUs) }
-                .onFailure { Log.w(TAG, "Audio gagal dihentikan: ${it.message}") }
+            runCatching { audioEncoder?.shutdown(stopPtsUs) }
+                .onFailure { Log.w(TAG, "Mesin audio gagal dihentikan: ${it.message}") }
             glHandler.post { teardownSession() }
         }, "rout-close").start()
     }
@@ -465,15 +464,55 @@ class RecordingPipeline(
         diag("pratinjau siap: layar=${sourceWidth}x$sourceHeight")
         glHandler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
         glHandler.postDelayed(pacer, frameIntervalMs)
+
+        // Sumber audio hidup sejak pratinjau, seperti mixer OBS: meter dan
+        // monitoring sudah bekerja sebelum tombol rekam ditekan.
+        startAudioEngine(mediaProjection)
+
         onState(RecordingState.Previewing)
 
         if (autoRecord) startRecording()
     }
 
+    /**
+     * Menyiapkan mesin audio untuk seluruh sesi. Kodek baru dibuat saat
+     * merekam, jadi mode pratinjau hanya menangkap, mencampur, dan mengukur.
+     */
+    private fun startAudioEngine(activeProjection: MediaProjection) {
+        if (!hasAudioPermission()) {
+            AudioMixer.setRuntime(AudioRuntime())
+            return
+        }
+
+        AudioMixer.clearRuntime()
+        audioEncoder = try {
+            AudioCaptureEngine(
+                context = context,
+                projection = activeProjection,
+                sampleRate = config.sampleRate,
+                channels = config.channelCount,
+                bitrate = config.audioBitrate,
+                liveMix = { AudioMixer.snapshot() },
+                onLevels = { levels ->
+                    AudioMixer.reportLevels(levels)
+                },
+                onAvailability = { ready ->
+                    AudioMixer.setRuntime(
+                        AudioRuntime(running = true, ready = ready),
+                    )
+                },
+            ).also { it.start() }
+        } catch (error: Throwable) {
+            Log.w(TAG, "Mesin audio gagal disiapkan: ${error.message}")
+            AudioMixer.setRuntime(AudioRuntime())
+            null
+        }
+    }
+
     /** Menyiapkan encoder dan file output memakai sesi yang sudah berjalan. */
     private fun beginRecording() {
         val core = egl ?: error("Sesi tangkap layar belum siap")
-        val activeProjection = projection ?: error("Izin tangkap layar tidak valid")
+        check(projection != null) { "Izin tangkap layar tidak valid" }
 
         diag("rekam: mulai")
         val output = OutputTarget.create(context)
@@ -485,25 +524,23 @@ class RecordingPipeline(
 
         recordingStartNs = System.nanoTime()
 
-        val wantsAudio = config.recordAudio && hasAudioPermission()
-        writer.expectTracks(if (wantsAudio) 2 else 1)
+        val mixSnapshot = AudioMixer.snapshot()
+        val wantsAudio = audioEncoder != null && mixSnapshot.masterEnabled &&
+            mixSnapshot.channels.values.any { it.enabled }
+        val trackCount = Integer.bitCount(mixSnapshot.outputTracks and 0x3F).coerceAtLeast(1)
+        writer.expectTracks(videoTracks = 1, audioTrackCount = if (wantsAudio) trackCount else 0)
+
+        var audioStarted = false
         if (wantsAudio) {
-            audioEncoder = try {
-                InternalAudioEncoder(
-                    projection = activeProjection,
-                    sampleRate = config.sampleRate,
-                    channels = config.channelCount,
-                    bitrate = config.audioBitrate,
-                    startTimeNs = recordingStartNs,
-                    muxer = writer,
-                ).also { it.start() }
+            try {
+                audioEncoder?.beginRecording(writer, recordingStartNs, mixSnapshot)
+                audioStarted = audioEncoder != null
             } catch (error: Throwable) {
-                Log.w(TAG, "Audio internal dinonaktifkan: ${error.message}")
-                writer.expectTracks(1)
-                null
+                Log.w(TAG, "Trek audio gagal dimulai: ${error.message}")
+                writer.expectTracks(videoTracks = 1, audioTrackCount = 0)
             }
         }
-        audioActive = audioEncoder != null
+        audioActive = audioStarted
 
         val encoder = VideoEncoder(
             width = config.width,
@@ -568,7 +605,6 @@ class RecordingPipeline(
 
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
-        audioEncoder = null
         runCatching { target?.finish(context, saved) }
         target = null
 
@@ -577,8 +613,7 @@ class RecordingPipeline(
                 "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
                 "preview=$previewSwaps saved=$saved",
         )
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        DiagLog.writeToDownloads(context, "RoutAir_diag_$stamp.txt")
+        DiagLog.writeToDownloads(context)
 
         val reason = stopReason
         stopReason = null
@@ -605,8 +640,7 @@ class RecordingPipeline(
     private fun abortRecording(message: String) {
         recordingActive = false
         glHandler.removeCallbacks(pacer)
-        runCatching { audioEncoder?.finish() }
-        audioEncoder = null
+        runCatching { audioEncoder?.endRecording() }
         runCatching { videoEncoder?.finish() }
         videoEncoder = null
         val core = egl
@@ -730,6 +764,8 @@ class RecordingPipeline(
                     blend = item.blend,
                     opacity = item.opacity,
                 )
+
+                SourceType.AudioInput, SourceType.AudioOutput -> Unit
             }
         }
 
@@ -916,6 +952,8 @@ class RecordingPipeline(
                 rotation = layer.transform.rotation,
                 blend = layer.blend,
             )
+
+            SourceType.AudioInput, SourceType.AudioOutput -> Unit
         }
     }
 
@@ -1214,7 +1252,9 @@ class RecordingPipeline(
 
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
+        runCatching { audioEncoder?.shutdown() }
         audioEncoder = null
+        AudioMixer.clearRuntime()
 
         releaseProjection()
 
@@ -1226,9 +1266,7 @@ class RecordingPipeline(
                 "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
                 "preview=$previewSwaps saved=$saved",
         )
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        DiagLog.writeToDownloads(context, "RoutAir_diag_$stamp.txt")
-
+        DiagLog.writeToDownloads(context)
         glThread.quitSafely()
 
         // Sesi berakhir: UI kembali ke Idle dan service boleh berhenti.
@@ -1286,8 +1324,9 @@ class RecordingPipeline(
                 virtualDisplaySurface = null
                 runCatching { videoEncoder?.finish() }
                 videoEncoder = null
-                runCatching { audioEncoder?.finish() }
+                runCatching { audioEncoder?.shutdown() }
                 audioEncoder = null
+                AudioMixer.clearRuntime()
                 previewHandler?.post { teardownPreview() }
                 previewThread?.quitSafely()
                 runCatching { egl?.release() }

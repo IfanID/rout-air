@@ -49,8 +49,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.hypot
-import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -69,8 +67,6 @@ fun ScenePreview(
     onSelectItem: (String?) -> Unit,
     onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
     onItemMenu: ((SceneItem, Offset) -> Unit)? = null,
-    /** Menarik pegangan crop di tepi item terpilih. */
-    onCropDrag: ((String, Crop) -> Unit)? = null,
     /** Jika diisi, gestur hanya untuk item ini (dipakai panel properti). */
     gestureTargetItemId: String? = null,
     modifier: Modifier = Modifier,
@@ -138,7 +134,6 @@ fun ScenePreview(
         val transformState = rememberUpdatedState(onTransform)
         val selectState = rememberUpdatedState(onSelectItem)
         val menuState = rememberUpdatedState(onItemMenu)
-        val cropDragState = rememberUpdatedState(onCropDrag)
 
         Box(modifier = Modifier.fillMaxSize()) {
             // Kotak gambar mengikuti rasio kanvas dan berada di tengah panel.
@@ -209,6 +204,8 @@ fun ScenePreview(
                                         blendMode = layer.blend,
                                     )
                                 }
+
+                                SourceType.AudioInput, SourceType.AudioOutput -> Unit
                             }
 
                             if (layer.item.id == selectedItemId) {
@@ -217,11 +214,6 @@ fun ScenePreview(
                                     size = Size(width, height),
                                     style = Stroke(width = 2f),
                                 )
-                                // Pegangan crop di tengah tiap tepi; hanya
-                                // item terpilih yang bisa ditarik.
-                                if (!layer.item.locked && onCropDrag != null) {
-                                    drawCropHandles(width, height)
-                                }
                             }
                         }
                     }
@@ -337,13 +329,6 @@ fun ScenePreview(
 
                         var activeId: String? = null
                         var pendingSelect = false
-                        var cropEdge: CropEdge? = null
-                        var cropItemId: String? = null
-                        var cropBase: Crop? = null
-                        var cropRawWidth = 1f
-                        var cropRawHeight = 1f
-                        var cropScaleX = 1f
-                        var cropScaleY = 1f
                         detectItemTransformGestures(
                             onStart = { offset ->
                                 val insideFrame = scale > 0f &&
@@ -373,66 +358,13 @@ fun ScenePreview(
                                 }
                                 activeId = candidate?.id
                                 pendingSelect = gestureTargetItemId == null && direct != null
-
-                                // Sentuhan tepat di pegangan crop mengubah crop,
-                                // bukan menggeser item.
-                                cropEdge = null
-                                cropBase = null
-                                cropItemId = null
-                                if (candidate != null && !candidate.locked &&
-                                    insideFrame && scale > 0f
-                                ) {
-                                    val edge = cropHandleAt(
-                                        collection,
-                                        canvas,
-                                        candidate.id,
-                                        canvasX,
-                                        canvasY,
-                                        26.dp.toPx() / scale,
-                                    )
-                                    val source = collection.source(candidate.sourceId)
-                                    if (edge != null && source != null) {
-                                        val (rawWidth, rawHeight) = naturalSize(source, canvas)
-                                        cropEdge = edge
-                                        cropItemId = candidate.id
-                                        cropBase = candidate.crop
-                                        cropRawWidth = rawWidth.coerceAtLeast(1f)
-                                        cropRawHeight = rawHeight.coerceAtLeast(1f)
-                                        cropScaleX = candidate.transform.scaleX.coerceAtLeast(0.01f)
-                                        cropScaleY = candidate.transform.scaleY.coerceAtLeast(0.01f)
-                                        pendingSelect = false
-                                    }
-                                }
                             },
                             onEnd = {
                                 activeId = null
                                 pendingSelect = false
-                                cropEdge = null
-                                cropItemId = null
-                                cropBase = null
                             },
                         ) { pan, zoom, rotation ->
                             val id = activeId ?: return@detectItemTransformGestures
-
-                            val edge = cropEdge
-                            val base = cropBase
-                            val cropId = cropItemId
-                            if (edge != null && base != null && cropId != null) {
-                                // Ubah jarak geser (piksel panel) menjadi
-                                // perubahan fraksi crop pada sumber asli.
-                                val dx = pan.x / scale
-                                val dy = pan.y / scale
-                                val delta = when (edge) {
-                                    CropEdge.Left -> dx / (cropRawWidth * cropScaleX)
-                                    CropEdge.Right -> -dx / (cropRawWidth * cropScaleX)
-                                    CropEdge.Top -> dy / (cropRawHeight * cropScaleY)
-                                    CropEdge.Bottom -> -dy / (cropRawHeight * cropScaleY)
-                                }
-                                val next = base.adjustCrop(edge, delta)
-                                cropBase = next
-                                cropDragState.value?.invoke(cropId, next)
-                                return@detectItemTransformGestures
-                            }
 
                             if (pendingSelect) {
                                 pendingSelect = false
@@ -517,6 +449,8 @@ private fun buildPreviewLayers(
                     blend = item.blend.toComposeBlendMode(),
                     bitmap = null,
                 )
+
+                SourceType.AudioInput, SourceType.AudioOutput -> null
             }
         }
 }
@@ -572,70 +506,6 @@ internal fun Crop.adjustCrop(edge: CropEdge, delta: Float): Crop = when (edge) {
     CropEdge.Bottom -> copy(bottom = (bottom + delta).coerceIn(0f, 0.98f - top))
 }
 
-/**
- * Tepi crop yang disentuh, atau null bila titik tidak mengenai pegangan.
- * Posisi pegangan ada di tengah tiap tepi kotak item dan ikut rotasi.
- */
-internal fun cropHandleAt(
-    collection: SceneCollection,
-    canvas: CaptureConfig,
-    itemId: String,
-    x: Float,
-    y: Float,
-    radius: Float,
-): CropEdge? {
-    val rect = itemCanvasRect(collection, canvas, itemId) ?: return null
-    val centerX = rect.left + rect.width / 2f
-    val centerY = rect.top + rect.height / 2f
-    val dx = x - centerX
-    val dy = y - centerY
-    val radians = Math.toRadians(rect.rotation.toDouble())
-    val cosValue = cos(radians).toFloat()
-    val sinValue = sin(radians).toFloat()
-    // Balik rotasi supaya pemeriksaan pegangan memakai koordinat lokal item.
-    val localX = dx * cosValue + dy * sinValue
-    val localY = -dx * sinValue + dy * cosValue
-    val halfWidth = rect.width / 2f
-    val halfHeight = rect.height / 2f
-    // Item kecil: kecilkan area pegangan agar seluruh badan item tidak
-    // berubah menjadi area crop dan tetap bisa digeser.
-    val effectiveRadius = radius.coerceAtMost(min(halfWidth, halfHeight) * 0.9f)
-    val handles = listOf(
-        CropEdge.Left to Offset(-halfWidth, 0f),
-        CropEdge.Right to Offset(halfWidth, 0f),
-        CropEdge.Top to Offset(0f, -halfHeight),
-        CropEdge.Bottom to Offset(0f, halfHeight),
-    )
-    return handles
-        .map { (edge, point) -> edge to hypot(localX - point.x, localY - point.y) }
-        .filter { it.second <= effectiveRadius }
-        .minByOrNull { it.second }
-        ?.first
-}
-
-/** Empat titik pegangan crop, sebagai isyarat visual di pratinjau. */
-internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCropHandles(
-    width: Float,
-    height: Float,
-) {
-    val radius = 4.5.dp.toPx()
-    val stroke = 1.5.dp.toPx()
-    listOf(
-        Offset(0f, height / 2f),
-        Offset(width, height / 2f),
-        Offset(width / 2f, 0f),
-        Offset(width / 2f, height),
-    ).forEach { point ->
-        drawCircle(color = Color(0xFF00E5FF), radius = radius, center = point)
-        drawCircle(
-            color = Color(0xFF061014),
-            radius = radius,
-            center = point,
-            style = Stroke(width = stroke),
-        )
-    }
-}
-
 /** Kotak sumber di kanvas, dipakai untuk menggambar outline pilihan. */
 internal data class ItemRect(
     val left: Float,
@@ -660,6 +530,9 @@ internal fun itemCanvasRect(
 ): ItemRect? {
     val item = collection.item(itemId) ?: return null
     val source = collection.source(item.sourceId) ?: return null
+    if (source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput) {
+        return null
+    }
     val (naturalWidth, naturalHeight) = croppedNaturalSize(source, item, canvas)
     val width = naturalWidth * item.transform.scaleX
     val height = naturalHeight * item.transform.scaleY
@@ -732,6 +605,9 @@ internal fun hitTestItems(
     for (item in scene.items.sortedByDescending { it.z }) {
         if (!item.visible) continue
         val source = sources[item.sourceId] ?: continue
+        if (source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput) {
+            continue
+        }
         val (naturalWidth, naturalHeight) = croppedNaturalSize(source, item, canvas)
         val transform = item.transform
         val width = naturalWidth * transform.scaleX

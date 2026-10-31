@@ -7,15 +7,18 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.rout.air.MainActivity
 import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.RecordingState
+import com.rout.air.data.AudioMixer
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,7 @@ class CaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AudioMixer.attach(this)
         createChannel()
 
         scope.launch {
@@ -82,7 +86,12 @@ class CaptureService : Service() {
         startForeground(
             NOTIFICATION_ID,
             buildNotification(RecordingState.Preparing),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                if (hasAudioPermission()) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    0
+                },
         )
 
         val request = intent ?: run {
@@ -106,7 +115,6 @@ class CaptureService : Service() {
             height = request.getIntExtra(EXTRA_HEIGHT, 1080),
             fps = request.getIntExtra(EXTRA_FPS, 30),
             videoBitrate = request.getIntExtra(EXTRA_BITRATE, 6_000_000),
-            recordAudio = request.getBooleanExtra(EXTRA_RECORD_AUDIO, true),
             contentMode = runCatching {
                 ContentMode.valueOf(
                     request.getStringExtra(EXTRA_CONTENT_MODE) ?: ContentMode.Fit.name,
@@ -184,6 +192,10 @@ class CaptureService : Service() {
     private fun notificationManager(): NotificationManager =
         getSystemService(NotificationManager::class.java)
 
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     companion object {
         const val ACTION_START = "com.rout.air.action.START"
         const val ACTION_STOP = "com.rout.air.action.STOP"
@@ -194,7 +206,6 @@ class CaptureService : Service() {
         const val EXTRA_HEIGHT = "height"
         const val EXTRA_FPS = "fps"
         const val EXTRA_BITRATE = "bitrate"
-        const val EXTRA_RECORD_AUDIO = "record_audio"
         const val EXTRA_CONTENT_MODE = "content_mode"
         const val EXTRA_AUTO_RECORD = "auto_record"
 
@@ -216,7 +227,6 @@ class CaptureService : Service() {
             putExtra(EXTRA_HEIGHT, config.height)
             putExtra(EXTRA_FPS, config.fps)
             putExtra(EXTRA_BITRATE, config.videoBitrate)
-            putExtra(EXTRA_RECORD_AUDIO, config.recordAudio)
             putExtra(EXTRA_CONTENT_MODE, config.contentMode.name)
             putExtra(EXTRA_AUTO_RECORD, autoRecord)
         }

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,9 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.RecordingState
 import com.rout.air.output.CaptureEngine
@@ -48,6 +52,7 @@ fun HomeScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onEndSession: () -> Unit,
+    onRequestPermission: () -> Unit,
     onClearError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -76,10 +81,26 @@ fun HomeScreen(
             if (state is RecordingState.Error) {
                 TextButton(onClick = onClearError) { Text("Tutup") }
             }
-            // Mengakhiri sesi tangkap layar secara sengaja. Setelah ini izin
-            // harus diminta ulang karena token MediaProjection sekali pakai.
+            // Cadangan izin rekam layar: tampil hanya saat sesi belum aktif.
+            if (state is RecordingState.Idle || state is RecordingState.Error) {
+                IconButton(onClick = onRequestPermission) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_screen_permission),
+                        contentDescription = "Izin rekam layar",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            // Mengakhiri sesi sekaligus melepas izin MediaProjection. Setelah
+            // ini izin harus diminta ulang saat sesi dibuka lagi.
             if (sessionOnly) {
-                TextButton(onClick = onEndSession) { Text("Akhiri sesi") }
+                IconButton(onClick = onEndSession) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_end_session),
+                        contentDescription = "Akhiri sesi",
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
 
@@ -181,6 +202,7 @@ fun HomeScreen(
             RecordButton(
                 isActive = isActive,
                 enabled = state !is RecordingState.Preparing,
+                preparing = state is RecordingState.Preparing,
                 onClick = { if (isActive) onStop() else onStart() },
             )
         }
@@ -192,9 +214,9 @@ private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Previewing -> "Pratinjau aktif • tekan rekam"
     RecordingState.Preparing -> "Menyiapkan tangkap layar…"
     is RecordingState.Recording -> if (state.audioActive) {
-        "Merekam layar + audio internal"
+        "Merekam layar + mixer audio"
     } else {
-        "Merekam tanpa audio (audio internal tidak tersedia)"
+        "Merekam tanpa audio (mixer tidak tersedia)"
     }
 
     is RecordingState.Error -> state.message

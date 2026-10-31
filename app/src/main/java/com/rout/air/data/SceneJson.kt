@@ -44,6 +44,10 @@ internal object SceneJson {
                         put("color", s.settings.color)
                         put("width", s.settings.width)
                         put("height", s.settings.height)
+                        put("audioDeviceId", s.settings.audioDeviceId)
+                        s.settings.audioDeviceName?.let { put("audioDeviceName", it) }
+                        put("audioDeviceType", s.settings.audioDeviceType)
+                        put("audioScoEnabled", s.settings.audioScoEnabled)
                     })
                 })
             }
@@ -103,6 +107,10 @@ internal object SceneJson {
                     color = s.optLong("color", 0xFF00E5FF),
                     width = s.optInt("width", 0),
                     height = s.optInt("height", 0),
+                    audioDeviceId = s.optInt("audioDeviceId", 0),
+                    audioDeviceName = s.optString("audioDeviceName").takeIf { it.isNotBlank() },
+                    audioDeviceType = s.optInt("audioDeviceType", 0),
+                    audioScoEnabled = s.optBoolean("audioScoEnabled", false),
                 ),
             )
         }

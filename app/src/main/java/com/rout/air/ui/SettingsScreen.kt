@@ -2,6 +2,7 @@ package com.rout.air.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,9 +27,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.rout.air.core.AudioChannel
+import com.rout.air.core.AudioChannelId
+import com.rout.air.core.AudioMix
 import com.rout.air.core.CanvasOrientation
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
+import com.rout.air.core.MeterDecay
+import com.rout.air.core.PeakMeterType
+import com.rout.air.data.AudioMixer
 
 private enum class SettingsPage(val title: String) {
     Root("Setelan"),
@@ -47,7 +54,10 @@ private enum class SettingsPage(val title: String) {
 fun SettingsScreen(
     config: CaptureConfig,
     canvasConfig: CaptureConfig,
+    mix: AudioMix,
     onConfigChange: (CaptureConfig) -> Unit,
+    onMixChange: (AudioChannel) -> Unit,
+    onMasterEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Root) }
@@ -93,8 +103,14 @@ fun SettingsScreen(
 
             when (page) {
                 SettingsPage.Video -> VideoSettings(config, canvasConfig, onConfigChange)
-                SettingsPage.Output -> OutputSettings(config, onConfigChange)
-                SettingsPage.Audio -> AudioSettings(config, onConfigChange)
+                SettingsPage.Output -> OutputSettings(config, mix, onConfigChange)
+                SettingsPage.Audio -> AudioSettings(
+                    config = config,
+                    mix = mix,
+                    onMixChange = onMixChange,
+                    onMasterEnabledChange = onMasterEnabledChange,
+                    onConfigChange = onConfigChange,
+                )
                 SettingsPage.Hotkeys -> HotkeysSettings()
                 SettingsPage.Advanced -> AdvancedSettings(canvasConfig)
                 SettingsPage.Root -> Unit
@@ -216,7 +232,11 @@ private fun VideoSettings(
 }
 
 @Composable
-private fun OutputSettings(config: CaptureConfig, onConfigChange: (CaptureConfig) -> Unit) {
+private fun OutputSettings(
+    config: CaptureConfig,
+    mix: AudioMix,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
     SectionTitle("Encoder")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(selected = true, onClick = {}, label = { Text("H.264 (MediaCodec)") })
@@ -236,6 +256,31 @@ private fun OutputSettings(config: CaptureConfig, onConfigChange: (CaptureConfig
     }
 
     Spacer(Modifier.height(16.dp))
+    SectionTitle("Track audio")
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (track in 1..6) {
+            val bit = 1 shl (track - 1)
+            val selected = mix.outputTracks and bit != 0
+            FilterChip(
+                selected = selected,
+                onClick = {
+                    val next = if (selected) {
+                        mix.outputTracks and bit.inv()
+                    } else {
+                        mix.outputTracks or bit
+                    }
+                    AudioMixer.setOutputTracks(if (next and 0x3F == 0) mix.outputTracks else next)
+                },
+                label = { Text("$track") },
+            )
+        }
+    }
+    Hint(
+        "Track 1 adalah campuran utama. Track tambahan menulis trek AAC terpisah " +
+            "di MP4; tidak semua player memutar track selain track pertama.",
+    )
+
+    Spacer(Modifier.height(16.dp))
     SectionTitle("Format")
     InfoRow("Kontainer", "MP4")
     InfoRow("Video", "H.264")
@@ -245,31 +290,223 @@ private fun OutputSettings(config: CaptureConfig, onConfigChange: (CaptureConfig
 }
 
 @Composable
-private fun AudioSettings(config: CaptureConfig, onConfigChange: (CaptureConfig) -> Unit) {
+private fun AudioSettings(
+    config: CaptureConfig,
+    mix: AudioMix,
+    onMixChange: (AudioChannel) -> Unit,
+    onMasterEnabledChange: (Boolean) -> Unit,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    var deviceTarget by remember { mutableStateOf<AudioChannel?>(null) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("Rekam audio internal", style = MaterialTheme.typography.titleSmall)
+            Text("Rekam audio", style = MaterialTheme.typography.titleSmall)
             Text(
-                text = "AudioPlaybackCapture dari aplikasi yang mengizinkan",
+                text = "Sakelar induk trek audio di dalam rekaman",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(
-            checked = config.recordAudio,
-            onCheckedChange = { onConfigChange(config.copy(recordAudio = it)) },
+            checked = mix.masterEnabled,
+            onCheckedChange = onMasterEnabledChange,
         )
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Sample rate")
-    InfoRow("Nilai", "${config.sampleRate} Hz")
-    SectionTitle("Kanal")
-    InfoRow("Nilai", if (config.channelCount == 1) "Mono" else "Stereo")
-    Hint("Microphone sebagai kanal terpisah menyusul.")
+    SectionTitle("Perangkat Audio Global")
+    mix.channels.filter { it.global }.forEach { channel ->
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = when (channel.id) {
+                        AudioChannelId.Internal -> "Desktop Audio"
+                        AudioChannelId.Microphone -> "Mic/Auxiliary Audio"
+                        else -> channel.name
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = when (channel.capture) {
+                        com.rout.air.core.AudioCaptureKind.Playback ->
+                            "AudioPlaybackCapture dari aplikasi lain"
+
+                        com.rout.air.core.AudioCaptureKind.Microphone ->
+                            "AudioRecord dari mikrofon perangkat"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (channel.capture == com.rout.air.core.AudioCaptureKind.Microphone) {
+                    Text(
+                        text = "Perangkat: ${channel.deviceName ?: "Default"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { deviceTarget = channel }) {
+                        Text("Ganti perangkat input")
+                    }
+                }
+            }
+            Switch(
+                checked = channel.enabled,
+                onCheckedChange = { onMixChange(channel.copy(enabled = it)) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle("Sample Rate")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(44_100, 48_000).forEach { rate ->
+            FilterChip(
+                selected = config.sampleRate == rate,
+                onClick = { onConfigChange(config.copy(sampleRate = rate)) },
+                label = { Text(if (rate == 44_100) "44.1 kHz" else "48 kHz") },
+            )
+        }
+    }
+    Hint("Perubahan sample rate berlaku pada sesi tangkap berikutnya.")
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle("Channels")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(1, 2).forEach { count ->
+            FilterChip(
+                selected = config.channelCount == count,
+                onClick = { onConfigChange(config.copy(channelCount = count)) },
+                label = { Text(if (count == 1) "Mono" else "Stereo") },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle("Meters")
+    Text(
+        "Decay Rate",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        MeterDecay.entries.forEach { decay ->
+            FilterChip(
+                selected = mix.meterDecay == decay,
+                onClick = { AudioMixer.setMeterDecay(decay) },
+                label = { Text(decay.label) },
+            )
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "Peak Meter Type",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        PeakMeterType.entries.forEach { type ->
+            FilterChip(
+                selected = mix.peakMeterType == type,
+                onClick = { AudioMixer.setPeakMeterType(type) },
+                label = { Text(type.label) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle("Monitoring Device")
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val devices = remember(context) {
+        context.getSystemService(android.media.AudioManager::class.java)
+            ?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            ?.toList()
+            .orEmpty()
+            // Nama kosong tidak berguna di daftar.
+            .filter { !it.productName.isNullOrBlank() }
+            // Sistem kadang mengembalikan perangkat yang sama beberapa kali
+            // dengan tipe/rute berbeda; cukup satu entri per nama.
+            .distinctBy { it.productName.toString() }
+            .sortedBy { it.productName.toString().lowercase() }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        FilterChip(
+            selected = mix.monitoringDeviceId == 0,
+            onClick = { AudioMixer.setMonitoringDevice(0) },
+            label = { Text("Otomatis") },
+        )
+        devices.forEach { device ->
+            FilterChip(
+                selected = mix.monitoringDeviceId == device.id,
+                onClick = { AudioMixer.setMonitoringDevice(device.id) },
+                label = { Text(device.productName.toString()) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle("Push-to-talk / Push-to-mute")
+    SettingSwitchRow(
+        title = "Aktifkan Push-to-mute",
+        subtitle = "Tahan tombol untuk membisukan mikrofon",
+        checked = mix.pushToMuteEnabled,
+    ) { AudioMixer.setPushToMuteEnabled(it) }
+    SettingSwitchRow(
+        title = "Aktifkan Push-to-talk",
+        subtitle = "Tahan tombol agar mikrofon berbunyi",
+        checked = mix.pushToTalkEnabled,
+    ) { AudioMixer.setPushToTalkEnabled(it) }
+
+    Spacer(Modifier.height(12.dp))
+    Hint("Volume, mute, filter, balance, sync offset, dan track diatur di halaman Audio.")
+
+    deviceTarget?.let { channel ->
+        AudioDevicePickerDialog(
+            currentId = channel.deviceId,
+            onSelect = { option ->
+                AudioMixer.changeInputDevice(
+                    id = channel.id,
+                    deviceId = option?.id ?: 0,
+                    deviceName = option?.name,
+                    deviceType = option?.type ?: 0,
+                )
+                deviceTarget = null
+            },
+            onDismiss = { deviceTarget = null },
+        )
+    }
+}
+
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
 }
 
 @Composable
@@ -285,11 +522,11 @@ private fun HotkeysSettings() {
 @Composable
 private fun AdvancedSettings(canvasConfig: CaptureConfig) {
     SectionTitle("Informasi")
-    InfoRow("Versi", "0.1 (M1)")
+    InfoRow("Versi", "1.0 (M3)")
     InfoRow("Kanvas", "${canvasConfig.width}x${canvasConfig.height}")
     InfoRow("Renderer", "OpenGL ES 3.0")
     InfoRow("Encoder", "MediaCodec H.264 + AAC")
-    InfoRow("Audio", "AudioPlaybackCapture")
+    InfoRow("Audio", "Mixer OBS: internal + mikrofon")
 
     Spacer(Modifier.height(16.dp))
     SectionTitle("Diagnostik")

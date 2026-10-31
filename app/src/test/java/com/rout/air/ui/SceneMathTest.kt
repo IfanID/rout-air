@@ -168,38 +168,4 @@ class SceneMathTest {
         assertEquals(0.88f, tooFar.left, 0.001f)
         assertEquals(0.1f, tooFar.right, 0.001f)
     }
-
-    @Test
-    fun cropHandleAt_findsEdgeMidpointWithRotation() {
-        val source = SceneSource(
-            id = "src-1",
-            type = SourceType.Image,
-            name = "Logo",
-            settings = SourceSettings(width = 200, height = 100),
-        )
-        val item = SceneItem(
-            sourceId = source.id,
-            transform = Transform(x = 500f, y = 400f, align = Align.Center),
-        )
-        val scene = Scene(id = "scene-1", name = "Adegan", items = listOf(item))
-        val collection = SceneCollection(
-            activeSceneId = scene.id,
-            scenes = listOf(scene),
-            sources = listOf(source),
-        )
-
-        // Tepi kanan item berada 100 px di kanan titik tengah.
-        assertEquals(
-            CropEdge.Right,
-            cropHandleAt(collection, CaptureConfig(), item.id, 600f, 400f, 12f),
-        )
-        assertEquals(
-            CropEdge.Top,
-            cropHandleAt(collection, CaptureConfig(), item.id, 500f, 350f, 12f),
-        )
-        assertEquals(
-            null,
-            cropHandleAt(collection, CaptureConfig(), item.id, 500f, 400f, 12f),
-        )
-    }
 }

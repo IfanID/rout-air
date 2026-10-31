@@ -24,8 +24,8 @@ class Mp4Writer(private val target: OutputTarget) {
     private val pending = ArrayDeque<PendingSample>()
 
     private var videoTrack = -1
-    private var audioTrack = -1
-    private var expectedTracks = 1
+    private val audioTracks = HashMap<Int, Int>()
+    private var expectedAudioTracks = 0
     private var started = false
     private var released = false
 
@@ -40,9 +40,9 @@ class Mp4Writer(private val target: OutputTarget) {
     )
 
     /** Harus dipanggil sebelum encoder mana pun mulai mengirim format. */
-    fun expectTracks(count: Int) {
+    fun expectTracks(videoTracks: Int = 1, audioTrackCount: Int = 0) {
         synchronized(lock) {
-            expectedTracks = count
+            expectedAudioTracks = audioTrackCount
             maybeStartLocked()
         }
     }
@@ -55,12 +55,16 @@ class Mp4Writer(private val target: OutputTarget) {
         videoTrack
     }
 
-    fun addAudioTrack(format: MediaFormat): Int = synchronized(lock) {
-        if (audioTrack < 0) {
-            audioTrack = muxer.addTrack(format)
-            maybeStartLocked()
-        }
-        audioTrack
+    /**
+     * Menambahkan trek audio. [key] adalah nomor logis track (1..6) supaya
+     * encoder bisa menulis ke trek yang benar saat multitrack aktif.
+     */
+    fun addAudioTrack(key: Int, format: MediaFormat): Int = synchronized(lock) {
+        audioTracks[key]?.let { return it }
+        val index = muxer.addTrack(format)
+        audioTracks[key] = index
+        maybeStartLocked()
+        index
     }
 
     fun write(track: Int, buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
@@ -114,11 +118,8 @@ class Mp4Writer(private val target: OutputTarget) {
     private fun maybeStartLocked() {
         if (started || released) return
         val videoReady = videoTrack >= 0
-        val audioReady = audioTrack >= 0
-        val ready = when (expectedTracks) {
-            1 -> videoReady || audioReady
-            else -> videoReady && audioReady
-        }
+        val audioReady = audioTracks.size >= expectedAudioTracks
+        val ready = videoReady && audioReady
         if (!ready) return
 
         try {

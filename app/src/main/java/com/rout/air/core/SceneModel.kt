@@ -14,6 +14,12 @@ enum class SourceType {
     Image,
     Text,
     Color,
+
+    /** Sumber microphone/Audio Input Capture seperti OBS. */
+    AudioInput,
+
+    /** Sumber audio output/desktop seperti OBS. */
+    AudioOutput,
 }
 
 /** Titik jangkar item terhadap posisi `Transform`. */
@@ -98,6 +104,11 @@ data class SourceSettings(
     val color: Long = 0xFF00E5FF,
     val width: Int = 0,
     val height: Int = 0,
+    /** Id perangkat input untuk AudioInput; 0 berarti perangkat default. */
+    val audioDeviceId: Int = 0,
+    val audioDeviceName: String? = null,
+    val audioDeviceType: Int = 0,
+    val audioScoEnabled: Boolean = false,
 )
 
 /** Sumber (source) yang bisa dipakai banyak item. */
