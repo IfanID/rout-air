@@ -41,6 +41,8 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 private data class RecordingItem(
     val uri: Uri,
@@ -73,21 +75,21 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Rekaman", style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.recordings_rekaman), style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    text = "${items.size} berkas di Movies/RoutAir",
+                    text = stringResource(R.string.recordings_n_berkas, items.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(onClick = { refreshKey++ }) { Text("Muat ulang") }
+            TextButton(onClick = { refreshKey++ }) { Text(stringResource(R.string.common_muat_ulang)) }
         }
 
         Spacer(Modifier.height(12.dp))
 
         if (items.isEmpty()) {
             Text(
-                text = "Belum ada rekaman.",
+                text = stringResource(R.string.recordings_belum_ada_rekaman),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -108,7 +110,7 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
     pendingDelete?.let { item ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Hapus rekaman?") },
+            title = { Text(stringResource(R.string.recordings_hapus_rekaman)) },
             text = { Text(item.name) },
             confirmButton = {
                 TextButton(
@@ -123,10 +125,10 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
                             refreshKey++
                         }
                     },
-                ) { Text("Hapus") }
+                ) { Text(stringResource(R.string.common_hapus)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Batal") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.common_batal)) }
             },
         )
     }
@@ -155,9 +157,9 @@ private fun RecordingRow(
             )
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onOpen) { Text("Buka") }
-                TextButton(onClick = onShare) { Text("Bagikan") }
-                TextButton(onClick = onDelete) { Text("Hapus") }
+                TextButton(onClick = onOpen) { Text(stringResource(R.string.recordings_buka)) }
+                TextButton(onClick = onShare) { Text(stringResource(R.string.recordings_bagikan)) }
+                TextButton(onClick = onDelete) { Text(stringResource(R.string.common_hapus)) }
             }
         }
     }

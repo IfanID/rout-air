@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.rout.air.R
+import androidx.compose.ui.res.stringResource
 
 /**
  * Tombol Transisi ala OBS Studio Mode.
@@ -71,7 +72,7 @@ internal fun TransitionButton(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Transisi",
+                text = stringResource(R.string.studio_transisi),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -104,14 +105,14 @@ internal fun RecordButton(
     val scheme = MaterialTheme.colorScheme
 
     // Denyut hanya saat merekam supaya jelas bahwa sesi sedang berjalan.
-    val pulse = rememberInfiniteTransition(label = "denyut-rekam").animateFloat(
+    val pulse = rememberInfiniteTransition(label = stringResource(R.string.studio_denyut_rekam)).animateFloat(
         initialValue = 0.45f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 900, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "indikator",
+        label = stringResource(R.string.studio_indikator),
     )
     val indicatorAlpha = if (isActive) pulse.value else 1f
 

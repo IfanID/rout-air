@@ -76,6 +76,8 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /** Tabel Advanced Audio Properties ala OBS. */
 @Composable
@@ -100,11 +102,11 @@ internal fun AdvancedAudioDialog(
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Properti Audio Lanjutan",
+                        text = stringResource(R.string.audio_properti_audio_lanjutan),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    Text("Volume %", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                    Text(stringResource(R.string.audio_volume), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                     Spacer(Modifier.width(4.dp))
                     TinyToggle(
                         checked = mix.volumePercent,
@@ -125,7 +127,7 @@ internal fun AdvancedAudioDialog(
                         HorizontalDivider(color = Divider)
                         if (rows.isEmpty()) {
                             Text(
-                                text = "Tidak ada sumber aktif.",
+                                text = stringResource(R.string.audio_tidak_ada_sumber_aktif),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextTertiary,
                                 modifier = Modifier.padding(12.dp),
@@ -150,9 +152,9 @@ internal fun AdvancedAudioDialog(
                         onCheckedChange = { activeOnly = it },
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Hanya sumber aktif", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.audio_hanya_sumber_aktif), style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Tutup") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_tutup)) }
                 }
             }
         }
@@ -236,13 +238,13 @@ private fun AdvancedRow(
             modifier = Modifier.width(164.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("L", style = MaterialTheme.typography.labelSmall, color = TextTertiary)
+            Text(stringResource(R.string.audio_l), style = MaterialTheme.typography.labelSmall, color = TextTertiary)
             BalanceFader(
                 value = channel.balance,
                 onChange = { onChannelChange(channel.copy(balance = it)) },
                 modifier = Modifier.weight(1f).height(26.dp),
             )
-            Text("R", style = MaterialTheme.typography.labelSmall, color = TextTertiary)
+            Text(stringResource(R.string.audio_r), style = MaterialTheme.typography.labelSmall, color = TextTertiary)
         }
 
         Stepper(
@@ -358,7 +360,7 @@ internal fun TinyToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {
-            Text("✓", style = MaterialTheme.typography.labelSmall, color = OnAccent)
+            Text(stringResource(R.string.audio_teks), style = MaterialTheme.typography.labelSmall, color = OnAccent)
         }
     }
 }
@@ -445,14 +447,14 @@ internal fun FiltersDialog(
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Filter — ${channel.name}",
+                        text = stringResource(R.string.audio_filter_channel, channel.name),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = onCopy, enabled = channel.filters.isNotEmpty()) {
-                        Text("Salin")
+                        Text(stringResource(R.string.audio_salin))
                     }
-                    TextButton(onClick = onPaste, enabled = canPaste) { Text("Tempel") }
+                    TextButton(onClick = onPaste, enabled = canPaste) { Text(stringResource(R.string.audio_tempel)) }
                 }
 
                 Row(Modifier.weight(1f)) {
@@ -498,11 +500,11 @@ internal fun FiltersDialog(
                             }
                         }
                         Box {
-                            TextButton(onClick = { addOpen = true }) { Text("+ Tambah filter") }
+                            TextButton(onClick = { addOpen = true }) { Text(stringResource(R.string.audio_tambah_filter)) }
                             DropdownMenu(expanded = addOpen, onDismissRequest = { addOpen = false }) {
                                 AudioFilterType.entries.forEach { type ->
                                     DropdownMenuItem(
-                                        text = { Text(type.label) },
+                                        text = { Text(filterLabel(type)) },
                                         onClick = {
                                             val filter = AudioFilter(
                                                 id = UUID.randomUUID().toString(),
@@ -531,7 +533,7 @@ internal fun FiltersDialog(
                                 color = TextTertiary,
                             )
                         } else {
-                            Text(selected.type.label, style = MaterialTheme.typography.titleSmall)
+                            Text(filterLabel(selected.type), style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(4.dp))
                             selected.type.defaults().forEach { (key, _) ->
                                 FilterParam(
@@ -548,7 +550,7 @@ internal fun FiltersDialog(
                 Spacer(Modifier.height(8.dp))
                 Row {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Tutup") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_tutup)) }
                 }
             }
         }
@@ -576,7 +578,7 @@ private fun FilterListRow(
         TinyToggle(checked = filter.enabled, onCheckedChange = onToggle)
         Spacer(Modifier.width(6.dp))
         Text(
-            text = filter.type.label,
+            text = filterLabel(filter.type),
             style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             modifier = Modifier.weight(1f),
@@ -702,12 +704,12 @@ internal fun SourcePropertiesDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.padding(16.dp)) {
-                Text("Properti — ${channel.name}", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.audio_properti_channel, channel.name), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nama") },
+                    label = { Text(stringResource(R.string.audio_nama)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -715,14 +717,14 @@ internal fun SourcePropertiesDialog(
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Perangkat input", style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.scenes_perangkat_input), style = MaterialTheme.typography.bodyMedium)
                             Text(
                                 text = channel.deviceName ?: "Default",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextTertiary,
                             )
                         }
-                        TextButton(onClick = onOpenDevicePicker) { Text("Ganti…") }
+                        TextButton(onClick = onOpenDevicePicker) { Text(stringResource(R.string.audio_ganti)) }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -767,15 +769,15 @@ internal fun SourcePropertiesDialog(
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = onOpenFilters) { Text("Filter…") }
+                    TextButton(onClick = onOpenFilters) { Text(stringResource(R.string.audio_filter)) }
                     Spacer(Modifier.weight(1f))
                     TextButton(
                         onClick = {
                             onChannelChange(channel.copy(name = name.trim().ifEmpty { channel.name }))
                             onDismiss()
                         },
-                    ) { Text("Simpan") }
-                    TextButton(onClick = onDismiss) { Text("Tutup") }
+                    ) { Text(stringResource(R.string.common_simpan)) }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_tutup)) }
                 }
             }
         }
@@ -802,12 +804,12 @@ internal fun RenameChannelDialog(
     var name by remember { mutableStateOf(channel.name) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ganti Nama Sumber Audio") },
+        title = { Text(stringResource(R.string.audio_ganti_nama_sumber_audio)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Nama") },
+                label = { Text(stringResource(R.string.audio_nama)) },
                 singleLine = true,
             )
         },
@@ -817,10 +819,10 @@ internal fun RenameChannelDialog(
                     val trimmed = name.trim()
                     if (trimmed.isNotEmpty()) onRename(trimmed)
                 },
-            ) { Text("Ganti nama") }
+            ) { Text(stringResource(R.string.audio_ganti_nama)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Batal") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_batal)) }
         },
     )
 }

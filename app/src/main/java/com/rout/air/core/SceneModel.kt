@@ -41,11 +41,11 @@ enum class Align {
  * `Add` dan `Screen` mencerahkan, `Multiply` menggelapkan. Nilai `name`
  * dipakai apa adanya di JSON, jadi jangan diubah tanpa migrasi.
  */
-enum class BlendMode(val label: String) {
-    Normal("Normal"),
-    Add("Add (tambah)"),
-    Screen("Screen"),
-    Multiply("Multiply"),
+enum class BlendMode {
+    Normal,
+    Add,
+    Screen,
+    Multiply,
 }
 
 /**

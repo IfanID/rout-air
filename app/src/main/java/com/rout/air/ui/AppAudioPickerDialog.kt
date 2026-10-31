@@ -31,6 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 internal data class ApplicationAudioOption(
     val uid: Int,
@@ -68,7 +70,7 @@ internal fun ApplicationAudioPickerDialog(
             color = MaterialTheme.colorScheme.surface,
         ) {
             Column(Modifier.padding(14.dp)) {
-                Text("Application Audio Capture", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.audio_application_audio_capture), style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Pilih aplikasi yang suaranya ingin direkam. Hanya aplikasi yang " +
                         "mengizinkan AudioPlaybackCapture yang akan menghasilkan suara.",
@@ -79,7 +81,7 @@ internal fun ApplicationAudioPickerDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Cari aplikasi") },
+                    label = { Text(stringResource(R.string.audio_cari_aplikasi)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -107,7 +109,7 @@ internal fun ApplicationAudioPickerDialog(
                 Spacer(Modifier.height(6.dp))
                 Row {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_batal)) }
                 }
             }
         }

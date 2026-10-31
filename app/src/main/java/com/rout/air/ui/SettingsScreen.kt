@@ -36,6 +36,8 @@ import com.rout.air.core.ContentMode
 import com.rout.air.core.MeterDecay
 import com.rout.air.core.PeakMeterType
 import com.rout.air.data.AudioMixer
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 private enum class SettingsPage(val title: String) {
     Root("Setelan"),
@@ -71,9 +73,9 @@ fun SettingsScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         if (page == SettingsPage.Root) {
-            Text("Setelan", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.settings_setelan), style = MaterialTheme.typography.headlineSmall)
             Text(
-                text = "Preset rekaman dan perangkat",
+                text = stringResource(R.string.settings_preset_rekaman_dan_perangkat),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -96,7 +98,7 @@ fun SettingsScreen(
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { page = SettingsPage.Root }) { Text("‹ Kembali") }
+                TextButton(onClick = { page = SettingsPage.Root }) { Text(stringResource(R.string.common_kembali_panah)) }
                 Text(page.title, style = MaterialTheme.typography.titleLarge)
             }
             Spacer(Modifier.height(8.dp))
@@ -141,7 +143,7 @@ private fun SettingsEntry(title: String, subtitle: String, onClick: () -> Unit) 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text("›", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.settings_teks), style = MaterialTheme.typography.titleLarge)
         }
     }
 }
@@ -152,7 +154,7 @@ private fun VideoSettings(
     canvasConfig: CaptureConfig,
     onConfigChange: (CaptureConfig) -> Unit,
 ) {
-    SectionTitle("Base (Canvas) Resolution")
+    SectionTitle(stringResource(R.string.settings_base_canvas_resolution))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(1920 to 1080, 1280 to 720).forEach { (width, height) ->
             FilterChip(
@@ -172,7 +174,7 @@ private fun VideoSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Orientasi video")
+    SectionTitle(stringResource(R.string.settings_orientasi_video))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(
             CanvasOrientation.Auto to "Auto",
@@ -192,7 +194,7 @@ private fun VideoSettings(
     )
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Mode isi")
+    SectionTitle(stringResource(R.string.settings_mode_isi))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(
             ContentMode.Fit to "Pas",
@@ -212,7 +214,7 @@ private fun VideoSettings(
     )
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("FPS")
+    SectionTitle(stringResource(R.string.settings_fps))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(30, 60).forEach { fps ->
             FilterChip(
@@ -224,11 +226,11 @@ private fun VideoSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Kanvas aktif")
+    SectionTitle(stringResource(R.string.settings_kanvas_aktif))
     InfoRow("Ukuran", "${canvasConfig.width}x${canvasConfig.height}")
     InfoRow("Rasio", String.format("%.3f", canvasConfig.aspectRatio))
     InfoRow("Mode isi", contentModeLabel(canvasConfig))
-    Hint("Output (Scaled) Resolution saat ini sama dengan kanvas.")
+    Hint(stringResource(R.string.settings_output_scaled_resolution_saat_ini_sama_d))
 }
 
 @Composable
@@ -237,14 +239,14 @@ private fun OutputSettings(
     mix: AudioMix,
     onConfigChange: (CaptureConfig) -> Unit,
 ) {
-    SectionTitle("Encoder")
+    SectionTitle(stringResource(R.string.settings_encoder))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = true, onClick = {}, label = { Text("H.264 (MediaCodec)") })
+        FilterChip(selected = true, onClick = {}, label = { Text(stringResource(R.string.settings_h_264_mediacodec)) })
     }
-    Hint("HEVC/AV1 menyusul; saat ini encoder perangkat yang dipakai.")
+    Hint(stringResource(R.string.settings_hevc_av1_menyusul_saat_ini_encoder_peran))
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Bitrate video")
+    SectionTitle(stringResource(R.string.settings_bitrate_video))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(4, 6, 10).forEach { mbps ->
             FilterChip(
@@ -256,7 +258,7 @@ private fun OutputSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Track audio")
+    SectionTitle(stringResource(R.string.settings_track_audio))
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (track in 1..6) {
             val bit = 1 shl (track - 1)
@@ -281,12 +283,12 @@ private fun OutputSettings(
     )
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Format")
+    SectionTitle(stringResource(R.string.settings_format))
     InfoRow("Kontainer", "MP4")
     InfoRow("Video", "H.264")
     InfoRow("Audio", "AAC-LC")
     InfoRow("Lokasi", "Movies/RoutAir")
-    Hint("Split recording dan replay buffer menyusul.")
+    Hint(stringResource(R.string.settings_split_recording_dan_replay_buffer_menyus))
 }
 
 @Composable
@@ -303,9 +305,9 @@ private fun AudioSettings(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("Rekam audio", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.settings_rekam_audio), style = MaterialTheme.typography.titleSmall)
             Text(
-                text = "Sakelar induk trek audio di dalam rekaman",
+                text = stringResource(R.string.settings_sakelar_induk_trek_audio_di_dalam_rekama),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -317,7 +319,7 @@ private fun AudioSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Perangkat Audio Global")
+    SectionTitle(stringResource(R.string.settings_perangkat_audio_global))
     mix.channels.filter { it.global }.forEach { channel ->
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -345,12 +347,12 @@ private fun AudioSettings(
                 )
                 if (channel.capture == com.rout.air.core.AudioCaptureKind.Microphone) {
                     Text(
-                        text = "Perangkat: ${channel.deviceName ?: "Default"}",
+                        text = stringResource(R.string.settings_perangkat_n, channel.deviceName ?: androidx.compose.ui.platform.LocalContext.current.getString(R.string.common_default)),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(onClick = { deviceTarget = channel }) {
-                        Text("Ganti perangkat input")
+                        Text(stringResource(R.string.scenes_ganti_perangkat_input))
                     }
                 }
             }
@@ -362,7 +364,7 @@ private fun AudioSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Sample Rate")
+    SectionTitle(stringResource(R.string.settings_sample_rate))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(44_100, 48_000).forEach { rate ->
             FilterChip(
@@ -372,10 +374,10 @@ private fun AudioSettings(
             )
         }
     }
-    Hint("Perubahan sample rate berlaku pada sesi tangkap berikutnya.")
+    Hint(stringResource(R.string.settings_perubahan_sample_rate_berlaku_pada_sesi))
 
     Spacer(Modifier.height(12.dp))
-    SectionTitle("Channels")
+    SectionTitle(stringResource(R.string.settings_channels))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(1, 2).forEach { count ->
             FilterChip(
@@ -387,7 +389,7 @@ private fun AudioSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Meters")
+    SectionTitle(stringResource(R.string.settings_meters))
     Text(
         "Decay Rate",
         style = MaterialTheme.typography.bodySmall,
@@ -398,7 +400,7 @@ private fun AudioSettings(
             FilterChip(
                 selected = mix.meterDecay == decay,
                 onClick = { AudioMixer.setMeterDecay(decay) },
-                label = { Text(decay.label) },
+                label = { Text(decayLabel(decay)) },
             )
         }
     }
@@ -413,13 +415,13 @@ private fun AudioSettings(
             FilterChip(
                 selected = mix.peakMeterType == type,
                 onClick = { AudioMixer.setPeakMeterType(type) },
-                label = { Text(type.label) },
+                label = { Text(peakMeterLabel(type)) },
             )
         }
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Monitoring Device")
+    SectionTitle(stringResource(R.string.settings_monitoring_device))
     val context = androidx.compose.ui.platform.LocalContext.current
     val devices = remember(context) {
         context.getSystemService(android.media.AudioManager::class.java)
@@ -442,7 +444,7 @@ private fun AudioSettings(
         FilterChip(
             selected = mix.monitoringDeviceId == 0,
             onClick = { AudioMixer.setMonitoringDevice(0) },
-            label = { Text("Otomatis") },
+            label = { Text(stringResource(R.string.settings_otomatis)) },
         )
         devices.forEach { device ->
             FilterChip(
@@ -454,20 +456,20 @@ private fun AudioSettings(
     }
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Push-to-talk / Push-to-mute")
+    SectionTitle(stringResource(R.string.settings_push_to_talk_push_to_mute))
     SettingSwitchRow(
-        title = "Aktifkan Push-to-mute",
-        subtitle = "Tahan tombol untuk membisukan mikrofon",
+        title = stringResource(R.string.settings_aktifkan_push_to_mute),
+        subtitle = stringResource(R.string.settings_tahan_tombol_untuk_membisukan_mikrofon),
         checked = mix.pushToMuteEnabled,
     ) { AudioMixer.setPushToMuteEnabled(it) }
     SettingSwitchRow(
-        title = "Aktifkan Push-to-talk",
-        subtitle = "Tahan tombol agar mikrofon berbunyi",
+        title = stringResource(R.string.settings_aktifkan_push_to_talk),
+        subtitle = stringResource(R.string.settings_tahan_tombol_agar_mikrofon_berbunyi),
         checked = mix.pushToTalkEnabled,
     ) { AudioMixer.setPushToTalkEnabled(it) }
 
     Spacer(Modifier.height(12.dp))
-    Hint("Volume, mute, filter, balance, sync offset, dan track diatur di halaman Audio.")
+    Hint(stringResource(R.string.settings_volume_mute_filter_balance_sync_offset_d))
 
     deviceTarget?.let { channel ->
         AudioDevicePickerDialog(
@@ -511,17 +513,17 @@ private fun SettingSwitchRow(
 
 @Composable
 private fun HotkeysSettings() {
-    SectionTitle("Rekaman")
+    SectionTitle(stringResource(R.string.recordings_rekaman))
     HotkeyRow("Mulai merekam", "Belum diatur")
     HotkeyRow("Stop merekam", "Belum diatur")
     HotkeyRow("Pause rekaman", "Menyusul")
     HotkeyRow("Replay buffer", "Menyusul")
-    Hint("Pintasan tombol volume dan Quick Settings tile direncanakan.")
+    Hint(stringResource(R.string.settings_pintasan_tombol_volume_dan_quick_setting))
 }
 
 @Composable
 private fun AdvancedSettings(canvasConfig: CaptureConfig) {
-    SectionTitle("Informasi")
+    SectionTitle(stringResource(R.string.settings_informasi))
     InfoRow("Versi", "1.0 (M3)")
     InfoRow("Kanvas", "${canvasConfig.width}x${canvasConfig.height}")
     InfoRow("Renderer", "OpenGL ES 3.0")
@@ -529,8 +531,8 @@ private fun AdvancedSettings(canvasConfig: CaptureConfig) {
     InfoRow("Audio", "Mixer OBS: internal + mikrofon")
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle("Diagnostik")
-    Hint("Setiap rekaman menulis log ke Download/RoutAir/RoutAir_diag_*.txt.")
+    SectionTitle(stringResource(R.string.settings_diagnostik))
+    Hint(stringResource(R.string.settings_setiap_rekaman_menulis_log_ke_download_r))
 }
 
 @Composable

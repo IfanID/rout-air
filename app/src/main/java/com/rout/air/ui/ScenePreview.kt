@@ -51,6 +51,8 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /**
  * Pratinjau susunan scene di halaman Adegan, tanpa perlu pindah ke Studio.
@@ -246,7 +248,7 @@ fun ScenePreview(
 
                 if (layers.isEmpty()) {
                     Text(
-                        text = "Belum ada sumber",
+                        text = stringResource(R.string.scenes_belum_ada_sumber),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFF2F2F2),
                         modifier = Modifier.align(Alignment.Center),

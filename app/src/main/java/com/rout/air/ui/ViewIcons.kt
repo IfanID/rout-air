@@ -14,10 +14,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.rout.air.R
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -35,12 +37,13 @@ internal fun ResetIcon(
     color: Color,
     modifier: Modifier = Modifier,
     size: Dp = 20.dp,
-    description: String = "Reset",
+    description: String? = null,
 ) {
+    val desc = description ?: stringResource(R.string.icon_reset)
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = description },
+            .semantics { contentDescription = desc },
     ) {
         val u = this.size.minDimension / 24f
         val center = Offset(this.size.width / 2f, this.size.height / 2f)
@@ -82,10 +85,13 @@ internal fun VisibilityIcon(
     modifier: Modifier = Modifier,
     size: Dp = 22.dp,
 ) {
+    val visibilityDesc = stringResource(
+        if (visible) R.string.icon_hide else R.string.icon_show,
+    )
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = if (visible) "Sembunyikan" else "Tampilkan" },
+            .semantics { contentDescription = visibilityDesc },
     ) {
         val u = this.size.minDimension / 24f
         val stroke = 1.9f * u
@@ -127,10 +133,13 @@ internal fun LockIcon(
     modifier: Modifier = Modifier,
     size: Dp = 22.dp,
 ) {
+    val lockDesc = stringResource(
+        if (locked) R.string.icon_unlock else R.string.icon_lock,
+    )
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = if (locked) "Buka kunci" else "Kunci posisi" },
+            .semantics { contentDescription = lockDesc },
     ) {
         val u = this.size.minDimension / 24f
         val stroke = 2.2f * u
@@ -181,12 +190,13 @@ internal fun ChevronRightIcon(
     color: Color,
     modifier: Modifier = Modifier,
     size: Dp = 20.dp,
-    description: String = "Buka properti",
+    description: String? = null,
 ) {
+    val desc = description ?: stringResource(R.string.icon_open_properties)
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = description },
+            .semantics { contentDescription = desc },
     ) {
         val u = this.size.minDimension / 24f
         val stroke = 2f * u
@@ -202,10 +212,11 @@ internal fun TrashIcon(
     modifier: Modifier = Modifier,
     size: Dp = 20.dp,
 ) {
+    val trashDesc = stringResource(R.string.common_hapus)
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = "Hapus" },
+            .semantics { contentDescription = trashDesc },
     ) {
         val u = this.size.minDimension / 24f
         val stroke = 1.9f * u
@@ -277,10 +288,11 @@ internal fun FullscreenIcon(
     modifier: Modifier = Modifier,
     size: Dp = 20.dp,
 ) {
+    val fullscreenDesc = stringResource(R.string.icon_fullscreen)
     Canvas(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = "Pratinjau penuh" },
+            .semantics { contentDescription = fullscreenDesc },
     ) {
         val u = this.size.minDimension / 24f
         val stroke = 2.2f * u

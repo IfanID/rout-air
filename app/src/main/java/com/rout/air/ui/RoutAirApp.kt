@@ -49,6 +49,8 @@ import com.rout.air.output.CaptureEngine
 import com.rout.air.service.CaptureService
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /**
  * Enam halaman meniru dock OBS: Siaran, Studio Mode, Adegan, Audio,
@@ -177,12 +179,12 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         val manager = context.getSystemService(MediaProjectionManager::class.java)
-        projectionLauncher.launch(manager.createScreenCaptureIntent())
+        projectionLauncher.launch(createCaptureIntent(manager))
     }
 
     fun launchProjection() {
         val manager = context.getSystemService(MediaProjectionManager::class.java)
-        projectionLauncher.launch(manager.createScreenCaptureIntent())
+        projectionLauncher.launch(createCaptureIntent(manager))
     }
 
     fun beginSession(autoRecord: Boolean) {
@@ -423,19 +425,28 @@ internal fun buildCanvasConfig(
     }
 }
 
+/**
+ * Intent izin tangkap layar. Memakai dialog bawaan sistem supaya pengguna
+ * tetap bisa memilih "seluruh layar" atau "satu aplikasi" (Android 14+).
+ */
+private fun createCaptureIntent(manager: MediaProjectionManager): Intent =
+    manager.createScreenCaptureIntent()
+
 /** Label mode isi untuk ditampilkan di halaman Siaran/Studio/Setelan. */
+@Composable
 internal fun contentModeLabel(config: CaptureConfig): String =
     when (config.contentMode) {
-        ContentMode.Fit -> "Pas (letterbox)"
-        ContentMode.Crop -> "Penuh (crop)"
-        ContentMode.Stretch -> "Peregangan"
+        ContentMode.Fit -> stringResource(R.string.common_pas_letterbox)
+        ContentMode.Crop -> stringResource(R.string.common_penuh_crop)
+        ContentMode.Stretch -> stringResource(R.string.common_peregangan)
     }
 
 /** Orientasi video yang sedang dipakai (bukan orientasi layar). */
+@Composable
 internal fun orientationLabel(config: CaptureConfig): String = when {
-    config.width > config.height -> "Horizontal"
-    config.width < config.height -> "Vertikal"
-    else -> "Persegi"
+    config.width > config.height -> stringResource(R.string.common_horizontal)
+    config.width < config.height -> stringResource(R.string.common_vertikal)
+    else -> stringResource(R.string.common_persegi)
 }
 
 internal fun formatDuration(milliseconds: Long): String {

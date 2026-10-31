@@ -39,6 +39,7 @@ import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.RecordingState
 import com.rout.air.output.CaptureEngine
+import androidx.compose.ui.res.stringResource
 
 /**
  * Halaman Siaran: pratinjau hasil komposisi + kontrol rekam.
@@ -67,7 +68,7 @@ fun HomeScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Siaran", style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.home_siaran), style = MaterialTheme.typography.headlineSmall)
                 Text(
                     text = statusText(state),
                     style = MaterialTheme.typography.bodySmall,
@@ -79,14 +80,14 @@ fun HomeScreen(
                 )
             }
             if (state is RecordingState.Error) {
-                TextButton(onClick = onClearError) { Text("Tutup") }
+                TextButton(onClick = onClearError) { Text(stringResource(R.string.common_tutup)) }
             }
             // Cadangan izin rekam layar: tampil hanya saat sesi belum aktif.
             if (state is RecordingState.Idle || state is RecordingState.Error) {
                 IconButton(onClick = onRequestPermission) {
                     Icon(
                         painter = painterResource(R.drawable.ic_screen_permission),
-                        contentDescription = "Izin rekam layar",
+                        contentDescription = stringResource(R.string.home_izin_rekam_layar),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -97,7 +98,7 @@ fun HomeScreen(
                 IconButton(onClick = onEndSession) {
                     Icon(
                         painter = painterResource(R.drawable.ic_end_session),
-                        contentDescription = "Akhiri sesi",
+                        contentDescription = stringResource(R.string.home_akhiri_sesi),
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -209,14 +210,15 @@ fun HomeScreen(
     }
 }
 
+@Composable
 private fun statusText(state: RecordingState): String = when (state) {
-    RecordingState.Idle -> "Siap merekam layar"
-    RecordingState.Previewing -> "Pratinjau aktif • tekan rekam"
-    RecordingState.Preparing -> "Menyiapkan tangkap layar…"
+    RecordingState.Idle -> stringResource(R.string.home_siap_merekam_layar)
+    RecordingState.Previewing -> stringResource(R.string.home_pratinjau_aktif_tekan_rekam)
+    RecordingState.Preparing -> stringResource(R.string.home_menyiapkan_tangkap_layar)
     is RecordingState.Recording -> if (state.audioActive) {
-        "Merekam layar + mixer audio"
+        stringResource(R.string.home_merekam_layar_mixer_audio)
     } else {
-        "Merekam tanpa audio (mixer tidak tersedia)"
+        stringResource(R.string.home_merekam_tanpa_audio)
     }
 
     is RecordingState.Error -> state.message

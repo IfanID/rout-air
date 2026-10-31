@@ -93,6 +93,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
 
 /**
  * Halaman Adegan: daftar scene, sumber pada scene aktif, dan panel properti
@@ -217,18 +218,18 @@ fun ScenesScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        Text("Adegan", style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(R.string.scenes_adegan), style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = "Scene, sumber, dan transisi",
+            text = stringResource(R.string.scenes_scene_sumber_dan_transisi),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Scene", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.scenes_scene), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { showAddScene = true }) { Text("＋ Tambah") }
+            TextButton(onClick = { showAddScene = true }) { Text(stringResource(R.string.scenes_tambah_2)) }
         }
 
         Row(
@@ -257,7 +258,7 @@ fun ScenesScreen(
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(
-                            text = "${scene.items.size} sumber",
+                            text = stringResource(R.string.scenes_n_sumber, scene.items.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -268,7 +269,7 @@ fun ScenesScreen(
 
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { showRenameScene = true }) { Text("Ganti nama") }
+            TextButton(onClick = { showRenameScene = true }) { Text(stringResource(R.string.audio_ganti_nama)) }
             if (collection.scenes.size > 1) {
                 TextButton(
                     onClick = {
@@ -276,14 +277,14 @@ fun ScenesScreen(
                         activeScene?.let { onCollectionChange(collection.moveScene(it.id, -1)) }
                     },
                 ) {
-                    Text("‹ Kiri")
+                    Text(stringResource(R.string.scenes_kiri))
                 }
                 TextButton(
                     onClick = {
                         activeScene?.let { onCollectionChange(collection.moveScene(it.id, +1)) }
                     },
                 ) {
-                    Text("Kanan ›")
+                    Text(stringResource(R.string.scenes_kanan))
                 }
             }
         }
@@ -294,7 +295,7 @@ fun ScenesScreen(
                     onSelectItem(null)
                 },
             ) {
-                Text("Duplikat scene")
+                Text(stringResource(R.string.scenes_duplikat_scene))
             }
             if (collection.scenes.size > 1) {
                 TextButton(
@@ -303,20 +304,20 @@ fun ScenesScreen(
                         onSelectItem(null)
                     },
                 ) {
-                    Text("Hapus scene aktif")
+                    Text(stringResource(R.string.scenes_hapus_scene_aktif))
                 }
             }
         }
 
         Spacer(Modifier.height(16.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Sumber", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.scenes_sumber), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { showAddSource = true }) { Text("＋ Sumber") }
+            TextButton(onClick = { showAddSource = true }) { Text(stringResource(R.string.scenes_sumber_2)) }
         }
 
         if (activeScene == null || activeScene.items.isEmpty()) {
-            Hint("Belum ada sumber di scene ini. Tambahkan sumber untuk mulai menata.")
+            Hint(stringResource(R.string.scenes_belum_ada_sumber_di_scene_ini_tambahkan))
         } else {
             val ordered = activeScene.items.sortedByDescending { it.z }
             ordered.forEach { item ->
@@ -381,8 +382,8 @@ fun ScenesScreen(
 
     if (showAddScene) {
         NameDialog(
-            title = "Tambah scene",
-            initial = "Adegan ${collection.scenes.size + 1}",
+            title = stringResource(R.string.scenes_tambah_scene),
+            initial = stringResource(R.string.scenes_adegan_n, collection.scenes.size + 1),
             onDismiss = { showAddScene = false },
             onConfirm = { name ->
                 onCollectionChange(collection.addScene(name))
@@ -394,7 +395,7 @@ fun ScenesScreen(
 
     if (showRenameScene && activeScene != null) {
         NameDialog(
-            title = "Ganti nama scene",
+            title = stringResource(R.string.scenes_ganti_nama_scene),
             initial = activeScene.name,
             onDismiss = { showRenameScene = false },
             onConfirm = { name ->
@@ -425,12 +426,13 @@ fun ScenesScreen(
             },
             onText = {
                 showAddSource = false
+                val teksBaru = context.getString(R.string.scenes_teks_baru)
                 val settings = SourceSettings(
-                    text = "Teks baru",
+                    text = teksBaru,
                     textSize = 48f,
                     width = canvasConfig.width,
                     height = SourceBitmap.measureTextHeight(
-                        "Teks baru",
+                        teksBaru,
                         48f,
                         canvasConfig.width,
                         density,
@@ -489,7 +491,7 @@ fun ScenesScreen(
                 )
                 android.widget.Toast.makeText(
                     context,
-                    "${app.label} ditambahkan ke tab Audio",
+                    context.getString(R.string.scenes_app_ditambahkan, app.label),
                     android.widget.Toast.LENGTH_SHORT,
                 ).show()
                 showAppAudioPicker = false
@@ -521,7 +523,7 @@ private fun SourceRow(
     val offset by animateFloatAsState(
         targetValue = target,
         animationSpec = if (dragging) snap() else tween(durationMillis = 180),
-        label = "geser-hapus",
+        label = stringResource(R.string.scenes_geser_hapus),
     )
     // Geser pegangan naik/turun untuk memindahkan urutan lapisan.
     var rowHeightPx by remember(item.id) { mutableFloatStateOf(0f) }
@@ -589,7 +591,7 @@ private fun SourceRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "Hapus",
+                        text = stringResource(R.string.common_hapus),
                         color = MaterialTheme.colorScheme.onError,
                         style = MaterialTheme.typography.titleSmall,
                     )
@@ -676,7 +678,7 @@ private fun SourceRow(
                         ResetIcon(
                             color = MaterialTheme.colorScheme.primary,
                             size = 20.dp,
-                            description = "Reset posisi, skala, rotasi, dan crop",
+                            description = stringResource(R.string.scenes_reset_posisi_skala_rotasi_dan_crop),
                         )
                     }
                     RowIconAction(onClick = onToggleVisible) {
@@ -802,7 +804,7 @@ private fun SourceEditor(
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Kembali") }
+            TextButton(onClick = onBack) { Text(stringResource(R.string.common_kembali_panah)) }
             Text(
                 text = source.name,
                 style = MaterialTheme.typography.titleLarge,
@@ -876,7 +878,7 @@ private fun SourceEditor(
             } == true
             if (hasScreen) {
                 Text(
-                    text = "Layar: pratinjau langsung ada di tab Studio",
+                    text = stringResource(R.string.scenes_layar_pratinjau_langsung_ada_di_tab_stud),
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFFB8C2CC),
                     modifier = Modifier
@@ -903,7 +905,7 @@ private fun SourceEditor(
                 name = it
                 updateSource(source.copy(name = it))
             },
-            label = { Text("Nama sumber") },
+            label = { Text(stringResource(R.string.scenes_nama_sumber)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -929,12 +931,12 @@ private fun SourceEditor(
                             ),
                         )
                     },
-                    label = { Text("Isi teks") },
+                    label = { Text(stringResource(R.string.scenes_isi_teks)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
                 LabeledSlider(
-                    label = "Ukuran teks",
+                    label = stringResource(R.string.scenes_ukuran_teks),
                     value = textSize,
                     range = 12f..160f,
                     format = { "%.0f sp".format(it) },
@@ -955,7 +957,7 @@ private fun SourceEditor(
                     )
                 }
                 ColorRow(
-                    title = "Warna teks",
+                    title = stringResource(R.string.scenes_warna_teks),
                     selected = source.settings.textColor,
                 ) { color ->
                     updateSource(source.copy(settings = source.settings.copy(textColor = color)))
@@ -964,7 +966,7 @@ private fun SourceEditor(
 
             SourceType.Color -> {
                 ColorRow(
-                    title = "Warna",
+                    title = stringResource(R.string.scenes_warna),
                     selected = source.settings.color,
                 ) { color ->
                     updateSource(source.copy(settings = source.settings.copy(color = color)))
@@ -973,7 +975,7 @@ private fun SourceEditor(
 
             SourceType.Image -> {
                 Spacer(Modifier.height(12.dp))
-                TextButton(onClick = onPickImage) { Text("Ganti gambar") }
+                TextButton(onClick = onPickImage) { Text(stringResource(R.string.scenes_ganti_gambar)) }
             }
 
             SourceType.Screen -> {
@@ -988,7 +990,7 @@ private fun SourceEditor(
             SourceType.AudioInput -> {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Perangkat input: ${source.settings.audioDeviceName ?: "Default"}",
+                    text = stringResource(R.string.scenes_perangkat_input_n, source.settings.audioDeviceName ?: androidx.compose.ui.platform.LocalContext.current.getString(R.string.common_default)),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -1005,13 +1007,13 @@ private fun SourceEditor(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { showDevicePicker = true }) {
-                        Text("Ganti perangkat input")
+                        Text(stringResource(R.string.scenes_ganti_perangkat_input))
                     }
                 }
                 if (source.settings.audioDeviceType == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Aktifkan SCO (mic Bluetooth)")
+                            Text(stringResource(R.string.scenes_aktifkan_sco_mic_bluetooth))
                             Text(
                                 "Coba aktifkan profil headset agar mic TWS bisa dipakai.",
                                 style = MaterialTheme.typography.bodySmall,
@@ -1059,7 +1061,7 @@ private fun SourceEditor(
                     updateTransform { defaultTransform(source, canvas) }
                 },
             ) {
-                Text("Reset transformasi")
+                Text(stringResource(R.string.scenes_reset_transformasi))
             }
         }
 
@@ -1067,7 +1069,7 @@ private fun SourceEditor(
         val resetTransform = defaultTransform(source, canvas)
 
         LabeledSlider(
-            label = "Posisi X",
+            label = stringResource(R.string.scenes_posisi_x),
             value = item.transform.x,
             range = 0f..canvas.width.toFloat(),
             format = { "%.0f px".format(it) },
@@ -1075,7 +1077,7 @@ private fun SourceEditor(
         ) { value -> updateTransform { it.copy(x = value) } }
 
         LabeledSlider(
-            label = "Posisi Y",
+            label = stringResource(R.string.scenes_posisi_y),
             value = item.transform.y,
             range = 0f..canvas.height.toFloat(),
             format = { "%.0f px".format(it) },
@@ -1104,7 +1106,7 @@ private fun SourceEditor(
         }
 
         LabeledSlider(
-            label = "Scale X",
+            label = stringResource(R.string.scenes_scale_x),
             value = item.transform.scaleX,
             range = 0.05f..4f,
             format = { "%.2f×".format(it) },
@@ -1112,7 +1114,7 @@ private fun SourceEditor(
         ) { value -> updateTransform { it.copy(scaleX = value) } }
 
         LabeledSlider(
-            label = "Scale Y",
+            label = stringResource(R.string.scenes_scale_y),
             value = item.transform.scaleY,
             range = 0.05f..4f,
             format = { "%.2f×".format(it) },
@@ -1120,7 +1122,7 @@ private fun SourceEditor(
         ) { value -> updateTransform { it.copy(scaleY = value) } }
 
         LabeledSlider(
-            label = "Rotasi",
+            label = stringResource(R.string.scenes_rotasi),
             value = item.transform.rotation,
             range = -180f..180f,
             format = { "%.0f°".format(it) },
@@ -1129,7 +1131,7 @@ private fun SourceEditor(
 
         // Opasitas per item, seperti slider Opacity di OBS.
         LabeledSlider(
-            label = "Opasitas",
+            label = stringResource(R.string.scenes_opasitas),
             value = item.opacity,
             range = 0f..1f,
             format = { "%.0f%%".format(it * 100f) },
@@ -1163,19 +1165,19 @@ private fun SourceEditor(
             TextButton(
                 onClick = { updateItem(item.copy(crop = Crop())) },
             ) {
-                Text("Reset crop")
+                Text(stringResource(R.string.scenes_reset_crop))
             }
         }
-        CropSlider("Kiri", item.crop.left) { value ->
+        CropSlider(stringResource(R.string.scenes_kiri_2), item.crop.left) { value ->
             updateItem(item.copy(crop = item.crop.copy(left = value)))
         }
-        CropSlider("Atas", item.crop.top) { value ->
+        CropSlider(stringResource(R.string.scenes_atas), item.crop.top) { value ->
             updateItem(item.copy(crop = item.crop.copy(top = value)))
         }
-        CropSlider("Kanan", item.crop.right) { value ->
+        CropSlider(stringResource(R.string.scenes_kanan_2), item.crop.right) { value ->
             updateItem(item.copy(crop = item.crop.copy(right = value)))
         }
-        CropSlider("Bawah", item.crop.bottom) { value ->
+        CropSlider(stringResource(R.string.scenes_bawah), item.crop.bottom) { value ->
             updateItem(item.copy(crop = item.crop.copy(bottom = value)))
         }
         }
@@ -1185,16 +1187,16 @@ private fun SourceEditor(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
                 onClick = { onCollectionChange(collection.moveLayer(item.id, +1)) },
-            ) { Text("Naikkan lapisan") }
+            ) { Text(stringResource(R.string.scenes_naikkan_lapisan)) }
             TextButton(
                 onClick = { onCollectionChange(collection.moveLayer(item.id, -1)) },
-            ) { Text("Turunkan lapisan") }
+            ) { Text(stringResource(R.string.scenes_turunkan_lapisan)) }
         }
         }
 
         Spacer(Modifier.height(8.dp))
         // Menghapus item ini saja; sumber dibuang hanya bila tak terpakai lagi.
-        TextButton(onClick = onDelete) { Text("Hapus item") }
+        TextButton(onClick = onDelete) { Text(stringResource(R.string.scenes_hapus_item)) }
         }
     }
 
@@ -1270,7 +1272,7 @@ private fun AudioSourceEditor(
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Kembali") }
+            TextButton(onClick = onBack) { Text(stringResource(R.string.common_kembali_panah)) }
             Text(
                 text = source.name,
                 style = MaterialTheme.typography.titleLarge,
@@ -1335,7 +1337,7 @@ private fun AudioSourceEditor(
                         name = it
                         updateSource(source.copy(name = it))
                     },
-                    label = { Text("Nama sumber") },
+                    label = { Text(stringResource(R.string.scenes_nama_sumber)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1343,7 +1345,7 @@ private fun AudioSourceEditor(
                 if (source.type == SourceType.AudioInput) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        text = "Perangkat: ${source.settings.audioDeviceName ?: "Default"}",
+                        text = stringResource(R.string.scenes_perangkat_n, source.settings.audioDeviceName ?: androidx.compose.ui.platform.LocalContext.current.getString(R.string.common_default)),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
@@ -1363,18 +1365,21 @@ private fun AudioSourceEditor(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(onClick = { showDevicePicker = true }) {
-                        Text("Ganti perangkat input")
+                        Text(stringResource(R.string.scenes_ganti_perangkat_input))
                     }
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Text("Level input", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.scenes_level_input), style = MaterialTheme.typography.bodyMedium)
                 VolumeMeter(
                     level = level,
                     active = ready && channel.enabled && !channel.muted,
                     decay = mix.meterDecay,
                     vertical = false,
                     modifier = Modifier.fillMaxWidth(),
+                    showScale = true,
+                    muted = channel.muted,
+                    peakType = mix.peakMeterType,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -1394,7 +1399,7 @@ private fun AudioSourceEditor(
         )
 
         Spacer(Modifier.height(16.dp))
-        TextButton(onClick = onDelete) { Text("Hapus sumber") }
+        TextButton(onClick = onDelete) { Text(stringResource(R.string.scenes_hapus_sumber)) }
     }
 
     if (showDevicePicker) {
@@ -1448,7 +1453,7 @@ private fun LabeledSlider(
                     ResetIcon(
                         color = MaterialTheme.colorScheme.primary,
                         size = 18.dp,
-                        description = "Reset $label",
+                        description = stringResource(R.string.scenes_reset_properti, label),
                     )
                 }
             }
@@ -1468,7 +1473,7 @@ private fun CropSlider(
     onChange: (Float) -> Unit,
 ) {
     LabeledSlider(
-        label = "Crop $label",
+        label = stringResource(R.string.scenes_crop_n, label),
         value = value,
         range = 0f..0.49f,
         format = { "%.0f%%".format(it * 100f) },
@@ -1480,7 +1485,7 @@ private fun CropSlider(
 @Composable
 private fun AlignGrid(current: Align, onChange: (Align) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-        Text("Titik jangkar", style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(R.string.scenes_titik_jangkar), style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(6.dp))
         val rows = listOf(
             listOf(Align.TopLeft, Align.Top, Align.TopRight),
@@ -1566,10 +1571,10 @@ private fun NameDialog(
             TextButton(
                 enabled = value.isNotBlank(),
                 onClick = { onConfirm(value.trim()) },
-            ) { Text("Simpan") }
+            ) { Text(stringResource(R.string.common_simpan)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Batal") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_batal)) }
         },
     )
 }
@@ -1624,13 +1629,14 @@ internal fun defaultTransform(source: SceneSource, canvas: CaptureConfig): Trans
     }
 
 
+@Composable
 private fun typeLabel(type: SourceType): String = when (type) {
-    SourceType.Screen -> "Tangkap layar"
-    SourceType.Image -> "Gambar"
-    SourceType.Text -> "Teks"
-    SourceType.Color -> "Warna"
-    SourceType.AudioInput -> "Audio input"
-    SourceType.AudioOutput -> "Audio output"
+    SourceType.Screen -> stringResource(R.string.scenes_tipe_screen)
+    SourceType.Image -> stringResource(R.string.scenes_tipe_image)
+    SourceType.Text -> stringResource(R.string.scenes_tipe_text)
+    SourceType.Color -> stringResource(R.string.scenes_tipe_color)
+    SourceType.AudioInput -> stringResource(R.string.scenes_tipe_audio_input)
+    SourceType.AudioOutput -> stringResource(R.string.scenes_tipe_audio_output)
 }
 
 private fun typeSymbol(type: SourceType): String = when (type) {
@@ -1642,9 +1648,10 @@ private fun typeSymbol(type: SourceType): String = when (type) {
     SourceType.AudioOutput -> "◎"
 }
 
+@Composable
 private fun intrinsicLabel(source: SceneSource): String = when (source.type) {
-    SourceType.Screen -> "mengikuti kanvas"
-    SourceType.AudioInput, SourceType.AudioOutput -> "audio"
+    SourceType.Screen -> stringResource(R.string.scenes_intrinsic_screen)
+    SourceType.AudioInput, SourceType.AudioOutput -> stringResource(R.string.scenes_intrinsic_audio)
     else -> "${source.settings.width}x${source.settings.height}"
 }
 

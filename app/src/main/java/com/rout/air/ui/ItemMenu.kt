@@ -29,6 +29,8 @@ import com.rout.air.data.removeSource
 import com.rout.air.data.updateItem
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /** Halaman menu konteks: utama, submenu Transformasi, Urutan, dan Blend. */
 private enum class MenuPage { Main, Transform, Order, Blend }
@@ -97,22 +99,22 @@ internal fun ItemContextMenu(
         when (page) {
             MenuPage.Main -> {
                 DropdownMenuItem(
-                    text = { Text("Transformasi  ›") },
+                    text = { Text(stringResource(R.string.scenes_transformasi)) },
                     onClick = { page = MenuPage.Transform },
                 )
                 DropdownMenuItem(
-                    text = { Text("Urutan  ›") },
+                    text = { Text(stringResource(R.string.scenes_urutan)) },
                     onClick = { page = MenuPage.Order },
                 )
                 DropdownMenuItem(
-                    text = { Text("Blend: ${item.blend.label}  ›") },
+                    text = { Text(stringResource(R.string.scenes_blend_n, blendLabel(item.blend))) },
                     onClick = { page = MenuPage.Blend },
                 )
                 if (source?.type != SourceType.Screen) {
                     // Layar tidak boleh diduplikat: satu sumber tangkap layar
                     // sudah cukup, duplikatnya hanya membuat tumpukan penuh.
                     DropdownMenuItem(
-                        text = { Text("Duplikat") },
+                        text = { Text(stringResource(R.string.scenes_duplikat)) },
                         onClick = {
                             val (next, newId) = collection.duplicateItem(item.id)
                             if (newId != null) {
@@ -132,7 +134,7 @@ internal fun ItemContextMenu(
                     onClick = { applyItem(item.copy(visible = !item.visible)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Hapus") },
+                    text = { Text(stringResource(R.string.common_hapus)) },
                     onClick = {
                         var next = collection.removeItem(item.id)
                         // Sumber yang tidak lagi dipakai item mana pun ikut
@@ -149,11 +151,11 @@ internal fun ItemContextMenu(
 
             MenuPage.Transform -> {
                 DropdownMenuItem(
-                    text = { Text("‹ Kembali") },
+                    text = { Text(stringResource(R.string.common_kembali_panah)) },
                     onClick = { page = MenuPage.Main },
                 )
                 DropdownMenuItem(
-                    text = { Text("Flip horizontal") },
+                    text = { Text(stringResource(R.string.scenes_flip_horizontal)) },
                     onClick = {
                         applyItem(
                             item.copy(
@@ -163,7 +165,7 @@ internal fun ItemContextMenu(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Flip vertikal") },
+                    text = { Text(stringResource(R.string.scenes_flip_vertikal)) },
                     onClick = {
                         applyItem(
                             item.copy(
@@ -173,31 +175,31 @@ internal fun ItemContextMenu(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Putar 90° searah jam") },
+                    text = { Text(stringResource(R.string.scenes_putar_90_searah_jam)) },
                     onClick = { applyItem(rotateBy(item, 90f)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Putar 90° berlawanan") },
+                    text = { Text(stringResource(R.string.scenes_putar_90_berlawanan)) },
                     onClick = { applyItem(rotateBy(item, -90f)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Putar 180°") },
+                    text = { Text(stringResource(R.string.scenes_putar_180)) },
                     onClick = { applyItem(rotateBy(item, 180f)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Fit to screen") },
+                    text = { Text(stringResource(R.string.scenes_fit_to_screen)) },
                     onClick = { applyItem(fitToScreen(item, source, canvas)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Stretch to screen") },
+                    text = { Text(stringResource(R.string.scenes_stretch_to_screen)) },
                     onClick = { applyItem(stretchToScreen(item, source, canvas)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Center to screen") },
+                    text = { Text(stringResource(R.string.scenes_center_to_screen)) },
                     onClick = { applyItem(centerToScreen(item, canvas)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset posisi") },
+                    text = { Text(stringResource(R.string.scenes_reset_posisi)) },
                     onClick = {
                         // Hanya lokasi X/Y; skala, rotasi, dan crop tetap.
                         val reset = source?.let { defaultTransform(it, canvas) }
@@ -208,7 +210,7 @@ internal fun ItemContextMenu(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset scale") },
+                    text = { Text(stringResource(R.string.scenes_reset_scale)) },
                     onClick = {
                         // Hanya skala yang dikembalikan ke ukuran awal.
                         val reset = source?.let { defaultTransform(it, canvas) }
@@ -224,13 +226,13 @@ internal fun ItemContextMenu(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset rotasi") },
+                    text = { Text(stringResource(R.string.scenes_reset_rotasi)) },
                     onClick = {
                         applyItem(item.copy(transform = item.transform.copy(rotation = 0f)))
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("Reset transformasi") },
+                    text = { Text(stringResource(R.string.scenes_reset_transformasi)) },
                     onClick = {
                         // Semua kembali ke kondisi awal, termasuk crop.
                         val reset = source?.let { defaultTransform(it, canvas) }
@@ -242,38 +244,37 @@ internal fun ItemContextMenu(
 
             MenuPage.Order -> {
                 DropdownMenuItem(
-                    text = { Text("‹ Kembali") },
+                    text = { Text(stringResource(R.string.common_kembali_panah)) },
                     onClick = { page = MenuPage.Main },
                 )
                 DropdownMenuItem(
-                    text = { Text("Naikkan satu lapis") },
+                    text = { Text(stringResource(R.string.scenes_naikkan_satu_lapis)) },
                     onClick = { apply(collection.moveLayer(item.id, +1)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Turunkan satu lapis") },
+                    text = { Text(stringResource(R.string.scenes_turunkan_satu_lapis)) },
                     onClick = { apply(collection.moveLayer(item.id, -1)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Ke paling depan") },
+                    text = { Text(stringResource(R.string.scenes_ke_paling_depan)) },
                     onClick = { apply(collection.moveLayerToEdge(item.id, top = true)) },
                 )
                 DropdownMenuItem(
-                    text = { Text("Ke paling belakang") },
+                    text = { Text(stringResource(R.string.scenes_ke_paling_belakang)) },
                     onClick = { apply(collection.moveLayerToEdge(item.id, top = false)) },
                 )
             }
 
             MenuPage.Blend -> {
                 DropdownMenuItem(
-                    text = { Text("‹ Kembali") },
+                    text = { Text(stringResource(R.string.common_kembali_panah)) },
                     onClick = { page = MenuPage.Main },
                 )
                 BlendMode.values().forEach { mode ->
                     DropdownMenuItem(
                         text = {
-                            Text(
-                                if (item.blend == mode) "✓ ${mode.label}" else mode.label,
-                            )
+                            val name = blendLabel(mode)
+                            Text(if (item.blend == mode) "✓ $name" else name)
                         },
                         onClick = { applyItem(item.copy(blend = mode)) },
                     )
@@ -339,3 +340,12 @@ private fun centerToScreen(item: SceneItem, canvas: CaptureConfig): SceneItem =
             align = Align.Center,
         ),
     )
+
+/** Label blend mode dari resource, menggantikan label enum di core. */
+@Composable
+private fun blendLabel(mode: BlendMode): String = when (mode) {
+    BlendMode.Normal -> stringResource(R.string.scenes_blend_normal)
+    BlendMode.Add -> stringResource(R.string.scenes_blend_add)
+    BlendMode.Screen -> stringResource(R.string.scenes_blend_screen)
+    BlendMode.Multiply -> stringResource(R.string.scenes_blend_multiply)
+}

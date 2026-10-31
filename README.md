@@ -1,155 +1,137 @@
 # RoutAir
 
 Aplikasi **perekam layar Android bergaya OBS Studio**: scene multi-sumber,
-pratinjau ala Studio Mode, dan rekaman MP4 dengan mixer audio internal +
-mikrofon.
+pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
 
 - Package: `com.rout.air`
 - Bahasa: Kotlin + Jetpack Compose + OpenGL ES
-- `minSdk 31`, `compileSdk`/`targetSdk 37`
+- `minSdk 31`, `compileSdk`/`targetSdk` 37
+- Bahasa aplikasi: **Indonesia** (default, lewat `res/values/strings.xml`)
 
 ## Fitur
 
-### Rekaman
-- Rekam layar ke **MP4 (H.264)** memakai `MediaProjection`, `MediaCodec`,
-  dan `MediaMuxer`.
-- **Audio internal** lewat `AudioPlaybackCapture` (AAC 48 kHz).
+### Siaran (Home)
+- Rekam layar ke **MP4 (H.264 + AAC)** memakai `MediaProjection`,
+  `MediaCodec`, dan `MediaMuxer`.
+- **Audio internal** lewat `AudioPlaybackCapture`, ditambah mikrofon dan
+  kanal aplikasi lewat mixer.
 - Sesi pratinjau tetap hidup saat aplikasi ke background; rekaman berjalan
-  lewat foreground service.
-
-### Scene
-- Scene berlapis dengan sumber **Layar, Gambar, Teks, dan Warna**.
-- Audio (mikrofon, audio internal, dan audio per aplikasi) dikelola di tab
-  **Audio**, bukan sebagai sumber visual di Adegan. Sumber audio lama tetap
-  didukung sebagai sumber legacy.
-- Transform ala OBS: geser, cubit (skala), putar, crop, flip, jangkar.
-- Opacity dan blend mode (Normal, Add, Screen, Multiply).
-- Urutkan lapisan, kunci, sembunyikan, duplikat item.
-- **Satu Layar per scene**; Layar bisa dipakai ulang di scene lain tanpa
-  menduplikasi sumber tangkapan.
-- Scene collection disimpan sebagai JSON dengan autosave 500 ms.
+  di foreground service dengan notifikasi.
+- **Izin rekam layar**:
+  - diminta otomatis saat aplikasi dibuka;
+  - tombol ikon **izin rekam layar** (cadangan) muncul saat sesi belum aktif;
+  - tombol **akhiri sesi** melepas izin `MediaProjection`
+    (izin harus diminta ulang pada sesi berikutnya).
+- **Tombol Rekam** berubah sesuai kondisi: ikon rekam (siap), spinner
+  (menyiapkan), ikon stop merah berdenyut (merekam).
 
 ### Studio Mode
-- **Pratinjau** untuk menyunting dan **Program** untuk keluaran yang direkam.
+- Dua panel: **Pratinjau (mentah)** untuk menyunting dan **Program (siaran)**
+  untuk keluaran yang direkam.
 - Tombol **Transisi** memindahkan hasil edit ke Program; rekaman selalu
   memakai Program.
-- Panel pratinjau bisa digeser, dicubit, diputar, dan crop langsung.
+- **Pratinjau penuh**: tombol ikon di header menyembunyikan panel Program
+  sehingga pratinjau jadi luas; header, tombol Transisi/Rekam, dan navbar
+  tetap tampil. Status full screen diingat saat berpindah tab.
+- Gestur di pratinjau: geser, cubit (skala), putar, dan jangkar.
 
-### Audio (M3)
-- **Dock Audio Mixer ala OBS** dengan toolbar bawah: jumlah sumber tersembunyi,
-  ikon tata letak tujuan, gear Advanced Audio, dan menu **Opsi**.
-- **Application Audio Capture**: tambah kanal per aplikasi dari tab Audio
-  (`＋ App`), dengan pencarian aplikasi, volume/mute/filter/monitor, dan
-  pemilihan track. Kanal aplikasi memakai `AudioPlaybackCapture` dengan UID
-  aplikasi; aplikasi yang melarang capture akan senyap.
-- **Dua sumber global tetap**: *Audio internal* (Desktop Audio) dan *Mikrofon*
-  (Mic/Aux), ditambah **kanal aplikasi** dan kanal dinamis dari sumber audio
-  lama di panel Sumber.
-- **Context menu** persis struktur OBS: Unhide All, Pin/Unpin, Hide/Unhide,
-  Lock Volume, Copy/Paste Filters, Rename, Filters, Properties.
-- Kategori chip: **Aktif, Nonaktif, Disematkan, Disembunyikan, Tanpa track**.
-- **Fader logaritmik** `OBS_FADER_LOG` (-96…0 dB), tick tiap 10 dB.
-- **Meter L/R** gaya OBS: hijau -60…-20, kuning -20…-9, merah -9…0,
-  peak-hold, clip, decay rate, dan True Peak (perkiraan oversampling).
+### Adegan
+- Scene berlapis dengan sumber **Layar, Gambar, Teks, dan Warna**.
+- Transform ala OBS: posisi, skala (seragam/X/Y), rotasi, crop, flip, jangkar.
+- Opacity dan blend mode (Normal, Add, Screen, Multiply).
+- Urutkan lapisan (drag handle), kunci/buka kunci, sembunyikan, duplikat,
+  hapus.
+- **Satu Layar per scene**; sumber Layar dipakai ulang di scene lain tanpa
+  menduplikasi tangkapan.
+- Menu transform (tekan lama item): flip, putar, fit/stretch/center,
+  **Reset posisi**, **Reset scale**, **Reset rotasi**, **Reset transformasi**.
+- Scene collection disimpan sebagai JSON dengan autosave.
+
+### Audio
+- **Dock Audio Mixer ala OBS** dengan dukungan layout baris dan kolom.
+- **Dua sumber global**: *Audio internal* (Desktop Audio) dan *Mikrofon*
+  (Mic/Aux), plus **kanal aplikasi** dan kanal dari sumber audio legacy.
+- **Application Audio Capture**: tambah kanal per aplikasi (UID) dari tab
+  Audio; aplikasi yang melarang capture akan senyap.
+- **Tombol on/off kanal** langsung di samping label **Aktif/Nonaktif**
+  (tidak perlu buka Properti).
+- **Context menu** ala OBS: Unhide All, Pin/Unpin, Hide/Unhide, Lock Volume,
+  Copy/Paste Filters, Rename, Filters, Properties.
+- **Fader logaritmik** `OBS_FADER_LOG` (-96…0 dB, adv +26 dB).
+- **Meter L/R**: hijau -60…-20, kuning -20…-9, merah -9…0, peak hold,
+  clip, decay rate, True Peak.
 - **Mute**, **monitoring on/off**, **balance**, **force mono**,
-  **sync offset** (-950…20000 ms), dan **tracks 1–6** per kanal.
-- **Advanced Audio Properties** berupa tabel: sumber, status, volume (dB/%),
-  mono, balance, sync offset, monitoring, tracks.
-- **Filters per kanal**: Gain, Noise Gate, Compressor, Limiter, Invert
-  Polarity, Noise Suppression, dan Equalizer 3-band; bisa diurutkan,
+  **sync offset**, dan **tracks 1–6** per kanal.
+- **Advanced Audio Properties** dalam bentuk tabel.
+- **Filter per kanal**: Gain, Noise Gate, Compressor, Limiter, Invert
+  Polarity, Noise Suppression, Equalizer 3-band; bisa diurutkan,
   di-enable/disable, disalin, dan ditempel.
-- **Push-to-talk / Push-to-mute** berupa tombol tahan di halaman Audio.
-- **Multitrack MP4**: track audio terpisah ditulis bila Track 2–6 dipilih di
-  Setelan › Output.
-- Sumber audio **hidup sejak sesi pratinjau**: meter dan monitoring bekerja
-  walau tombol rekam belum ditekan, sama seperti OBS.
-- Perubahan volume, mute, filter, balance, sync, dan monitoring **langsung
-  berlaku saat merekam**; pengaturan mixer tersimpan otomatis.
+- **Monitoring device** dipilih di Setelan → Audio (daftar sudah
+  di-deduplikasi).
 
-### Antarmuka
-- Enam tab: **Siaran, Studio, Adegan, Audio, Rekaman, Setelan**.
-- Tema gelap dengan aksen cyan `#00E5FF`.
+### Rekaman
+- Daftar file rekaman, buka, bagikan, dan hapus.
 
-## Status Milestone
+### Setelan
+- **Video**: resolusi kanvas, orientasi (Auto/Vertikal/Horizontal), fps,
+  bitrate, mode isi (Pas/Penuh/Peregangan).
+- **Output**: bitrate, format, lokasi penyimpanan.
+- **Audio**: sample rate, jumlah kanal, monitoring device, peak meter,
+  push-to-talk/push-to-mute.
+- **Hotkeys** dan **Advanced** (informasi teknis/diagnostik).
 
-- **M1** — pipeline rekaman layar MP4 + audio internal: selesai.
-- **M2** — scene multi-sumber, transform, Studio Mode, blend, opacity: selesai.
-- **M3 (audio lanjutan)** — dock mixer OBS, mikrofon, meter L/R, pin/hide/lock/
-  rename, advanced properties, filter audio, sync offset, mono, monitoring,
-  tracks/multitrack, dan setelan audio OBS: selesai.
-- **M2.5** — kamera: belum dikerjakan.
-- **M4–M8** — pause/preset, RTMP, VST/plugin, replay buffer, dll:
-  belum dikerjakan.
-
-## Struktur Proyek
+## Struktur project
 
 ```
 app/src/main/java/com/rout/air/
-├── core/       model scene, model mixer audio, konfigurasi rekaman, state
-├── data/       penyimpanan scene/setelan/mixer, log diagnostik
-├── encode/     encoder video/audio (mixer PCM), penulis MP4
-├── engine/     EGL, kompositor OpenGL, tekstur sumber
-├── output/     pipeline rekaman & jembatan engine
-├── service/    foreground service tangkap layar
-└── ui/         Compose: Beranda, Studio, Adegan, Audio, Rekaman, Setelan
+├── core/      model scene, konfigurasi, model audio
+├── data/      penyimpanan scene/setelan, mixer, SceneManager
+├── capture/   pembungkus MediaProjection / VirtualDisplay
+├── encode/    encoder audio, filter, sync
+├── output/    pipeline rekaman (GL, encoder, muxer, engine)
+├── service/   foreground service rekaman
+└── ui/        Compose: Siaran, Studio, Adegan, Audio, Rekaman, Setelan
 ```
+
+## Internasionalisasi (i18n)
+
+Semua teks UI berada di satu file dengan pengelompokan per halaman:
+
+```
+app/src/main/res/values/strings.xml
+```
+
+- Default: **Bahasa Indonesia**.
+- Dikelompokkan dengan komentar `<!-- ===== Halaman ... ===== -->`
+  dan awalan nama: `common_`, `home_`, `studio_`, `scenes_`, `audio_`,
+  `recordings_`, `settings_`.
+- Komponen Compose memakai `stringResource(R.string.xxx)`; teks dinamis
+  memakai placeholder (`%1$s`, `%1$d`).
+- Untuk menambah bahasa lain, buat `values-<kode>/strings.xml`
+  dengan nama resource yang sama.
 
 ## Build
 
-Prasyarat:
-- JDK 21 atau 25 (sesuai versi Gradle proyek)
-- Android SDK Platform 36 + Build Tools 36
-- Gradle wrapper sudah disertakan
+Prasyarat: JDK 21/25, Android SDK (platform 36), Gradle wrapper.
 
 ```bash
-./gradlew assembleDebug
-# atau memakai skrip lingkungan pengembangan:
-android-build debug /path/ke/rout-air
+./gradlew :app:compileDebugKotlin     # kompilasi
+./gradlew :app:testDebugUnitTest      # unit test
+android-build debug                   # build APK debug
+android-build release                 # build APK release (ditandatangani)
 ```
 
-APK debug dihasilkan di `app/build/outputs/apk/debug/` (atau dipindahkan oleh
-`android-build` ke folder `Documents/app/debug`).
+Hasil build debug dipindah ke:
 
-## Catatan Audio
+```
+/storage/emulated/0/Documents/app/debug/RoutAir-debug.apk
+```
 
-- Audio internal hanya menangkap aplikasi yang **mengizinkan
-  AudioPlaybackCapture**. Aplikasi ber-DRM atau yang memblokir akan senyap.
-- Mesin audio berjalan selama sesi tangkap layar (pratinjau), bukan hanya saat
-  merekam. Encoder AAC baru dibuat ketika rekaman dimulai, jadi pratinjau
-  hanya menangkap, mencampur, mengukur level, dan memonitor.
-- Mikrofon memakai `AudioRecord` dengan sumber `UNPROCESSED` bila didukung,
-  lalu jatuh ke `MIC`. Izin `RECORD_AUDIO` diminta saat sesi tangkap dibuka.
-- Monitoring memutar campuran ke speaker/headset. Pakai headset agar tidak
-  terjadi umpan balik (feedback); output monitor tidak ikut tertangkap ulang
-  oleh AudioPlaybackCapture.
-- Kanal yang diaktifkan saat rekaman sedang berjalan akan mulai ditangkap;
-  minimal satu kanal harus aktif saat rekaman dimulai agar trek audio dibuat.
-- Filter audio berjalan sebagai DSP di thread audio. VST plugin tidak
-  didukung di Android; Noise Suppression memakai expander ringan, bukan
-  algoritma spectral OBS.
-- Multitrack MP4 menulis trek AAC terpisah untuk setiap track yang dipilih.
-  Ini memakai CPU lebih tinggi dan tidak semua player memutar trek selain
-  trek pertama.
-- Beberapa sumber Audio Input bisa memakai perangkat berbeda, tetapi Android
-  tidak selalu mengizinkan beberapa AudioRecord berjalan bersamaan; sumber
-  yang gagal dibuka ditandai nonaktif di mixer.
-- Daftar perangkat input dibersihkan: entri ganda untuk mikrofon yang sama
-  digabung, device virtual seperti `remote-submix` disembunyikan, dan tipe
-  perangkat ditampilkan (mikrofon bawaan, Bluetooth/TWS, headset kabel, USB).
-- TWS Bluetooth memakai profil **SCO/HFP** untuk mikrofon. SCO diaktifkan
-  otomatis saat kanal mikrofon Bluetooth dipakai dan dimatikan lagi saat
-  tidak dipakai, dengan timeout + fallback ke mic default jika gagal. Selama
-  SCO aktif, musik A2DP bisa berhenti atau turun kualitas karena TWS beralih
-  ke mode headset; tidak semua perangkat mendukung mic TWS bersamaan dengan
-  musik A2DP.
-- Untuk merekam musik dari TWS/aplikasi musik, gunakan kanal **Audio internal
-  (Desktop Audio)** atau **Application Audio Capture**, bukan mikrofon TWS.
-- Monitoring memilih output Bluetooth/headset/USB yang terhubung secara
-  otomatis. Jika SCO aktif (mic TWS), monitoring mengikuti perangkat
-  komunikasi SCO; jika SCO mati, monitoring memakai jalur media A2DP.
-  Pemilihan manual ada di **Setelan › Audio › Monitoring Device**.
-- Filter audio (noise gate, compressor) dan sinkronisasi offset menyusul.
+## Catatan
 
-## Lisensi
-
-Belum ditentukan.
+- Tangkapan per aplikasi memakai `AudioPlaybackCapture`; aplikasi dengan
+  `allowAudioPlaybackCapture=false` tidak akan menghasilkan suara.
+- Monitoring lewat Bluetooth (TWS) memakai profil SCO/HFP; perangkat harus
+  mendukung jalur mic/headset.
+- Rekaman memakai satu track video/audio utama; multitrack (1–6) disimpan
+  sebagai bitmask pada kanal.

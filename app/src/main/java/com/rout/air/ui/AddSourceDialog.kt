@@ -32,6 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /**
  * Dialog Tambah Sumber bergaya OBS. Tipe yang belum didukung tetap
@@ -57,7 +59,7 @@ internal fun AddSourceDialog(
             color = MaterialTheme.colorScheme.surface,
         ) {
             Column(Modifier.padding(14.dp)) {
-                Text("Tambah Sumber", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.scenes_tambah_sumber), style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Pilih jenis sumber seperti di OBS",
                     style = MaterialTheme.typography.bodySmall,
@@ -105,7 +107,7 @@ internal fun AddSourceDialog(
                 Spacer(Modifier.height(6.dp))
                 Row {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_batal)) }
                 }
             }
         }
@@ -248,7 +250,7 @@ internal fun AudioSourceSetupDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nama sumber") },
+                    label = { Text(stringResource(R.string.scenes_nama_sumber)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -266,8 +268,8 @@ internal fun AudioSourceSetupDialog(
                             .verticalScroll(rememberScrollState()),
                     ) {
                         DeviceRow(
-                            title = "Default",
-                            subtitle = "Ikuti perangkat input sistem",
+                            title = stringResource(R.string.common_default),
+                            subtitle = stringResource(R.string.scenes_ikuti_perangkat_input_sistem),
                             selected = selected == null,
                             onClick = { selected = null },
                         )
@@ -315,7 +317,7 @@ internal fun AudioSourceSetupDialog(
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Batal") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_batal)) }
                     TextButton(
                         onClick = {
                             onConfirm(
@@ -326,7 +328,7 @@ internal fun AudioSourceSetupDialog(
                                 isBluetooth && sco,
                             )
                         },
-                    ) { Text("Tambah") }
+                    ) { Text(stringResource(R.string.common_tambah)) }
                 }
             }
         }
@@ -346,7 +348,7 @@ internal fun AudioDevicePickerDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.padding(16.dp)) {
-                Text("Perangkat input", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.scenes_perangkat_input), style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Column(
                     modifier = Modifier
@@ -354,8 +356,8 @@ internal fun AudioDevicePickerDialog(
                         .verticalScroll(rememberScrollState()),
                 ) {
                     DeviceRow(
-                        title = "Default",
-                        subtitle = "Ikuti perangkat input sistem",
+                        title = stringResource(R.string.common_default),
+                        subtitle = stringResource(R.string.scenes_ikuti_perangkat_input_sistem),
                         selected = currentId == 0,
                         onClick = { onSelect(null) },
                     )
@@ -371,7 +373,7 @@ internal fun AudioDevicePickerDialog(
                 Spacer(Modifier.height(8.dp))
                 Row {
                     Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("Tutup") }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_tutup)) }
                 }
             }
         }

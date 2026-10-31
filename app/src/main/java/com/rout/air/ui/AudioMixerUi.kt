@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -33,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -46,13 +48,18 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,16 +85,65 @@ import com.rout.air.ui.theme.WarningAmber
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /** Kategori chip yang mengikuti prioritas OBS. */
-internal enum class ChannelCategory(val label: String) {
-    Unassigned("Tanpa track"),
-    Pinned("Disematkan"),
-    Hidden("Disembunyikan"),
-    Active("Aktif"),
-    Inactive("Nonaktif"),
+internal enum class ChannelCategory {
+    Unassigned,
+    Pinned,
+    Hidden,
+    Active,
+    Inactive,
+}
+
+@Composable
+internal fun filterLabel(type: com.rout.air.core.AudioFilterType): String = when (type) {
+    com.rout.air.core.AudioFilterType.Gain -> stringResource(R.string.audio_filter_gain)
+    com.rout.air.core.AudioFilterType.NoiseGate -> stringResource(R.string.audio_filter_noise_gate)
+    com.rout.air.core.AudioFilterType.Compressor -> stringResource(R.string.audio_filter_compressor)
+    com.rout.air.core.AudioFilterType.Limiter -> stringResource(R.string.audio_filter_limiter)
+    com.rout.air.core.AudioFilterType.InvertPolarity -> stringResource(R.string.audio_filter_invert)
+    com.rout.air.core.AudioFilterType.NoiseSuppression -> stringResource(R.string.audio_filter_suppression)
+    com.rout.air.core.AudioFilterType.Equalizer -> stringResource(R.string.audio_filter_equalizer)
+}
+
+@Composable
+internal fun monitorLabel(mode: com.rout.air.core.MonitorMode): String = when (mode) {
+    com.rout.air.core.MonitorMode.Off -> stringResource(R.string.audio_monitor_off)
+    com.rout.air.core.MonitorMode.MonitorOnly -> stringResource(R.string.audio_monitor_only)
+    com.rout.air.core.MonitorMode.MonitorAndOutput -> stringResource(R.string.audio_monitor_output)
+}
+
+@Composable
+internal fun decayLabel(decay: com.rout.air.core.MeterDecay): String = when (decay) {
+    com.rout.air.core.MeterDecay.Fast -> stringResource(R.string.audio_decay_fast)
+    com.rout.air.core.MeterDecay.Medium -> stringResource(R.string.audio_decay_medium)
+    com.rout.air.core.MeterDecay.Slow -> stringResource(R.string.audio_decay_slow)
+}
+
+@Composable
+internal fun peakMeterLabel(type: com.rout.air.core.PeakMeterType): String = when (type) {
+    com.rout.air.core.PeakMeterType.Sample -> stringResource(R.string.audio_peak_sample)
+    com.rout.air.core.PeakMeterType.TruePeak -> stringResource(R.string.audio_peak_true)
+}
+
+@Composable
+internal fun captureKindLabel(kind: com.rout.air.core.AudioCaptureKind): String = when (kind) {
+    com.rout.air.core.AudioCaptureKind.Playback -> stringResource(R.string.audio_kind_playback)
+    com.rout.air.core.AudioCaptureKind.Microphone -> stringResource(R.string.audio_kind_microphone)
+}
+
+@Composable
+private fun categoryLabel(category: ChannelCategory): String = when (category) {
+    ChannelCategory.Unassigned -> stringResource(R.string.audio_tanpa_track)
+    ChannelCategory.Pinned -> stringResource(R.string.audio_disematkan)
+    ChannelCategory.Hidden -> stringResource(R.string.audio_disembunyikan)
+    ChannelCategory.Active -> stringResource(R.string.common_aktif)
+    ChannelCategory.Inactive -> stringResource(R.string.common_nonaktif)
 }
 
 internal data class CategoryStyle(
@@ -123,7 +179,7 @@ internal fun categoryStyle(category: ChannelCategory): CategoryStyle = when (cat
 internal fun StatusChip(category: ChannelCategory, modifier: Modifier = Modifier) {
     val style = categoryStyle(category)
     Text(
-        text = category.label,
+        text = categoryLabel(category),
         style = MaterialTheme.typography.labelSmall.copy(
             fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
@@ -169,6 +225,7 @@ internal fun VolumeFader(
     modifier: Modifier = Modifier,
 ) {
     val latest by rememberUpdatedState(onGainChange)
+    val volumeDesc = stringResource(R.string.audio_volume_desc, FaderScale.formatDb(gainDb))
     val deflection = FaderScale.dbToDeflection(gainDb)
     val knobColor = if (enabled) TextPrimary else TextTertiary
     val fillColor = if (enabled) AccentCyan else TextTertiary
@@ -196,7 +253,7 @@ internal fun VolumeFader(
                     }
                 }
             }
-            .semantics { contentDescription = "Volume ${FaderScale.formatDb(gainDb)}" },
+            .semantics { contentDescription = volumeDesc },
     ) {
         val pad = 7.dp.toPx()
         val groove = 4.dp.toPx()
@@ -281,6 +338,35 @@ internal fun VolumeFader(
  * Meter OBS: dua lane L/R, band hijau -60..-20, kuning -20..-9, merah -9..0,
  * peak hold dengan decay, dan penanda clip.
  */
+// --- Meter ala OBS (VolumeMeter.cpp) --------------------------------------
+private const val METER_MIN_DB = -60f
+private const val METER_MAX_DB = 0f
+private const val METER_WARNING_DB = -20f
+private const val METER_ERROR_DB = -9f
+private const val METER_INPUT_MIN_DB = -50f
+private const val METER_PEAK_HOLD_SECONDS = 20.0
+private const val METER_CLIP_FLASH_NS = 1_000_000_000L
+
+private val MeterBgNominal = Color(0xFF267F26)
+private val MeterBgWarning = Color(0xFF7F7F26)
+private val MeterBgError = Color(0xFF7F2626)
+private val MeterFgNominal = Color(0xFF4CFF4C)
+private val MeterFgWarning = Color(0xFFFFFF4C)
+private val MeterFgError = Color(0xFFFF4C4C)
+private val MeterBgNominalOff = Color(0xFF5A5A5A)
+private val MeterBgWarningOff = Color(0xFF757575)
+private val MeterBgErrorOff = Color(0xFF414141)
+private val MeterFgNominalOff = Color(0xFFA3A3A3)
+private val MeterFgWarningOff = Color(0xFFD9D9D9)
+private val MeterFgErrorOff = Color(0xFF717171)
+private val MeterClipColor = Color(0xFFFFFFFF)
+private val MeterMagnitudeColor = Color(0xFF000000)
+
+/**
+ * Meter volume mengikuti OBS VolumeMeter.cpp: band hijau/kuning/merah,
+ * peak-hold 20 detik, indikator magnitude, indikator input, clip 1 detik,
+ * dan label skala tiap 6 dB.
+ */
 @Composable
 internal fun VolumeMeter(
     level: ChannelLevel,
@@ -288,188 +374,386 @@ internal fun VolumeMeter(
     decay: MeterDecay,
     vertical: Boolean,
     modifier: Modifier = Modifier,
+    showScale: Boolean = false,
+    muted: Boolean = false,
+    peakType: com.rout.air.core.PeakMeterType = com.rout.air.core.PeakMeterType.Sample,
 ) {
-    val targetLeft = if (active) level.leftDb else FaderScale.MIN_DB
-    val targetRight = if (active) level.rightDb else FaderScale.MIN_DB
-    val left by animateFloatAsState(targetLeft, tween(60), label = "meterL")
-    val right by animateFloatAsState(targetRight, tween(60), label = "meterR")
+    // True-peak memakai ambang EBU yang berbeda (OBS VolumeMeter::setPeakMeterType).
+    val warningDb = if (peakType == com.rout.air.core.PeakMeterType.TruePeak) -13f else -20f
+    val errorDb = if (peakType == com.rout.air.core.PeakMeterType.TruePeak) -2f else -9f
+    val targetLeft = if (active) level.leftDb else METER_MIN_DB
+    val targetRight = if (active) level.rightDb else METER_MIN_DB
+    val left by animateFloatAsState(targetLeft, tween(33), label = stringResource(R.string.audio_meterl))
+    val right by animateFloatAsState(targetRight, tween(33), label = stringResource(R.string.audio_meterr))
 
-    var peakLeft by remember { mutableFloatStateOf(FaderScale.MIN_DB) }
-    var peakRight by remember { mutableFloatStateOf(FaderScale.MIN_DB) }
-    val targetPeakLeft = if (active) level.peakLeftDb else FaderScale.MIN_DB
-    val targetPeakRight = if (active) level.peakRightDb else FaderScale.MIN_DB
-    val currentPeakLeft by rememberUpdatedState(targetPeakLeft)
-    val currentPeakRight by rememberUpdatedState(targetPeakRight)
-    val decayPerTick = decay.dbPerSecond * 0.05f
+    var peakLeft by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var peakRight by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var holdLeft by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var holdRight by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var holdLeftAt by remember { mutableLongStateOf(0L) }
+    var holdRightAt by remember { mutableLongStateOf(0L) }
+    var magLeft by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var magRight by remember { mutableFloatStateOf(METER_MIN_DB) }
+    var clipUntil by remember { mutableLongStateOf(0L) }
 
+    val levelLeft by rememberUpdatedState(if (active) level.leftDb else METER_MIN_DB)
+    val levelRight by rememberUpdatedState(if (active) level.rightDb else METER_MIN_DB)
+    val peakLeftTarget by rememberUpdatedState(if (active) level.peakLeftDb else METER_MIN_DB)
+    val peakRightTarget by rememberUpdatedState(if (active) level.peakRightDb else METER_MIN_DB)
+
+    // Timer 16 ms seperti OBS; ballistics dihitung per selang waktu nyata.
     LaunchedEffect(active) {
+        var last = System.nanoTime()
         while (true) {
-            delay(50)
-            peakLeft = if (!active) {
-                FaderScale.MIN_DB
-            } else {
-                max(currentPeakLeft, peakLeft - decayPerTick)
+            delay(16)
+            val now = System.nanoTime()
+            val dt = ((now - last) / 1_000_000_000.0).toFloat().coerceIn(0f, 1f)
+            last = now
+            if (!active) {
+                peakLeft = METER_MIN_DB
+                peakRight = METER_MIN_DB
+                holdLeft = METER_MIN_DB
+                holdRight = METER_MIN_DB
+                magLeft = METER_MIN_DB
+                magRight = METER_MIN_DB
+                continue
             }
-            peakRight = if (!active) {
-                FaderScale.MIN_DB
+            val step = decay.dbPerSecond * dt
+            peakLeft = if (peakLeftTarget >= peakLeft) {
+                peakLeftTarget
             } else {
-                max(currentPeakRight, peakRight - decayPerTick)
+                max(peakLeftTarget, peakLeft - step)
+            }
+            peakRight = if (peakRightTarget >= peakRight) {
+                peakRightTarget
+            } else {
+                max(peakRightTarget, peakRight - step)
+            }
+
+            if (peakLeftTarget >= holdLeft) {
+                holdLeft = peakLeftTarget
+                holdLeftAt = now
+            } else if ((now - holdLeftAt) / 1_000_000_000.0 > METER_PEAK_HOLD_SECONDS) {
+                holdLeft = peakLeftTarget
+                holdLeftAt = now
+            }
+            if (peakRightTarget >= holdRight) {
+                holdRight = peakRightTarget
+                holdRightAt = now
+            } else if ((now - holdRightAt) / 1_000_000_000.0 > METER_PEAK_HOLD_SECONDS) {
+                holdRight = peakRightTarget
+                holdRightAt = now
+            }
+
+            // Magnitude terintegrasi 99% dalam 300 ms.
+            val k = ((dt / 0.3f) * 0.99f).coerceIn(0f, 1f)
+            magLeft = (magLeft + (levelLeft - magLeft) * k).coerceIn(METER_MIN_DB, METER_MAX_DB)
+            magRight = (magRight + (levelRight - magRight) * k).coerceIn(METER_MIN_DB, METER_MAX_DB)
+
+            if (peakLeftTarget >= 0f || peakRightTarget >= 0f) {
+                clipUntil = now + METER_CLIP_FLASH_NS
             }
         }
     }
 
-    Canvas(
-        modifier = modifier.then(
-            if (vertical) Modifier.width(12.dp) else Modifier.height(12.dp),
-        ),
-    ) {
+    val textMeasurer = rememberTextMeasurer()
+    val scaleStyle = TextStyle(color = TextTertiary, fontSize = 8.sp)
+    val meterThickness = 12.dp
+    val indicator = 3.dp
+    val canvasSize = when {
+        vertical && showScale -> Modifier.width(meterThickness + 26.dp)
+        vertical -> Modifier.width(meterThickness)
+        showScale -> Modifier.height(meterThickness + 16.dp)
+        else -> Modifier.height(meterThickness)
+    }
+
+    Canvas(modifier = modifier.then(canvasSize)) {
         val gap = 1.5.dp.toPx()
+        val meterPx = meterThickness.toPx()
+        val indicatorPx = indicator.toPx()
+        val clipping = System.nanoTime() < clipUntil
+        val laneWidth = (meterPx - gap) / 2f
+
         if (vertical) {
-            val laneWidth = (size.width - gap) / 2f
-            drawLane(
-                left = 0f,
+            val meterLeft = size.width - meterPx
+            val lanesHeight = (size.height - indicatorPx - 2.dp.toPx()).coerceAtLeast(1f)
+            drawObsLane(
+                left = meterLeft,
                 width = laneWidth,
+                height = lanesHeight,
                 level = left,
-                peak = if (active) peakLeft else FaderScale.MIN_DB,
+                peak = peakLeft,
+                hold = holdLeft,
+                magnitude = magLeft,
                 vertical = true,
-                active = active,
+                muted = muted,
+                clipping = clipping,
+                warningDb = warningDb,
+                errorDb = errorDb,
             )
-            drawLane(
-                left = laneWidth + gap,
+            drawObsLane(
+                left = meterLeft + laneWidth + gap,
                 width = laneWidth,
+                height = lanesHeight,
                 level = right,
-                peak = if (active) peakRight else FaderScale.MIN_DB,
+                peak = peakRight,
+                hold = holdRight,
+                magnitude = magRight,
                 vertical = true,
-                active = active,
+                muted = muted,
+                clipping = clipping,
+                warningDb = warningDb,
+                errorDb = errorDb,
             )
+            // Indikator input di dasar meter.
+            drawPeakIndicator(
+                left = meterLeft,
+                width = laneWidth,
+                top = size.height - indicatorPx,
+                height = indicatorPx,
+                hold = holdLeft,
+                muted = muted,
+                vertical = true,
+                warningDb = warningDb,
+                errorDb = errorDb,
+            )
+            drawPeakIndicator(
+                left = meterLeft + laneWidth + gap,
+                width = laneWidth,
+                top = size.height - indicatorPx,
+                height = indicatorPx,
+                hold = holdRight,
+                muted = muted,
+                vertical = true,
+                warningDb = warningDb,
+                errorDb = errorDb,
+            )
+            if (showScale) {
+                for (db in 0 downTo -60 step 6) {
+                    val norm = ((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).coerceIn(0f, 1f)
+                    val y = lanesHeight * (1f - norm)
+                    val layout = textMeasurer.measure(AnnotatedString(db.toString()), scaleStyle)
+                    val top = (y - layout.size.height / 2f).coerceIn(0f, lanesHeight - layout.size.height)
+                    drawText(
+                        textLayoutResult = layout,
+                        topLeft = Offset(meterLeft - 4.dp.toPx() - layout.size.width, top),
+                    )
+                    drawLine(
+                        color = TextTertiary,
+                        start = Offset(meterLeft - 2.dp.toPx(), y),
+                        end = Offset(meterLeft, y),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            }
         } else {
-            val laneHeight = (size.height - gap) / 2f
-            drawLane(
-                left = 0f,
-                width = size.width,
+            val meterStart = indicatorPx + 2.dp.toPx()
+            val lanesWidth = (size.width - meterStart).coerceAtLeast(1f)
+            val laneHeight = (meterPx - gap) / 2f
+            drawObsLane(
+                left = meterStart,
+                width = lanesWidth,
                 top = 0f,
                 height = laneHeight,
                 level = left,
-                peak = if (active) peakLeft else FaderScale.MIN_DB,
+                peak = peakLeft,
+                hold = holdLeft,
+                magnitude = magLeft,
                 vertical = false,
-                active = active,
+                muted = muted,
+                clipping = clipping,
+                warningDb = warningDb,
+                errorDb = errorDb,
             )
-            drawLane(
-                left = 0f,
-                width = size.width,
+            drawObsLane(
+                left = meterStart,
+                width = lanesWidth,
                 top = laneHeight + gap,
                 height = laneHeight,
                 level = right,
-                peak = if (active) peakRight else FaderScale.MIN_DB,
+                peak = peakRight,
+                hold = holdRight,
+                magnitude = magRight,
                 vertical = false,
-                active = active,
+                muted = muted,
+                clipping = clipping,
+                warningDb = warningDb,
+                errorDb = errorDb,
             )
+            drawPeakIndicator(
+                left = 0f,
+                width = indicatorPx,
+                top = 0f,
+                height = laneHeight,
+                hold = holdLeft,
+                muted = muted,
+                vertical = false,
+                warningDb = warningDb,
+                errorDb = errorDb,
+            )
+            drawPeakIndicator(
+                left = 0f,
+                width = indicatorPx,
+                top = laneHeight + gap,
+                height = laneHeight,
+                hold = holdRight,
+                muted = muted,
+                vertical = false,
+                warningDb = warningDb,
+                errorDb = errorDb,
+            )
+            if (showScale) {
+                for (db in 0 downTo -60 step 6) {
+                    val norm = ((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).coerceIn(0f, 1f)
+                    val xBase = meterStart + norm * lanesWidth
+                    val layout = textMeasurer.measure(AnnotatedString(db.toString()), scaleStyle)
+                    val x = (xBase - layout.size.width / 2f)
+                        .coerceIn(0f, size.width - layout.size.width)
+                    drawText(
+                        textLayoutResult = layout,
+                        topLeft = Offset(x, meterPx + 2.dp.toPx()),
+                    )
+                    drawLine(
+                        color = TextTertiary,
+                        start = Offset(xBase, meterPx),
+                        end = Offset(xBase, meterPx + 2.dp.toPx()),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            }
         }
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLane(
+private fun DrawScope.drawObsLane(
     left: Float,
     width: Float,
-    level: Float,
-    peak: Float,
-    vertical: Boolean,
-    active: Boolean,
     top: Float = 0f,
     height: Float = size.height,
+    level: Float,
+    peak: Float,
+    hold: Float,
+    magnitude: Float,
+    vertical: Boolean,
+    muted: Boolean,
+    clipping: Boolean,
+    warningDb: Float = METER_WARNING_DB,
+    errorDb: Float = METER_ERROR_DB,
 ) {
-    val meterMin = -60f
-    val meterMax = 0f
+    fun pos(db: Float): Float =
+        ((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).coerceIn(0f, 1f)
 
-    fun position(db: Float): Float =
-        ((db - meterMin) / (meterMax - meterMin)).coerceIn(0f, 1f)
+    val bgNominal = if (muted) MeterBgNominalOff else MeterBgNominal
+    val bgWarning = if (muted) MeterBgWarningOff else MeterBgWarning
+    val bgError = if (muted) MeterBgErrorOff else MeterBgError
+    val fgNominal = if (muted) MeterFgNominalOff else MeterFgNominal
+    val fgWarning = if (muted) MeterFgWarningOff else MeterFgWarning
+    val fgError = if (muted) MeterFgErrorOff else MeterFgError
 
-    val greenEnd = position(-20f)
-    val yellowEnd = position(-9f)
-    val bands = listOf(
-        Triple(0f, greenEnd, Color(0xFF17641E)),
-        Triple(greenEnd, yellowEnd, Color(0xFF6E520D)),
-        Triple(yellowEnd, 1f, Color(0xFF7D1224)),
-    )
-    val bandAlpha = if (active) 0.45f else 0.10f
-    val bright = listOf(
-        Triple(0f, greenEnd, Color(0xFF37D247)),
-        Triple(greenEnd, yellowEnd, Color(0xFFE5AF24)),
-        Triple(yellowEnd, 1f, Color(0xFFE33B57)),
-    )
+    val warningPos = pos(warningDb)
+    val errorPos = pos(errorDb)
+    val p = if (clipping) 1f else pos(peak)
 
     if (vertical) {
-        bands.forEach { (start, end, color) ->
-            val y1 = size.height - end * size.height
-            val y2 = size.height - start * size.height
+        fun yOf(pv: Float) = top + (1f - pv) * height
+        // Latar band.
+        drawRect(bgError, Offset(left, top), Size(width, yOf(errorPos) - top))
+        drawRect(bgWarning, Offset(left, yOf(errorPos)), Size(width, yOf(warningPos) - yOf(errorPos)))
+        drawRect(bgNominal, Offset(left, yOf(warningPos)), Size(width, top + height - yOf(warningPos)))
+        // Bar terang sampai puncak.
+        if (p > errorPos) {
+            drawRect(fgError, Offset(left, yOf(p)), Size(width, yOf(errorPos) - yOf(p)))
+        }
+        if (p > warningPos) {
+            val topP = yOf(min(p, errorPos))
+            drawRect(fgWarning, Offset(left, topP), Size(width, yOf(warningPos) - topP))
+        }
+        if (p > 0f) {
+            val topP = yOf(min(p, warningPos))
+            drawRect(fgNominal, Offset(left, topP), Size(width, yOf(0f) - topP))
+        }
+        // Peak hold 3dp.
+        if (hold > METER_MIN_DB) {
+            val hy = yOf(pos(hold))
             drawRect(
-                color = color.copy(alpha = bandAlpha),
-                topLeft = Offset(left, y1),
-                size = Size(width, y2 - y1),
+                holdColor(hold, muted),
+                Offset(left, (hy - 3.dp.toPx()).coerceAtLeast(top)),
+                Size(width, 3.dp.toPx()),
             )
         }
-        val levelPos = position(level)
-        bright.forEach { (start, end, color) ->
-            val topDb = start
-            val bottomDb = minOf(end, levelPos)
-            if (levelPos > start) {
-                val y1 = size.height - bottomDb * size.height
-                val y2 = size.height - topDb * size.height
-                drawRect(color = color, topLeft = Offset(left, y1), size = Size(width, y2 - y1))
-            }
-        }
-        val peakPos = position(peak)
-        if (peakPos > 0.001f) {
-            drawLine(
-                color = Color.White.copy(alpha = 0.9f),
-                start = Offset(left, size.height - peakPos * size.height),
-                end = Offset(left + width, size.height - peakPos * size.height),
-                strokeWidth = 1.5.dp.toPx(),
-            )
-        }
-        if (peak >= 0f) {
+        // Indikator magnitude (hitam).
+        if (magnitude > METER_MIN_DB) {
+            val my = yOf(pos(magnitude))
             drawRect(
-                color = Color(0xFFE33B57),
-                topLeft = Offset(left, 0f),
-                size = Size(width, 2.dp.toPx()),
+                MeterMagnitudeColor,
+                Offset(left, (my - 3.dp.toPx()).coerceAtLeast(top)),
+                Size(width, 3.dp.toPx()),
             )
         }
     } else {
-        bands.forEach { (start, end, color) ->
-            val x1 = left + start * width
-            val x2 = left + end * width
+        fun xOf(pv: Float) = left + pv * width
+        drawRect(bgNominal, Offset(left, top), Size(xOf(warningPos) - left, height))
+        drawRect(bgWarning, Offset(xOf(warningPos), top), Size(xOf(errorPos) - xOf(warningPos), height))
+        drawRect(bgError, Offset(xOf(errorPos), top), Size(left + width - xOf(errorPos), height))
+        if (p > 0f) {
+            drawRect(fgNominal, Offset(left, top), Size(xOf(min(p, warningPos)) - left, height))
+        }
+        if (p > warningPos) {
+            drawRect(fgWarning, Offset(xOf(warningPos), top), Size(xOf(min(p, errorPos)) - xOf(warningPos), height))
+        }
+        if (p > errorPos) {
+            drawRect(fgError, Offset(xOf(errorPos), top), Size(xOf(p) - xOf(errorPos), height))
+        }
+        if (hold > METER_MIN_DB) {
+            val hx = xOf(pos(hold))
             drawRect(
-                color = color.copy(alpha = bandAlpha),
-                topLeft = Offset(x1, top),
-                size = Size(x2 - x1, height),
+                holdColor(hold, muted),
+                Offset((hx - 3.dp.toPx()).coerceAtLeast(left), top),
+                Size(3.dp.toPx(), height),
             )
         }
-        val levelPos = position(level)
-        bright.forEach { (start, end, color) ->
-            val litEnd = minOf(end, levelPos)
-            if (levelPos > start) {
-                val x1 = left + start * width
-                val x2 = left + litEnd * width
-                drawRect(color = color, topLeft = Offset(x1, top), size = Size(x2 - x1, height))
-            }
-        }
-        val peakPos = position(peak)
-        if (peakPos > 0.001f) {
-            val x = left + peakPos * width
-            drawLine(
-                color = Color.White.copy(alpha = 0.9f),
-                start = Offset(x, top),
-                end = Offset(x, top + height),
-                strokeWidth = 1.5.dp.toPx(),
-            )
-        }
-        if (peak >= 0f) {
+        if (magnitude > METER_MIN_DB) {
+            val mx = xOf(pos(magnitude))
             drawRect(
-                color = Color(0xFFE33B57),
-                topLeft = Offset(left + width - 2.dp.toPx(), top),
-                size = Size(2.dp.toPx(), height),
+                MeterMagnitudeColor,
+                Offset((mx - 3.dp.toPx()).coerceAtLeast(left), top),
+                Size(3.dp.toPx(), height),
             )
         }
+    }
+    // level animasi tidak dipakai langsung: bar mengikuti peak seperti OBS.
+    @Suppress("UNUSED_EXPRESSION")
+    level
+}
+
+private fun holdColor(hold: Float, muted: Boolean): Color = when {
+    hold < METER_WARNING_DB -> if (muted) MeterFgNominalOff else MeterFgNominal
+    hold < METER_ERROR_DB -> if (muted) MeterFgWarningOff else MeterFgWarning
+    else -> if (muted) MeterFgErrorOff else MeterFgError
+}
+
+private fun DrawScope.drawPeakIndicator(
+    left: Float,
+    width: Float,
+    top: Float,
+    height: Float,
+    hold: Float,
+    muted: Boolean,
+    vertical: Boolean,
+    warningDb: Float = METER_WARNING_DB,
+    errorDb: Float = METER_ERROR_DB,
+) {
+    val color = when {
+        hold < METER_INPUT_MIN_DB -> if (muted) MeterBgNominalOff else MeterBgNominal
+        hold < warningDb -> if (muted) MeterFgNominalOff else MeterFgNominal
+        hold < errorDb -> if (muted) MeterFgWarningOff else MeterFgWarning
+        hold < METER_MAX_DB -> if (muted) MeterFgErrorOff else MeterFgError
+        else -> MeterClipColor
+    }
+    if (vertical) {
+        drawRect(color, Offset(left, top), Size(width, height))
+    } else {
+        drawRect(color, Offset(left, top), Size(width, height))
     }
 }
 
@@ -482,6 +766,7 @@ internal fun AudioChannelRow(
     active: Boolean,
     usePercent: Boolean,
     decay: MeterDecay,
+    peakType: com.rout.air.core.PeakMeterType,
     onChannelChange: (AudioChannel) -> Unit,
     onUnhideAll: () -> Unit,
     onRename: () -> Unit,
@@ -501,7 +786,7 @@ internal fun AudioChannelRow(
     val dragOffset by animateFloatAsState(
         targetValue = dragY,
         animationSpec = if (reordering) snap() else tween(durationMillis = 160),
-        label = "geser-audio",
+        label = stringResource(R.string.audio_geser_audio),
     )
 
     Column(
@@ -674,6 +959,9 @@ internal fun AudioChannelRow(
                     decay = decay,
                     vertical = false,
                     modifier = Modifier.fillMaxWidth(),
+                    showScale = true,
+                    muted = channel.muted,
+                    peakType = peakType,
                 )
             }
             if (channel.locked) {
@@ -693,6 +981,7 @@ internal fun AudioChannelColumn(
     active: Boolean,
     usePercent: Boolean,
     decay: MeterDecay,
+    peakType: com.rout.air.core.PeakMeterType,
     width: Dp,
     onChannelChange: (AudioChannel) -> Unit,
     onUnhideAll: () -> Unit,
@@ -810,7 +1099,10 @@ internal fun AudioChannelColumn(
                 active = active && channel.enabled,
                 decay = decay,
                 vertical = true,
-                modifier = Modifier.fillMaxHeight().width(12.dp),
+                modifier = Modifier.fillMaxHeight(),
+                showScale = true,
+                muted = channel.muted,
+                peakType = peakType,
             )
         }
 
@@ -871,7 +1163,7 @@ private fun ChannelContextMenu(
     onProperties: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(text = { Text("Tampilkan semua yang disembunyikan") }, onClick = onUnhideAll)
+        DropdownMenuItem(text = { Text(stringResource(R.string.audio_tampilkan_semua_yang_disembunyikan)) }, onClick = onUnhideAll)
         HorizontalDivider(color = Divider)
         DropdownMenuItem(
             text = { Text(if (channel.pinned) "Lepas sematan" else "Sematkan") },
@@ -887,14 +1179,14 @@ private fun ChannelContextMenu(
         )
         HorizontalDivider(color = Divider)
         DropdownMenuItem(
-            text = { Text("Pindah ke atas") },
+            text = { Text(stringResource(R.string.audio_pindah_ke_atas)) },
             onClick = {
                 AudioMixer.moveChannel(channel.id, -1)
                 onDismiss()
             },
         )
         DropdownMenuItem(
-            text = { Text("Pindah ke bawah") },
+            text = { Text(stringResource(R.string.audio_pindah_ke_bawah)) },
             onClick = {
                 AudioMixer.moveChannel(channel.id, 1)
                 onDismiss()
@@ -902,7 +1194,7 @@ private fun ChannelContextMenu(
         )
         if (channel.capture == com.rout.air.core.AudioCaptureKind.Microphone) {
             DropdownMenuItem(
-                text = { Text("Ganti perangkat input…") },
+                text = { Text(stringResource(R.string.audio_ganti_perangkat_input)) },
                 onClick = {
                     onDismiss()
                     onChangeDevice()
@@ -911,7 +1203,7 @@ private fun ChannelContextMenu(
         }
         if (channel.appUid != 0) {
             DropdownMenuItem(
-                text = { Text("Hapus kanal audio") },
+                text = { Text(stringResource(R.string.audio_hapus_kanal_audio)) },
                 onClick = {
                     AudioMixer.removeChannel(channel.id)
                     onDismiss()
@@ -920,19 +1212,19 @@ private fun ChannelContextMenu(
         }
         HorizontalDivider(color = Divider)
         DropdownMenuItem(
-            text = { Text("Salin filter") },
+            text = { Text(stringResource(R.string.audio_salin_filter)) },
             enabled = channel.filters.isNotEmpty(),
             onClick = onCopyFilters,
         )
         DropdownMenuItem(
-            text = { Text("Tempel filter") },
+            text = { Text(stringResource(R.string.audio_tempel_filter)) },
             enabled = canPasteFilters,
             onClick = onPasteFilters,
         )
-        DropdownMenuItem(text = { Text("Ganti nama…") }, onClick = onRename)
+        DropdownMenuItem(text = { Text(stringResource(R.string.audio_ganti_nama_2)) }, onClick = onRename)
         HorizontalDivider(color = Divider)
-        DropdownMenuItem(text = { Text("Filter…") }, onClick = onFilters)
-        DropdownMenuItem(text = { Text("Properti…") }, onClick = onProperties)
+        DropdownMenuItem(text = { Text(stringResource(R.string.audio_filter)) }, onClick = onFilters)
+        DropdownMenuItem(text = { Text(stringResource(R.string.audio_properti)) }, onClick = onProperties)
     }
 }
 

@@ -54,6 +54,8 @@ import com.rout.air.core.RecordingState
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
 import com.rout.air.output.CaptureEngine
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /**
  * Halaman Studio Mode: dua panel terpisah.
@@ -100,7 +102,7 @@ fun StudioScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Studio Mode", style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.studio_studio_mode), style = MaterialTheme.typography.headlineSmall)
                 Text(
                     text = statusText(state),
                     style = MaterialTheme.typography.bodySmall,
@@ -112,7 +114,7 @@ fun StudioScreen(
                 )
             }
             if (state is RecordingState.Error) {
-                TextButton(onClick = onClearError) { Text("Tutup") }
+                TextButton(onClick = onClearError) { Text(stringResource(R.string.common_tutup)) }
             }
             // Satu tombol di header: ikon full screen saat normal, ikon ✕
             // saat pratinjau penuh. Posisinya sama supaya konsisten.
@@ -249,7 +251,7 @@ private fun PreviewFullscreenButton(
         if (fullscreen) {
             // Ikon tutup sederhana, tanpa teks.
             Text(
-                text = "✕",
+                text = stringResource(R.string.studio_teks),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -273,7 +275,7 @@ private fun ProgramPane(
 ) {
     if (isLive) {
         PreviewPane(
-            label = "Program (siaran)",
+            label = stringResource(R.string.studio_program_siaran),
             canvasAspect = canvasConfig.aspectRatio,
             live = true,
             modifier = modifier,
@@ -283,7 +285,7 @@ private fun ProgramPane(
         )
     } else {
         Column(modifier = modifier) {
-            PaneCaption(label = "Program (siaran)", live = false)
+            PaneCaption(label = stringResource(R.string.studio_program_siaran), live = false)
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentAlignment = Alignment.Center,
@@ -352,7 +354,7 @@ private fun RawPreview(
 
     if (isActive) {
         PreviewPane(
-            label = "Pratinjau (mentah)",
+            label = stringResource(R.string.studio_pratinjau_mentah),
             canvasAspect = canvasConfig.aspectRatio,
             modifier = modifier,
             canvas = canvasConfig,
@@ -393,7 +395,11 @@ private fun RawPreview(
                 text = if (selected == null) {
                     "Ketuk sumber untuk memilih, lalu geser/putar"
                 } else {
-                    "${collection.source(selected.sourceId)?.name ?: "Sumber"} • ketuk lain untuk ganti"
+                    stringResource(
+                        R.string.studio_selected_n,
+                        collection.source(selected.sourceId)?.name
+                            ?: stringResource(R.string.scenes_sumber),
+                    )
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFFB8C2CC),
@@ -709,14 +715,15 @@ private fun attachHolder(holder: SurfaceHolder, attach: (Surface?, Int, Int) -> 
     attach(holder.surface, frame.width(), frame.height())
 }
 
+@Composable
 private fun statusText(state: RecordingState): String = when (state) {
-    RecordingState.Idle -> "Pratinjau dan program siap"
-    RecordingState.Previewing -> "Pratinjau aktif • tekan rekam"
-    RecordingState.Preparing -> "Menyiapkan tangkap layar…"
+    RecordingState.Idle -> stringResource(R.string.studio_pratinjau_dan_program_siap)
+    RecordingState.Previewing -> stringResource(R.string.studio_pratinjau_aktif_tekan_rekam)
+    RecordingState.Preparing -> stringResource(R.string.studio_menyiapkan_tangkap_layar)
     is RecordingState.Recording -> if (state.audioActive) {
-        "Merekam • program = file, mixer audio aktif"
+        stringResource(R.string.studio_merekam_program_file_mixer)
     } else {
-        "Merekam • program = file, tanpa audio"
+        stringResource(R.string.studio_merekam_program_file_tanpa_audio)
     }
 
     is RecordingState.Error -> state.message

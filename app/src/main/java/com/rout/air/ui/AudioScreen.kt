@@ -47,6 +47,8 @@ import com.rout.air.ui.theme.SurfaceRaised
 import com.rout.air.ui.theme.TextSecondary
 import com.rout.air.ui.theme.TextTertiary
 import com.rout.air.ui.theme.WarningAmber
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 
 /**
  * Halaman Audio: dock Audio Mixer OBS dengan toolbar bawah, kanal baris/kolom,
@@ -87,7 +89,7 @@ fun AudioScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Audio Mixer", style = MaterialTheme.typography.headlineSmall)
+                    Text(stringResource(R.string.audio_audio_mixer), style = MaterialTheme.typography.headlineSmall)
                     Text(
                         text = mixerSubtitle(state, mix, readyCount),
                         style = MaterialTheme.typography.bodySmall,
@@ -136,13 +138,13 @@ fun AudioScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Rekam audio dimatikan. Mixer tetap berjalan.",
+                            text = stringResource(R.string.audio_rekam_audio_dimatikan_mixer_tetap_berjal),
                             style = MaterialTheme.typography.bodySmall,
                             color = WarningAmber,
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = { onMasterEnabledChange(true) }) {
-                            Text("Nyalakan")
+                            Text(stringResource(R.string.audio_nyalakan))
                         }
                     }
                 }
@@ -153,14 +155,14 @@ fun AudioScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (mix.pushToMuteEnabled) {
                         HoldButton(
-                            label = "Tahan: bisukan mic",
+                            label = stringResource(R.string.audio_tahan_bisukan_mic),
                             activeColor = ErrorRed,
                             onHoldChange = AudioMixer::setPushToMuteActive,
                         )
                     }
                     if (mix.pushToTalkEnabled) {
                         HoldButton(
-                            label = "Tahan: bicara",
+                            label = stringResource(R.string.audio_tahan_bicara),
                             activeColor = MaterialTheme.colorScheme.primary,
                             onHoldChange = AudioMixer::setPushToTalkActive,
                         )
@@ -177,7 +179,7 @@ fun AudioScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text("Tidak ada sumber yang ditampilkan", color = TextSecondary)
+                        Text(stringResource(R.string.audio_tidak_ada_sumber_yang_ditampilkan), color = TextSecondary)
                         Text(
                             "Aktifkan “Tampilkan sumber nonaktif” di menu Opsi.",
                             style = MaterialTheme.typography.bodySmall,
@@ -364,6 +366,7 @@ private fun HorizontalMixer(
                 active = channel.id in activeIds && !channel.muted,
                 usePercent = mix.volumePercent,
                 decay = mix.meterDecay,
+                peakType = mix.peakMeterType,
                 onChannelChange = onChannelChange,
                 onUnhideAll = onUnhideAll,
                 onRename = { onRename(channel.id) },
@@ -378,7 +381,7 @@ private fun HorizontalMixer(
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Audio internal memakai AudioPlaybackCapture. Aplikasi ber-DRM " +
+            text = stringResource(R.string.audio_audio_internal_memakai_audioplaybackcapt) +
                 "atau yang melarang tangkap audio akan terekam senyap.",
             style = MaterialTheme.typography.labelSmall,
             color = TextTertiary,
@@ -416,6 +419,7 @@ private fun VerticalMixer(
                     active = channel.id in activeIds && !channel.muted,
                     usePercent = mix.volumePercent,
                     decay = mix.meterDecay,
+                    peakType = mix.peakMeterType,
                     width = columnWidth,
                     onChannelChange = onChannelChange,
                     onUnhideAll = onUnhideAll,
@@ -483,11 +487,11 @@ private fun MixerToolbar(
                 Spacer(Modifier.width(2.dp))
                 MixerIconButton(
                     onClick = onOpenAdvanced,
-                    description = "Properti Audio Lanjutan",
+                    description = stringResource(R.string.audio_properti_audio_lanjutan),
                 ) { color -> GearIcon(color) }
                 Spacer(Modifier.width(2.dp))
                 Text(
-                    text = "Opsi",
+                    text = stringResource(R.string.audio_opsi),
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary,
                     modifier = Modifier
@@ -501,7 +505,7 @@ private fun MixerToolbar(
                 onDismissRequest = { onOptionsOpenChange(false) },
             ) {
                 DropdownMenuItem(
-                    text = { Text("Tambah Application Audio Capture…") },
+                    text = { Text(stringResource(R.string.audio_tambah_application_audio_capture)) },
                     onClick = {
                         onOptionsOpenChange(false)
                         onAddApplication()
@@ -509,7 +513,7 @@ private fun MixerToolbar(
                 )
                 HorizontalDivider(color = Divider)
                 DropdownMenuItem(
-                    text = { Text("Tampilkan semua yang disembunyikan") },
+                    text = { Text(stringResource(R.string.audio_tampilkan_semua_yang_disembunyikan)) },
                     onClick = {
                         onUnhideAll()
                         onOptionsOpenChange(false)
@@ -550,7 +554,7 @@ private fun MixerToolbar(
                 )
                 HorizontalDivider(color = Divider)
                 DropdownMenuItem(
-                    text = { Text("Properti Audio Lanjutan…") },
+                    text = { Text(stringResource(R.string.audio_properti_audio_lanjutan_2)) },
                     onClick = {
                         onOptionsOpenChange(false)
                         onOpenAdvanced()

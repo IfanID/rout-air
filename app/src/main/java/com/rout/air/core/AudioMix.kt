@@ -62,21 +62,21 @@ sealed interface AudioChannelId {
 }
 
 /** Cara mengambil audio untuk sebuah kanal. */
-enum class AudioCaptureKind(val label: String) {
-    Playback("Audio output"),
-    Microphone("Audio input"),
+enum class AudioCaptureKind {
+    Playback,
+    Microphone,
 }
 
 
 /** Tipe filter audio yang tersedia di dialog Filters. */
-enum class AudioFilterType(val label: String) {
-    Gain("Gain"),
-    NoiseGate("Noise Gate"),
-    Compressor("Compressor"),
-    Limiter("Limiter"),
-    InvertPolarity("Invert Polarity"),
-    NoiseSuppression("Noise Suppression"),
-    Equalizer("Equalizer 3-band");
+enum class AudioFilterType {
+    Gain,
+    NoiseGate,
+    Compressor,
+    Limiter,
+    InvertPolarity,
+    NoiseSuppression,
+    Equalizer;
 
     fun defaults(): Map<String, Float> = when (this) {
         Gain -> mapOf("gainDb" to 0f)
@@ -118,25 +118,26 @@ data class AudioFilter(
 }
 
 /** Mode monitoring seperti API OBS terbaru: hanya on/off. */
-enum class MonitorMode(val label: String) {
-    Off("Mati"),
-    MonitorOnly("Hanya monitor"),
-    MonitorAndOutput("Monitor + output");
+enum class MonitorMode {
+    Off,
+    MonitorOnly,
+    MonitorAndOutput;
 
     val monitors: Boolean get() = this != Off
     val outputs: Boolean get() = this != MonitorOnly
 }
 
 /** Kecepatan turunnya peak hold pada meter. */
-enum class MeterDecay(val label: String, val dbPerSecond: Float) {
-    Fast("Cepat", 26f),
-    Medium("Sedang", 16f),
-    Slow("Lambat", 8f),
+enum class MeterDecay(val dbPerSecond: Float) {
+    // Nilai sama dengan OBS: VOLUME_METER_DECAY_FAST/MEDIUM/SLOW.
+    Fast(23.53f),
+    Medium(11.76f),
+    Slow(8.57f),
 }
 
-enum class PeakMeterType(val label: String) {
-    Sample("Sample Peak"),
-    TruePeak("True Peak"),
+enum class PeakMeterType {
+    Sample,
+    TruePeak,
 }
 
 /**
