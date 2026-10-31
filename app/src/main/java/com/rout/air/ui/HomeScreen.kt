@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -55,6 +58,8 @@ fun HomeScreen(
     onEndSession: () -> Unit,
     onRequestPermission: () -> Unit,
     onClearError: () -> Unit,
+    floatingEnabled: Boolean,
+    onToggleFloating: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var previewReady by remember { mutableStateOf(false) }
@@ -200,11 +205,11 @@ fun HomeScreen(
                 )
             }
 
-            RecordButton(
-                isActive = isActive,
-                enabled = state !is RecordingState.Preparing,
-                preparing = state is RecordingState.Preparing,
-                onClick = { if (isActive) onStop() else onStart() },
+            // Aksi rekam ada di menu tombol melayang; tombol ini hanya
+            // menampilkan/menyembunyikan tombol tersebut.
+            FloatingToggleButton(
+                enabled = floatingEnabled,
+                onClick = onToggleFloating,
             )
         }
     }
@@ -222,4 +227,36 @@ private fun statusText(state: RecordingState): String = when (state) {
     }
 
     is RecordingState.Error -> state.message
+}
+
+/** Tombol besar di Siaran untuk memunculkan tombol rekam melayang. */
+@Composable
+private fun FloatingToggleButton(enabled: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (enabled) scheme.primary else scheme.surfaceVariant,
+        contentColor = if (enabled) scheme.onPrimary else scheme.onSurfaceVariant,
+        modifier = Modifier.height(52.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_logo_mark),
+                contentDescription = stringResource(R.string.floating_toggle),
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text = stringResource(R.string.floating_label),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
 }

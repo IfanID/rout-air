@@ -15,6 +15,16 @@ import com.rout.air.ui.RoutAirApp
 import com.rout.air.ui.theme.RoutAirTheme
 
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        visible = true
+    }
+
+    override fun onStop() {
+        visible = false
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -28,5 +38,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        /** Aplikasi sedang terlihat? Dipakai overlay agar tidak merebut pratinjau. */
+        @Volatile
+        var visible: Boolean = false
     }
 }

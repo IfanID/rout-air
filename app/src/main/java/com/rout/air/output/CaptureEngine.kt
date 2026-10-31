@@ -45,20 +45,55 @@ object CaptureEngine {
 
     private var pipeline: RecordingPipeline? = null
 
+    /** Ukuran kanvas sesi aktif, dipakai overlay untuk rasio pratinjau. */
+    @Volatile
+    var sessionWidth: Int = 0
+        private set
+    @Volatile
+    var sessionHeight: Int = 0
+        private set
+
+    private var appPreviewSurface: Surface? = null
+    private var appPreviewWidth = 0
+    private var appPreviewHeight = 0
+    private var overlayPreviewSurface: Surface? = null
+
     fun attachPreview(surface: Surface?, width: Int, height: Int) {
-        // Pelepasan dengan surface tertentu hanya berlaku bila surface itu
-        // memang yang sedang terpasang; mencegah surface lama menghapus
-        // surface baru saat berpindah halaman.
         if (surface != null && (width <= 0 || height <= 0)) {
-            if (surface !== previewSurface) return
+            if (surface !== appPreviewSurface) return
         }
+        appPreviewSurface = surface
+        appPreviewWidth = width
+        appPreviewHeight = height
+        // Overlay yang sedang tampil tetap memakai surface-nya.
+        if (overlayPreviewSurface == null) {
+            previewSurface = surface
+            previewWidth = width
+            previewHeight = height
+            synchronized(lock) { pipeline }?.updatePreview(surface, width, height)
+        }
+    }
+
+    /** Surface pratinjau milik overlay; menimpa pratinjau aplikasi sementara. */
+    fun attachOverlayPreview(surface: Surface?, width: Int, height: Int) {
+        if (surface != null && (width <= 0 || height <= 0)) {
+            if (surface !== overlayPreviewSurface) return
+        }
+        overlayPreviewSurface = surface
         previewSurface = surface
         previewWidth = width
         previewHeight = height
-
-        // Pipeline yang sedang jalan harus ikut pindah ke surface baru,
-        // karena SurfaceView membuat surface baru setelah app kembali dari background.
         synchronized(lock) { pipeline }?.updatePreview(surface, width, height)
+    }
+
+    /** Tutup pratinjau overlay dan kembalikan ke surface aplikasi. */
+    fun detachOverlayPreview() {
+        overlayPreviewSurface = null
+        val surface = appPreviewSurface
+        previewSurface = surface
+        previewWidth = appPreviewWidth
+        previewHeight = appPreviewHeight
+        synchronized(lock) { pipeline }?.updatePreview(surface, appPreviewWidth, appPreviewHeight)
     }
 
     /** Panel Program di Studio Mode: keluaran yang benar-benar direkam. */
@@ -88,6 +123,8 @@ object CaptureEngine {
         val programW: Int
         val programH: Int
 
+        sessionWidth = config.width
+        sessionHeight = config.height
         synchronized(lock) {
             if (pipeline != null) return
             surface = previewSurface
@@ -147,7 +184,8 @@ object CaptureEngine {
 
     /** Preview berhenti digambar saat aplikasi tidak terlihat. */
     fun setPreviewVisible(visible: Boolean) {
-        synchronized(lock) { pipeline }?.setPreviewVisible(visible)
+        // Overlay tetap butuh render walau aplikasi di background.
+        synchronized(lock) { pipeline }?.setPreviewVisible(visible || overlayPreviewSurface != null)
     }
 
     fun clearError() {

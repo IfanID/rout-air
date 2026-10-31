@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.util.DisplayMetrics
 import android.view.WindowManager
@@ -47,6 +49,7 @@ import com.rout.air.data.SettingsStore
 import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
 import com.rout.air.service.CaptureService
+import com.rout.air.service.OverlayRecordService
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
@@ -85,6 +88,8 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     // Status pratinjau penuh disimpan di sini supaya tetap diingat saat
     // berpindah tab lalu kembali ke Studio.
     var studioFullscreen by rememberSaveable { mutableStateOf(false) }
+    // Status tombol melayang mengikuti service overlay yang berjalan.
+    val overlayRunning by OverlayRecordService.running.collectAsState()
 
     val state by CaptureEngine.state.collectAsState()
 
@@ -142,6 +147,12 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         if (state is RecordingState.Idle) lockedCanvas = null
     }
 
+    // Rotasi layar saat tidak merekam: kanvas mengikuti orientasi baru agar
+    // pratinjau/overlay tidak menampilkan isi kecil karena rasio lama.
+    LaunchedEffect(configuration.orientation) {
+        if (state !is RecordingState.Recording) lockedCanvas = null
+    }
+
     LaunchedEffect(config) {
         store.save(config)
         // Perubahan kanvas (mis. orientasi video) langsung dipakai selama
@@ -172,6 +183,32 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
             // Izin dibatalkan: tidak ada tangkapan yang berjalan. Beri pesan
             // dan biarkan pengguna mencoba lagi lewat tombol rekam.
             CaptureEngine.reportPermissionCancelled()
+        }
+    }
+
+    // Izin "tampil di atas aplikasi lain" untuk tombol melayang sistem.
+    val overlayLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (Settings.canDrawOverlays(context)) {
+            OverlayRecordService.start(context)
+        }
+    }
+
+    fun toggleFloatingOverlay() {
+        if (OverlayRecordService.running.value) {
+            OverlayRecordService.stop(context)
+            return
+        }
+        if (!Settings.canDrawOverlays(context)) {
+            overlayLauncher.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        } else {
+            OverlayRecordService.start(context)
         }
     }
 
@@ -334,6 +371,8 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                     onEndSession = endSession,
                     onRequestPermission = { beginSession(autoRecord = false) },
                     onClearError = { CaptureEngine.clearError() },
+                    floatingEnabled = overlayRunning,
+                    onToggleFloating = { toggleFloatingOverlay() },
                 )
 
                 AppTab.Studio -> StudioScreen(

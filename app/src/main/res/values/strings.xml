@@ -263,4 +263,24 @@
     <string name="scenes_n_sumber">%1$d sumber</string>
     <string name="studio_selected_n">%1$s • ketuk lain untuk ganti</string>
     <string name="recordings_n_berkas">%1$d berkas di Movies/RoutAir</string>
+    <string name="floating_toggle">Tombol rekam melayang</string>
+    <string name="floating_button">Tombol rekam melayang</string>
+    <string name="floating_record">Rekam</string>
+    <string name="floating_stop">Stop</string>
+    <string name="floating_label">Melayang</string>
+    <string name="overlay_channel">Kontrol melayang</string>
+    <string name="overlay_title">Kontrol rekam melayang</string>
+    <string name="overlay_text">Tombol rekam melayang aktif</string>
+    <string name="overlay_close">Tutup overlay</string>
+    <string name="overlay_permission">Izin tampil di atas aplikasi lain diperlukan</string>
+    <string name="overlay_minimize">Perkecil</string>
+    <string name="overlay_mic">Mikrofon</string>
+    <string name="overlay_master">Audio utama</string>
+    <string name="overlay_settings">Buka aplikasi</string>
+    <string name="overlay_grid">Tata letak</string>
+    <string name="overlay_chat">Obrolan</string>
+    <string name="overlay_mixer">Mixer</string>
+    <string name="overlay_link">Tautan</string>
+    <string name="overlay_camera">Kamera</string>
+    <string name="overlay_warning">Peringatan</string>
 </resources>
