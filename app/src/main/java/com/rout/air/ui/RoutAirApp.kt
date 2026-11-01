@@ -52,7 +52,8 @@ import com.rout.air.data.SettingsStore
 import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
 import com.rout.air.service.CaptureService
-import com.rout.air.service.OverlayRecordService
+import com.rout.air.service.OverlayLiveService
+import com.rout.air.service.OverlayRecordingService
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
@@ -71,6 +72,9 @@ enum class AppTab(val title: String, val symbol: String) {
     Recordings("Rekaman", "▶"),
     Settings("Setelan", "⚙"),
 }
+
+/** Overlay mana yang diminta pengguna; keduanya tidak boleh jalan bersamaan. */
+private enum class OverlayTarget { Recording, Live }
 
 @Composable
 fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
@@ -98,10 +102,12 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     // Status pratinjau penuh disimpan di sini supaya tetap diingat saat
     // berpindah tab lalu kembali ke Studio.
     var studioFullscreen by rememberSaveable { mutableStateOf(false) }
-    // Status tombol melayang mengikuti service overlay yang berjalan.
-    val overlayRunning by OverlayRecordService.running.collectAsState()
+    // Status kedua overlay: rekaman dan live memakai service terpisah.
+    val overlayRecordingRunning by OverlayRecordingService.running.collectAsState()
+    val overlayLiveRunning by OverlayLiveService.running.collectAsState()
 
     val state by CaptureEngine.state.collectAsState()
+    val stats by CaptureEngine.stats.collectAsState()
 
     // Kanvas = orientasi video. Selama rekaman berjalan nilainya dibekukan
     // supaya ukuran video tidak berubah walau layar diputar.
@@ -196,16 +202,36 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
         }
     }
 
+    // Overlay hanya satu yang boleh jalan: memulai yang baru menutup yang lain
+    // supaya tidak ada dua panel dan dua pemilik surface pratinjau.
+    val startOverlay: (OverlayTarget) -> Unit = { target ->
+        when (target) {
+            OverlayTarget.Recording -> {
+                OverlayLiveService.stop(context)
+                OverlayRecordingService.start(context)
+            }
+
+            OverlayTarget.Live -> {
+                OverlayRecordingService.stop(context)
+                OverlayLiveService.start(context)
+            }
+        }
+    }
+
+    var pendingOverlay by remember { mutableStateOf<OverlayTarget?>(null) }
+
     // Minta bebas battery optimization agar OEM tidak membunuh sesi saat layar mati.
     val batteryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
-        OverlayRecordService.start(context)
+        pendingOverlay?.let(startOverlay)
+        pendingOverlay = null
     }
 
-    fun startOverlayWithBatteryExemption() {
+    val startOverlayWithBattery: (OverlayTarget) -> Unit = { target ->
         val power = context.getSystemService(PowerManager::class.java)
         if (power != null && !power.isIgnoringBatteryOptimizations(context.packageName)) {
+            pendingOverlay = target
             batteryLauncher.launch(
                 Intent(
                     Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -213,7 +239,7 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                 ),
             )
         } else {
-            OverlayRecordService.start(context)
+            startOverlay(target)
         }
     }
 
@@ -222,24 +248,33 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
         ActivityResultContracts.StartActivityForResult(),
     ) {
         if (Settings.canDrawOverlays(context)) {
-            startOverlayWithBatteryExemption()
+            pendingOverlay?.let(startOverlayWithBattery)
         }
+        pendingOverlay = null
     }
 
-    fun toggleFloatingOverlay() {
-        if (OverlayRecordService.running.value) {
-            OverlayRecordService.stop(context)
-            return
+    val toggleOverlay: (OverlayTarget) -> Unit = { target ->
+        val running = when (target) {
+            OverlayTarget.Recording -> OverlayRecordingService.running.value
+            OverlayTarget.Live -> OverlayLiveService.running.value
         }
-        if (!Settings.canDrawOverlays(context)) {
-            overlayLauncher.launch(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}"),
-                ),
-            )
+        if (running) {
+            when (target) {
+                OverlayTarget.Recording -> OverlayRecordingService.stop(context)
+                OverlayTarget.Live -> OverlayLiveService.stop(context)
+            }
         } else {
-            startOverlayWithBatteryExemption()
+            pendingOverlay = target
+            if (!Settings.canDrawOverlays(context)) {
+                overlayLauncher.launch(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}"),
+                    ),
+                )
+            } else {
+                startOverlayWithBattery(target)
+            }
         }
     }
 
@@ -297,6 +332,8 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
         }
     }
     val stopRecording: () -> Unit = { CaptureEngine.stopRecording() }
+    val pauseRecording: () -> Unit = { CaptureEngine.pauseRecording() }
+    val resumeRecording: () -> Unit = { CaptureEngine.resumeRecording() }
     val endSession: () -> Unit = { CaptureEngine.closeSession() }
 
     LaunchedEffect(state) {
@@ -306,7 +343,12 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
             return@LaunchedEffect
         }
         while (true) {
-            elapsedMs = System.currentTimeMillis() - recording.startedAtMs
+            elapsedMs = if (recording.isPaused) {
+                recording.pausedAtMs ?: 0L
+            } else {
+                (System.currentTimeMillis() - recording.startedAtMs - recording.pausedTotalMs)
+                    .coerceAtLeast(0L)
+            }
             delay(250)
         }
     }
@@ -394,20 +436,26 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
             when (tab) {
                 AppTab.Home -> HomeScreen(
                     state = state,
+                    stats = stats,
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
                     onStart = startRecording,
                     onStop = stopRecording,
+                    onPause = pauseRecording,
+                    onResume = resumeRecording,
                     onEndSession = endSession,
                     onRequestPermission = { beginSession(autoRecord = false) },
                     onClearError = { CaptureEngine.clearError() },
-                    floatingEnabled = overlayRunning,
-                    onToggleFloating = { toggleFloatingOverlay() },
+                    recordingOverlayEnabled = overlayRecordingRunning,
+                    liveOverlayEnabled = overlayLiveRunning,
+                    onToggleRecordingOverlay = { toggleOverlay(OverlayTarget.Recording) },
+                    onToggleLiveOverlay = { toggleOverlay(OverlayTarget.Live) },
                 )
 
                 AppTab.Studio -> StudioScreen(
                     state = state,
+                    stats = stats,
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
@@ -420,6 +468,8 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                     onCommitProgram = { SceneManager.commitToProgram() },
                     onStart = startRecording,
                     onStop = stopRecording,
+                    onPause = pauseRecording,
+                    onResume = resumeRecording,
                     onClearError = { CaptureEngine.clearError() },
                     fullscreen = studioFullscreen,
                     onFullscreenChange = { studioFullscreen = it },
@@ -529,4 +579,14 @@ internal fun formatDuration(milliseconds: Long): String {
     } else {
         "%02d:%02d".format(minutes, seconds)
     }
+}
+
+/** Ukuran berkas untuk statistik rekaman; satuannya mengikuti besar nilai. */
+internal fun formatRecordSize(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return "%.1f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return "%.1f MB".format(mb)
+    return "%.2f GB".format(mb / 1024.0)
 }

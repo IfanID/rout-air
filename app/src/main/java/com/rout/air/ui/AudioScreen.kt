@@ -630,7 +630,11 @@ private fun mixerSubtitle(state: RecordingState, mix: AudioMix, ready: Int): Str
     !mix.masterEnabled -> "Rekam audio dimatikan • mixer tetap aktif"
     state is RecordingState.Preparing -> "Menyiapkan sesi tangkap layar…"
     state is RecordingState.Previewing -> "Pratinjau • $ready kanal audio aktif"
-    state is RecordingState.Recording -> "Merekam • $ready kanal masuk trek audio"
+    state is RecordingState.Recording -> if (state.isPaused) {
+        "Rekaman dijeda • $ready kanal siap"
+    } else {
+        "Merekam • $ready kanal masuk trek audio"
+    }
     state is RecordingState.Idle ->
         "Mixer gaya OBS • ${mix.enabledChannels().size} dari ${mix.channels.size} kanal siap"
 

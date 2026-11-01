@@ -40,6 +40,7 @@ data class CaptureConfig(
     val channelCount: Int = 2,
     val canvasOrientation: CanvasOrientation = CanvasOrientation.Auto,
     val contentMode: ContentMode = ContentMode.Fit,
+    val saveLocation: SaveLocation = SaveLocation.MoviesRoutAir,
 ) {
     val aspectRatio: Float get() = width.toFloat() / height.toFloat()
 }

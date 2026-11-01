@@ -24,6 +24,30 @@ pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
     (izin harus diminta ulang pada sesi berikutnya).
 - **Tombol Rekam** berubah sesuai kondisi: ikon rekam (siap), spinner
   (menyiapkan), ikon stop merah berdenyut (merekam).
+- **Tombol Live** disiapkan sebagai pintu masuk streaming; masih nonaktif
+  sampai M5 (RTMP) selesai.
+- **Dua tombol overlay terpisah**: `Overlay Rekam` dan `Overlay Live`
+  (hanya satu yang boleh aktif pada satu waktu).
+- **Jeda/lanjutkan rekaman** tanpa memutus sesi atau membuat gap di timeline;
+  bisa dari halaman Siaran/Studio maupun notifikasi.
+- **Statistik langsung** saat merekam: ukuran berkas, bitrate, jumlah frame,
+  dan frame yang gagal (`drop`).
+- **Quick Settings tile** untuk mulai/stop rekaman tanpa membuka aplikasi.
+- **Pemeriksaan ruang penyimpanan** sebelum merekam (minimal 200 MB) dan
+  penghentian aman bila penulisan file gagal terus.
+- **Pembersihan otomatis** file rekaman pending yang tertinggal saat proses
+  aplikasi mati di tengah rekaman.
+
+### Overlay
+- **Overlay rekaman** terpisah dari overlay live: logo transparan yang bisa
+  digeser, panel 9 slot berisi Rekam/Stop, Jeda/Lanjut, pratinjau, VU audio,
+  statistik live, dan tombol buka Studio.
+- **Overlay live** memakai service sendiri (`OverlayLiveService`) dengan menu
+  pesan/chat; disiapkan untuk fitur streaming.
+- Panel bisa diperbesar/diperkecil, diingat posisinya, dan tombol tutup ada di
+  notifikasi.
+- Menu pesan/chat tidak ada di overlay rekaman; overlay live disiapkan
+  terpisah untuk fitur streaming nanti.
 
 ### Studio Mode
 - Dua panel: **Pratinjau (mentah)** untuk menyunting dan **Program (siaran)**
@@ -71,11 +95,16 @@ pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
 
 ### Rekaman
 - Daftar file rekaman, buka, bagikan, dan hapus.
+- Lokasi simpan bisa dipilih: `Movies/RoutAir` (default), `Movies`,
+  `DCIM/RoutAir`, atau `DCIM/Camera`.
+- File ditulis lewat `MediaStore` (langsung muncul di galeri, tanpa izin
+  storage).
 
 ### Setelan
 - **Video**: resolusi kanvas, orientasi (Auto/Vertikal/Horizontal), fps,
   bitrate, mode isi (Pas/Penuh/Peregangan).
-- **Output**: bitrate, format, lokasi penyimpanan.
+- **Output**: bitrate video (4–12 Mbps), bitrate audio (64–192 kbps),
+  format, track audio, dan lokasi penyimpanan.
 - **Audio**: sample rate, jumlah kanal, monitoring device, peak meter,
   push-to-talk/push-to-mute.
 - **Hotkeys** dan **Advanced** (informasi teknis/diagnostik).

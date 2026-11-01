@@ -54,7 +54,7 @@ import kotlin.math.roundToInt
  * - Terbuka: panel berisi header (timer + perkecil + tutup), pratinjau kecil
  *   format lanskap tetap, dan tombol Rekam/Stop.
  */
-class OverlayRecordService : Service() {
+class OverlayRecordingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var root: FrameLayout
@@ -63,13 +63,14 @@ class OverlayRecordService : Service() {
     private lateinit var preview: TextureView
     private var textureSurface: Surface? = null
     private lateinit var previewBox: FrameLayout
-    private lateinit var messageBox: FrameLayout
     private lateinit var vuBox: FrameLayout
     private lateinit var audioCompose: ComposeView
     private val overlayOwner = OverlayViewOwner()
     private lateinit var resizeHandle: ImageView
     private lateinit var action: ImageButton
+    private lateinit var pauseAction: ImageButton
     private lateinit var timerView: TextView
+    private lateinit var statsView: TextView
     private lateinit var params: WindowManager.LayoutParams
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -139,7 +140,7 @@ class OverlayRecordService : Service() {
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    getString(R.string.overlay_channel),
+                    getString(R.string.overlay_record_channel),
                     NotificationManager.IMPORTANCE_LOW,
                 ),
             )
@@ -153,12 +154,12 @@ class OverlayRecordService : Service() {
         val closeIntent = PendingIntent.getService(
             this,
             21,
-            Intent(this, OverlayRecordService::class.java).setAction(ACTION_STOP),
+            Intent(this, OverlayRecordingService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.overlay_title))
-            .setContentText(getString(R.string.overlay_text))
+            .setContentTitle(getString(R.string.overlay_record_title))
+            .setContentText(getString(R.string.overlay_record_text))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setContentIntent(openApp)
@@ -224,19 +225,21 @@ class OverlayRecordService : Service() {
         }
         header.addView(timerView)
 
-        header.addView(headerIcon(R.drawable.ic_person), LinearLayout.LayoutParams(dp(12), dp(12)).apply {
-            marginStart = dp(12)
+        // Statistik rekaman langsung: ukuran, bitrate, dan frame.
+        statsView = TextView(this).apply {
+            setTextColor(Color.parseColor("#B8C2CC"))
+            textSize = 11f
+            text = getString(R.string.overlay_record_ready)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        header.addView(statsView, LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f,
+        ).apply {
+            marginStart = dp(10)
         })
-        header.addView(headerLabel("0"))
-
-        header.addView(headerIcon(R.drawable.ic_signal), LinearLayout.LayoutParams(dp(12), dp(12)).apply {
-            marginStart = dp(12)
-        })
-        val kbps = com.rout.air.data.SettingsStore(this).load().videoBitrate / 1000
-        header.addView(headerLabel("$kbps kbps"))
-
-        // Dorong ikon kanan ke ujung.
-        header.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
 
         fun addHeaderButton(view: View) {
             (view as ImageButton).setPadding(dp(7), dp(7), dp(7), dp(7))
@@ -312,41 +315,11 @@ class OverlayRecordService : Service() {
             gravity = Gravity.TOP
         })
 
-        // Panel pesan (placeholder) dan panel VU audio.
-        messageBox = FrameLayout(this).apply {
-            background = boxBackground()
-            visibility = View.GONE
-            val title = TextView(this@OverlayRecordService).apply {
-                text = getString(R.string.overlay_chat)
-                setTextColor(Color.WHITE)
-                textSize = 13f
-            }
-            val body = TextView(this@OverlayRecordService).apply {
-                text = getString(R.string.overlay_no_messages)
-                setTextColor(Color.parseColor("#B8C2CC"))
-                textSize = 12f
-            }
-            addView(title, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = dp(12)
-                topMargin = dp(10)
-            })
-            addView(body, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                gravity = Gravity.CENTER
-            })
-        }
-        panel.addView(messageBox, contentParams())
-
+        // Panel VU audio (tanpa menu pesan; overlay ini khusus rekaman).
         vuBox = FrameLayout(this).apply {
             background = boxBackground()
             visibility = View.GONE
-            audioCompose = ComposeView(this@OverlayRecordService).apply {
+            audioCompose = ComposeView(this@OverlayRecordingService).apply {
                 setContent { RoutAirTheme { OverlayAudioPanel() } }
             }
             addView(audioCompose, FrameLayout.LayoutParams(
@@ -374,6 +347,23 @@ class OverlayRecordService : Service() {
                     state is RecordingState.Recording -> CaptureEngine.stopRecording()
                     !CaptureEngine.sessionActive.value -> openApp()
                     else -> CaptureEngine.startRecording()
+                }
+            }
+        }
+        pauseAction = ImageButton(this).apply {
+            stateListAnimator = null
+            elevation = 0f
+            background = null
+            setImageResource(R.drawable.ic_pause)
+            setColorFilter(Color.WHITE)
+            contentDescription = getString(R.string.home_jeda_rekaman)
+            alpha = 0.4f
+            isEnabled = false
+            setOnClickListener {
+                val state = CaptureEngine.state.value
+                if (state is RecordingState.Recording) {
+                    if (state.isPaused) CaptureEngine.resumeRecording()
+                    else CaptureEngine.pauseRecording()
                 }
             }
         }
@@ -411,18 +401,13 @@ class OverlayRecordService : Service() {
             controls.addView(FrameLayout(this), LinearLayout.LayoutParams(0, controlsPx, 1f))
         }
 
-        // 1. Rekam/Stop, 2. kosong, 3. kotak isi mata, 4. pesan,
-        // 5. VU meter audio, 6-8 kosong, 9. buka Studio.
+        // 1. Rekam/Stop, 2. Jeda/Lanjut, 3. kotak isi mata (pratinjau),
+        // 4. VU meter audio, 5-8 kosong, 9. buka Studio.
         addCell(action, dp(32))
-        addEmptyCell()
+        addCell(pauseAction)
         addCell(
             toolButton(R.drawable.ic_eye_box, getString(R.string.overlay_preview)) {
                 showContent(ContentMode.Preview)
-            },
-        )
-        addCell(
-            toolButton(R.drawable.ic_chat, getString(R.string.overlay_chat)) {
-                showContent(ContentMode.Messages)
             },
         )
         addCell(
@@ -430,6 +415,7 @@ class OverlayRecordService : Service() {
                 showContent(ContentMode.Vu)
             },
         )
+        addEmptyCell()
         addEmptyCell()
         addEmptyCell()
         addEmptyCell()
@@ -475,19 +461,6 @@ class OverlayRecordService : Service() {
             y = logoY
         }
         windowManager.addView(root, params)
-    }
-
-    private fun headerIcon(res: Int): ImageView = ImageView(this).apply {
-        setImageResource(res)
-        setColorFilter(Color.WHITE)
-        alpha = 0.85f
-    }
-
-    private fun headerLabel(text: String): TextView = TextView(this).apply {
-        this.text = text
-        setTextColor(Color.parseColor("#DCE3EA"))
-        textSize = 11f
-        setPadding(dp(4), 0, 0, 0)
     }
 
     private fun headerButton(res: Int, desc: String, onClick: () -> Unit): ImageButton =
@@ -780,6 +753,7 @@ class OverlayRecordService : Service() {
                 if (menuOpen) {
                     maybeAttach()
                     updateTimer()
+                    updateStats()
                 }
             }
         }
@@ -788,11 +762,33 @@ class OverlayRecordService : Service() {
     private fun updateTimer() {
         val state = CaptureEngine.state.value
         val elapsed = if (state is RecordingState.Recording) {
-            ((System.currentTimeMillis() - state.startedAtMs) / 1000).coerceAtLeast(0)
+            if (state.isPaused) {
+                (state.pausedAtMs ?: 0L) / 1000
+            } else {
+                ((System.currentTimeMillis() - state.startedAtMs - state.pausedTotalMs) / 1000)
+                    .coerceAtLeast(0)
+            }
         } else {
             0
         }
         timerView.text = "%02d:%02d".format(elapsed / 60, elapsed % 60)
+    }
+
+    /** Statistik live di header: ukuran, bitrate, frame, drop. */
+    private fun updateStats() {
+        val state = CaptureEngine.state.value
+        if (state !is RecordingState.Recording) {
+            statsView.text = getString(R.string.overlay_record_ready)
+            return
+        }
+        val stats = CaptureEngine.stats.value
+        statsView.text = getString(
+            R.string.overlay_record_stats,
+            com.rout.air.ui.formatRecordSize(stats.bytes),
+            "%.1f".format(stats.bitrateKbps / 1000.0),
+            stats.frames,
+            stats.droppedFrames,
+        )
     }
 
     private fun observeState() {
@@ -821,17 +817,28 @@ class OverlayRecordService : Service() {
                 )
                 action.isEnabled = state !is RecordingState.Preparing
                 action.alpha = if (action.isEnabled) 1f else 0.4f
+
+                val paused = (state as? RecordingState.Recording)?.isPaused == true
+                pauseAction.isEnabled = recording && action.isEnabled
+                pauseAction.alpha = if (pauseAction.isEnabled) 1f else 0.4f
+                pauseAction.setImageResource(
+                    if (paused) R.drawable.ic_play else R.drawable.ic_pause,
+                )
+                pauseAction.contentDescription = getString(
+                    if (paused) R.string.home_lanjutkan_rekaman
+                    else R.string.home_jeda_rekaman,
+                )
+                updateStats()
                 updateTimer()
             }
         }
     }
 
-    private enum class ContentMode { Preview, Messages, Vu }
+    private enum class ContentMode { Preview, Vu }
 
-    /** Ganti isi panel overlay: pratinjau, pesan, atau VU audio. */
+    /** Ganti isi panel overlay: pratinjau atau VU audio. */
     private fun showContent(mode: ContentMode) {
         previewBox.visibility = if (mode == ContentMode.Preview) View.VISIBLE else View.GONE
-        messageBox.visibility = if (mode == ContentMode.Messages) View.VISIBLE else View.GONE
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
     }
@@ -853,14 +860,14 @@ class OverlayRecordService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "routair_overlay"
-        private const val NOTIFICATION_ID = 21
-        const val ACTION_STOP = "com.rout.air.action.OVERLAY_STOP"
+        private const val CHANNEL_ID = "routair_overlay_record"
+        private const val NOTIFICATION_ID = 22
+        const val ACTION_STOP = "com.rout.air.action.OVERLAY_RECORD_STOP"
 
         val running = MutableStateFlow(false)
 
         fun start(context: Context) {
-            val intent = Intent(context, OverlayRecordService::class.java)
+            val intent = Intent(context, OverlayRecordingService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -869,7 +876,7 @@ class OverlayRecordService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, OverlayRecordService::class.java))
+            context.stopService(Intent(context, OverlayRecordingService::class.java))
         }
     }
 }

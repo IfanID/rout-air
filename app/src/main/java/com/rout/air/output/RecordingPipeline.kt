@@ -11,9 +11,11 @@ import android.os.PowerManager
 import android.media.projection.MediaProjectionManager
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.StatFs
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Display
@@ -27,6 +29,8 @@ import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.Crop
 import com.rout.air.core.RecordingState
+import com.rout.air.core.RecordingStats
+import com.rout.air.core.RecordingClock
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceType
@@ -73,6 +77,7 @@ class RecordingPipeline(
     programHeight: Int = 0,
     private val autoRecord: Boolean = false,
     private val onSessionEnd: () -> Unit = {},
+    private val onStats: (RecordingStats) -> Unit = {},
     private val onState: (RecordingState) -> Unit,
 ) {
     private val glThread = HandlerThread("rout-gl").apply { start() }
@@ -164,8 +169,11 @@ class RecordingPipeline(
     private var recordingStopping = false
 
     /** Titik nol PTS rekaman, terpisah dari waktu sesi pratinjau. */
+    private val recordingClock = RecordingClock()
+
+    /** Jam dinding saat rekaman mulai; dipakai UI menghitung durasi. */
     @Volatile
-    private var recordingStartNs = 0L
+    private var recordingStartedAtMs = 0L
 
     @Volatile
     private var lastFrameWallNs = 0L
@@ -233,13 +241,17 @@ class RecordingPipeline(
                 }
             }
             // Keputusan diambil dari WatchdogPolicy (diuji lewat unit test):
-            // frame layar berhenti TIDAK menghentikan rekaman.
+            // frame layar berhenti TIDAK menghentikan rekaman, dan saat
+            // dijeda encoder memang sengaja tidak menerima frame.
+            val writer = muxer
             when (WatchdogPolicy.decide(
                 recordingActive = recordingActive,
                 nowNs = now,
                 lastEncodedNs = lastEncoded,
                 consecutiveSwapFailures = consecutiveSwapFailures,
                 stallTimeoutNs = STALL_TIMEOUT_NS,
+                paused = recordingClock.isPaused,
+                writeFailures = writer?.writeFailures ?: 0,
             )) {
                 WatchdogAction.EncoderStalled -> {
                     diag("watchdog: encoder macet")
@@ -255,8 +267,18 @@ class RecordingPipeline(
                     return
                 }
 
+                WatchdogAction.StorageFailed -> {
+                    diag("watchdog: penulisan file gagal terus")
+                    stopReason = "penyimpanan penuh atau gagal menulis"
+                    stopRecording()
+                    return
+                }
+
                 WatchdogAction.Continue -> Unit
             }
+
+            if (recordingActive) publishStats(now)
+
             // Preview boleh tertahan tanpa mengganggu rekaman; dicatat saja.
             if (previewVisible && previewInFlight.get() &&
                 now - lastPreviewWallNs > PREVIEW_STALL_NS
@@ -279,8 +301,8 @@ class RecordingPipeline(
         override fun run() {
             if (!running || teardownStarted) return
 
-            if (!recordingActive) {
-                // Saat hanya pratinjau, tidak ada yang perlu di-encode.
+            if (!recordingActive || recordingClock.isPaused) {
+                // Saat hanya pratinjau atau dijeda, tidak ada yang perlu di-encode.
                 glHandler.postDelayed(this, frameIntervalMs)
                 return
             }
@@ -365,6 +387,33 @@ class RecordingPipeline(
             glHandler.post { endRecording() }
         }, "rout-stop").start()
         releaseWakeLock()
+    }
+
+    /** Jeda rekaman: frame dan audio berhenti masuk timeline. */
+    fun pauseRecording() {
+        glHandler.post {
+            if (!recordingActive || recordingStopping) return@post
+            if (recordingClock.isPaused) return@post
+            recordingClock.pause(System.nanoTime())
+            audioEncoder?.pauseRecording()
+            diag("rekam: dijeda")
+            publishRecordingState()
+        }
+    }
+
+    /** Lanjutkan rekaman setelah dijeda, tanpa gap di timeline. */
+    fun resumeRecording() {
+        glHandler.post {
+            if (!recordingActive || recordingStopping) return@post
+            if (!recordingClock.isPaused) return@post
+            recordingClock.resume(System.nanoTime())
+            audioEncoder?.resumeRecording()
+            // Pacing dimulai lagi dari frame baru; frame terakhir diulang bila
+            // layar belum mengirim frame setelah resume.
+            pacerCapturedFrames = capturedFrames
+            diag("rekam: dilanjutkan")
+            publishRecordingState()
+        }
     }
 
     /** Menutup sesi sepenuhnya: pratinjau berhenti dan projection dilepas. */
@@ -553,14 +602,23 @@ class RecordingPipeline(
         check(projection != null) { "Izin tangkap layar tidak valid" }
 
         diag("rekam: mulai")
-        val output = OutputTarget.create(context)
+        val freeBytes = runCatching {
+            StatFs(Environment.getExternalStorageDirectory().path).availableBytes
+        }.getOrDefault(Long.MAX_VALUE)
+        if (!StorageGuard.hasRoom(freeBytes)) {
+            val freeMb = freeBytes / (1024 * 1024)
+            error("Penyimpanan hampir penuh ($freeMb MB tersisa, minimal 200 MB)")
+        }
+
+        val output = OutputTarget.create(context, config.saveLocation)
         target = output
         outputUri = output.uri.toString()
 
         val writer = Mp4Writer(output)
         muxer = writer
 
-        recordingStartNs = System.nanoTime()
+        recordingStartedAtMs = System.currentTimeMillis()
+        recordingClock.start(System.nanoTime())
 
         val mixSnapshot = AudioMixer.snapshot()
         val wantsAudio = audioEncoder != null && mixSnapshot.masterEnabled &&
@@ -571,7 +629,7 @@ class RecordingPipeline(
         var audioStarted = false
         if (wantsAudio) {
             try {
-                audioEncoder?.beginRecording(writer, recordingStartNs, mixSnapshot)
+                audioEncoder?.beginRecording(writer, recordingClock.startTimeNs, mixSnapshot)
                 audioStarted = audioEncoder != null
             } catch (error: Throwable) {
                 Log.w(TAG, "Trek audio gagal dimulai: ${error.message}")
@@ -621,7 +679,8 @@ class RecordingPipeline(
         recordingActive = true
 
         diag("rekam: audio=$audioActive tujuan=$outputUri")
-        onState(RecordingState.Recording(System.currentTimeMillis(), outputUri, audioActive))
+        onStats(RecordingStats())
+        publishRecordingState()
     }
 
     /** Dipanggil setelah audio selesai; menutup file tanpa mematikan sesi. */
@@ -641,6 +700,7 @@ class RecordingPipeline(
         encoderEglSurface?.let { runCatching { core?.releaseSurface(it) } }
         encoderEglSurface = null
 
+        val finalBytes = muxer?.bytesWritten ?: 0L
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
         runCatching { target?.finish(context, saved) }
@@ -653,13 +713,16 @@ class RecordingPipeline(
         )
         DiagLog.writeToDownloads(context)
 
+        publishStats(System.nanoTime(), finalBytes)
+
         val reason = stopReason
         stopReason = null
         recordingStopping = false
         hasEncodedFrame = false
         lastEncodedNs = Long.MIN_VALUE
         lastEncodedWallNs = System.nanoTime()
-        recordingStartNs = 0L
+        recordingClock.reset()
+        recordingStartedAtMs = 0L
 
         if (saved) {
             onState(RecordingState.Previewing)
@@ -672,6 +735,45 @@ class RecordingPipeline(
                 ),
             )
         }
+    }
+
+    /** Menghitung statistik live dari pipeline; dipanggil tiap detik. */
+    private fun publishStats(nowNs: Long, bytesOverride: Long? = null) {
+        val durationMs = recordingClock.elapsedMs(nowNs)
+        val bytes = bytesOverride ?: muxer?.bytesWritten ?: 0L
+        val seconds = durationMs / 1000.0
+        val kbps = if (seconds > 0.5) {
+            ((bytes * 8.0) / seconds / 1000.0).roundToInt()
+        } else {
+            0
+        }
+        onStats(
+            RecordingStats(
+                durationMs = durationMs,
+                frames = encodedOutputs,
+                droppedFrames = swapFailures,
+                bytes = bytes,
+                bitrateKbps = kbps,
+                paused = recordingClock.isPaused,
+            ),
+        )
+    }
+
+    /** Mengirim state rekaman terkini, termasuk status jeda, ke UI/service. */
+    private fun publishRecordingState() {
+        onState(
+            RecordingState.Recording(
+                startedAtMs = recordingStartedAtMs,
+                outputUri = outputUri,
+                audioActive = audioActive,
+                pausedAtMs = if (recordingClock.isPaused) {
+                    recordingClock.elapsedMs(System.nanoTime())
+                } else {
+                    null
+                },
+                pausedTotalMs = recordingClock.pausedTotalMs,
+            ),
+        )
     }
 
     /** Gagal saat menyiapkan encoder: bersihkan file dan kembali ke pratinjau. */
@@ -689,7 +791,9 @@ class RecordingPipeline(
         runCatching { target?.finish(context, false) }
         target = null
         recordingStopping = false
-        recordingStartNs = 0L
+        recordingClock.reset()
+        recordingStartedAtMs = 0L
+        onStats(RecordingStats())
         onState(RecordingState.Error(message))
     }
 
@@ -1005,7 +1109,7 @@ class RecordingPipeline(
         // updateTexImage butuh konteks EGL aktif pada thread ini. Saat hanya
         // pratinjau (belum ada encoder), konteks diaktifkan tanpa surface.
         try {
-            if (recording && encoderSurface != null) {
+            if (recording && !recordingClock.isPaused && encoderSurface != null) {
                 core.makeCurrent(encoderSurface)
             } else {
                 core.makeCurrentNoSurface()
@@ -1029,9 +1133,9 @@ class RecordingPipeline(
         // dihitung dari saat tombol rekam ditekan.
         val sessionNs = (System.nanoTime() - startTimeNs).coerceAtLeast(0L)
 
-        if (recording && encoderSurface != null) {
-            val presentationNs = if (recordingStartNs > 0L) {
-                (System.nanoTime() - recordingStartNs).coerceAtLeast(0L)
+        if (recording && !recordingClock.isPaused && encoderSurface != null) {
+            val presentationNs = if (recordingClock.isStarted) {
+                recordingClock.elapsedNs(System.nanoTime())
             } else {
                 sessionNs
             }
@@ -1067,8 +1171,8 @@ class RecordingPipeline(
      * dan itu membuat frame berhenti dikirim karena dianggap terlalu awal.
      */
     private fun currentPresentationNs(): Long {
-        val base = if (recordingStartNs > 0L) recordingStartNs else startTimeNs
-        return (System.nanoTime() - base).coerceAtLeast(0L)
+        if (recordingClock.isStarted) return recordingClock.elapsedNs(System.nanoTime())
+        return (System.nanoTime() - startTimeNs).coerceAtLeast(0L)
     }
 
     private fun startPreviewThread(core: EglCore) {

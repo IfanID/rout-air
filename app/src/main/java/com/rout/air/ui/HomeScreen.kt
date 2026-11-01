@@ -37,11 +37,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.RecordingState
+import com.rout.air.core.RecordingStats
 import com.rout.air.output.CaptureEngine
 import androidx.compose.ui.res.stringResource
 
@@ -51,20 +53,26 @@ import androidx.compose.ui.res.stringResource
 @Composable
 fun HomeScreen(
     state: RecordingState,
+    stats: RecordingStats,
     canvasConfig: CaptureConfig,
     fps: Int,
     elapsedMs: Long,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onEndSession: () -> Unit,
     onRequestPermission: () -> Unit,
     onClearError: () -> Unit,
-    floatingEnabled: Boolean,
-    onToggleFloating: () -> Unit,
+    recordingOverlayEnabled: Boolean,
+    liveOverlayEnabled: Boolean,
+    onToggleRecordingOverlay: () -> Unit,
+    onToggleLiveOverlay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var previewReady by remember { mutableStateOf(false) }
     val isActive = state is RecordingState.Recording
+    val paused = (state as? RecordingState.Recording)?.isPaused == true
     val sessionOnly = state is RecordingState.Previewing
 
     Column(
@@ -204,22 +212,80 @@ fun HomeScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (isActive) {
+                    Text(
+                        text = stringResource(
+                            R.string.home_statistik,
+                            formatRecordSize(stats.bytes),
+                            String.format("%.1f", stats.bitrateKbps / 1000.0),
+                            stats.frames,
+                            stats.droppedFrames,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isActive) {
+                    IconButton(
+                        onClick = if (paused) onResume else onPause,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (paused) R.drawable.ic_play else R.drawable.ic_pause,
+                            ),
+                            contentDescription = stringResource(
+                                if (paused) R.string.home_lanjutkan_rekaman
+                                else R.string.home_jeda_rekaman,
+                            ),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
                 // Tombol rekam cadangan (tanpa perlu tombol melayang).
                 RecordButton(
                     isActive = isActive,
                     enabled = state !is RecordingState.Preparing,
                     preparing = state is RecordingState.Preparing,
+                    paused = paused,
                     onClick = { if (isActive) onStop() else onStart() },
                 )
-                Spacer(Modifier.width(8.dp))
-                FloatingToggleButton(
-                    enabled = floatingEnabled,
-                    onClick = onToggleFloating,
-                )
             }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // Aksi live dan overlay dipisah dari tombol rekam supaya jelas.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LiveButton(modifier = Modifier.weight(0.8f))
+            OverlayToggleButton(
+                label = if (recordingOverlayEnabled) {
+                    stringResource(R.string.home_overlay_record_hide)
+                } else {
+                    stringResource(R.string.home_overlay_record)
+                },
+                active = recordingOverlayEnabled,
+                modifier = Modifier.weight(1.1f),
+                onClick = onToggleRecordingOverlay,
+            )
+            OverlayToggleButton(
+                label = if (liveOverlayEnabled) {
+                    stringResource(R.string.home_overlay_live_hide)
+                } else {
+                    stringResource(R.string.home_overlay_live)
+                },
+                active = liveOverlayEnabled,
+                modifier = Modifier.weight(1.1f),
+                onClick = onToggleLiveOverlay,
+            )
         }
     }
 }
@@ -229,47 +295,82 @@ private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Idle -> stringResource(R.string.home_siap_merekam_layar)
     RecordingState.Previewing -> stringResource(R.string.home_pratinjau_aktif_tekan_rekam)
     RecordingState.Preparing -> stringResource(R.string.home_menyiapkan_tangkap_layar)
-    is RecordingState.Recording -> if (state.audioActive) {
-        stringResource(R.string.home_merekam_layar_mixer_audio)
-    } else {
-        stringResource(R.string.home_merekam_tanpa_audio)
+    is RecordingState.Recording -> when {
+        state.isPaused -> stringResource(R.string.home_rekaman_dijeda)
+        state.audioActive -> stringResource(R.string.home_merekam_layar_mixer_audio)
+        else -> stringResource(R.string.home_merekam_tanpa_audio)
     }
 
     is RecordingState.Error -> state.message
 }
 
-/** Tombol besar di Siaran untuk memunculkan tombol rekam melayang. */
+/** Tombol overlay (rekam/live): aktif = tampil, nonaktif = disembunyikan. */
 @Composable
-private fun FloatingToggleButton(enabled: Boolean, onClick: () -> Unit) {
+private fun OverlayToggleButton(
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = if (enabled) scheme.primary else scheme.surfaceVariant,
-        contentColor = if (enabled) scheme.onPrimary else scheme.onSurfaceVariant,
-        modifier = Modifier.height(52.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = if (active) scheme.primary else scheme.surfaceVariant,
+        contentColor = if (active) scheme.onPrimary else scheme.onSurfaceVariant,
+        modifier = modifier.height(44.dp),
     ) {
         Row(
             modifier = Modifier
-                .fillMaxHeight()
-                .padding(horizontal = 22.dp),
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_logo_mark),
-                contentDescription = stringResource(R.string.floating_toggle),
-                modifier = Modifier.size(20.dp),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
             )
             Text(
-                // Label mengikuti status: aktif → tombol untuk menyembunyikan.
-                text = if (enabled) {
-                    stringResource(R.string.floating_hide)
-                } else {
-                    stringResource(R.string.floating_label)
-                },
-                style = MaterialTheme.typography.titleMedium,
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Tombol live: disiapkan untuk M5, belum bisa dipakai. */
+@Composable
+private fun LiveButton(modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = scheme.surfaceVariant,
+        contentColor = scheme.onSurfaceVariant.copy(alpha = 0.6f),
+        modifier = modifier.height(44.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_signal),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = stringResource(R.string.home_live_menyusul),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

@@ -35,6 +35,7 @@ import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.MeterDecay
 import com.rout.air.core.PeakMeterType
+import com.rout.air.core.SaveLocation
 import com.rout.air.data.AudioMixer
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
@@ -248,7 +249,7 @@ private fun OutputSettings(
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_bitrate_video))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(4, 6, 10).forEach { mbps ->
+        listOf(4, 6, 8, 10, 12).forEach { mbps ->
             FilterChip(
                 selected = config.videoBitrate == mbps * 1_000_000,
                 onClick = { onConfigChange(config.copy(videoBitrate = mbps * 1_000_000)) },
@@ -256,6 +257,19 @@ private fun OutputSettings(
             )
         }
     }
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle(stringResource(R.string.settings_bitrate_audio))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(64, 128, 192).forEach { kbps ->
+            FilterChip(
+                selected = config.audioBitrate == kbps * 1_000,
+                onClick = { onConfigChange(config.copy(audioBitrate = kbps * 1_000)) },
+                label = { Text("$kbps kbps") },
+            )
+        }
+    }
+    Hint("Bitrate audio berlaku pada sesi tangkap berikutnya.")
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_track_audio))
@@ -287,8 +301,39 @@ private fun OutputSettings(
     InfoRow("Kontainer", "MP4")
     InfoRow("Video", "H.264")
     InfoRow("Audio", "AAC-LC")
-    InfoRow("Lokasi", "Movies/RoutAir")
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_lokasi_penyimpanan))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SaveLocation.entries.forEach { location ->
+            FilterChip(
+                selected = config.saveLocation == location,
+                onClick = { onConfigChange(config.copy(saveLocation = location)) },
+                label = { Text(saveLocationLabel(location)) },
+            )
+        }
+    }
+    Hint(stringResource(R.string.settings_lokasi_hint))
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_qs_tile))
+    Hint(stringResource(R.string.settings_qs_tile_desc))
+
+    Spacer(Modifier.height(12.dp))
     Hint(stringResource(R.string.settings_split_recording_dan_replay_buffer_menyus))
+}
+
+@Composable
+private fun saveLocationLabel(location: SaveLocation): String = when (location) {
+    SaveLocation.MoviesRoutAir -> stringResource(R.string.settings_lokasi_movies_routair)
+    SaveLocation.Movies -> stringResource(R.string.settings_lokasi_movies)
+    SaveLocation.DcimRoutAir -> stringResource(R.string.settings_lokasi_dcim)
+    SaveLocation.DcimCamera -> stringResource(R.string.settings_lokasi_dcim_camera)
 }
 
 @Composable
@@ -524,7 +569,7 @@ private fun HotkeysSettings() {
 @Composable
 private fun AdvancedSettings(canvasConfig: CaptureConfig) {
     SectionTitle(stringResource(R.string.settings_informasi))
-    InfoRow("Versi", "1.0 (M3)")
+    InfoRow("Versi", "1.0 (M4)")
     InfoRow("Kanvas", "${canvasConfig.width}x${canvasConfig.height}")
     InfoRow("Renderer", "OpenGL ES 3.0")
     InfoRow("Encoder", "MediaCodec H.264 + AAC")

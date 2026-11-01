@@ -3,9 +3,10 @@ package com.rout.air.encode
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.util.Log
+import com.rout.air.core.SaveLocation
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -42,25 +43,65 @@ class OutputTarget private constructor(
     }
 
     companion object {
-        fun create(context: Context, timestampMs: Long = System.currentTimeMillis()): OutputTarget {
+        private const val TAG = "RoutAirOutput"
+
+        fun create(
+            context: Context,
+            location: SaveLocation = SaveLocation.MoviesRoutAir,
+            timestampMs: Long = System.currentTimeMillis(),
+        ): OutputTarget {
             val resolver = context.contentResolver
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, "RoutAir_$stamp.mp4")
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(
-                    MediaStore.Video.Media.RELATIVE_PATH,
-                    "${Environment.DIRECTORY_MOVIES}/RoutAir",
-                )
+                put(MediaStore.Video.Media.RELATIVE_PATH, location.relativePath)
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
 
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("Tidak bisa membuat berkas di Movies/RoutAir")
+                ?: throw IOException("Tidak bisa membuat berkas di ${location.relativePath}")
             val descriptor = resolver.openFileDescriptor(uri, "w")
                 ?: throw IOException("Tidak bisa membuka berkas tujuan")
 
             return OutputTarget(uri, descriptor)
+        }
+
+        /**
+         * Menghapus rekaman pending yang tertinggal dari sesi yang mati tanpa
+         * sempat menutup file. Dipanggil sekali saat aplikasi dibuka.
+         */
+        fun cleanupOrphans(context: Context, nowMs: Long = System.currentTimeMillis()) {
+            val resolver = context.contentResolver
+            val projection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DATE_ADDED,
+                MediaStore.Video.Media.IS_PENDING,
+            )
+            runCatching {
+                resolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    "${MediaStore.Video.Media.IS_PENDING}=1",
+                    null,
+                    null,
+                )?.use { cursor ->
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+                    val pendingColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.IS_PENDING)
+                    while (cursor.moveToNext()) {
+                        val dateAddedMs = cursor.getLong(dateColumn) * 1_000L
+                        val pending = cursor.getInt(pendingColumn) != 0
+                        if (!PendingRecordingPolicy.isStale(nowMs, dateAddedMs, pending)) continue
+                        val id = cursor.getLong(idColumn)
+                        val uri = Uri.withAppendedPath(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                            id.toString(),
+                        )
+                        resolver.delete(uri, null, null)
+                    }
+                }
+            }.onFailure { Log.w(TAG, "Pembersihan rekaman pending gagal: ${it.message}") }
         }
     }
 }

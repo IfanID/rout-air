@@ -4,6 +4,7 @@ import android.content.Context
 import com.rout.air.core.CanvasOrientation
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
+import com.rout.air.core.SaveLocation
 
 /**
  * Menyimpan preset rekaman terakhir agar tidak perlu diatur ulang.
@@ -29,6 +30,7 @@ class SettingsStore(context: Context) {
                 prefs.getString(KEY_CONTENT_MODE, ContentMode.Fit.name) ?: ContentMode.Fit.name,
             )
         }.getOrDefault(ContentMode.Fit),
+        saveLocation = SaveLocation.fromName(prefs.getString(KEY_SAVE_LOCATION, null)),
     )
 
     fun save(config: CaptureConfig) {
@@ -40,6 +42,7 @@ class SettingsStore(context: Context) {
             .putInt(KEY_AUDIO_BITRATE, config.audioBitrate)
             .putString(KEY_ORIENTATION, config.canvasOrientation.name)
             .putString(KEY_CONTENT_MODE, config.contentMode.name)
+            .putString(KEY_SAVE_LOCATION, config.saveLocation.name)
             .apply()
     }
 
@@ -52,6 +55,7 @@ class SettingsStore(context: Context) {
         const val KEY_AUDIO_BITRATE = "audio_bitrate"
         const val KEY_ORIENTATION = "canvas_orientation"
         const val KEY_CONTENT_MODE = "content_mode"
+        const val KEY_SAVE_LOCATION = "save_location"
 
         const val DEFAULT_WIDTH = 1920
         const val DEFAULT_HEIGHT = 1080

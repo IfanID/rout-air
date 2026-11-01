@@ -20,6 +20,7 @@ import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.RecordingState
+import com.rout.air.core.SaveLocation
 import com.rout.air.data.AudioMixer
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
@@ -104,6 +105,11 @@ class CaptureService : Service() {
                 }
                 return START_NOT_STICKY
             }
+
+            ACTION_TOGGLE_PAUSE -> {
+                CaptureEngine.togglePause()
+                return START_NOT_STICKY
+            }
         }
 
         startForeground(
@@ -143,6 +149,7 @@ class CaptureService : Service() {
                     request.getStringExtra(EXTRA_CONTENT_MODE) ?: ContentMode.Fit.name,
                 )
             }.getOrDefault(ContentMode.Fit),
+            saveLocation = SaveLocation.fromName(request.getStringExtra(EXTRA_SAVE_LOCATION)),
         )
 
         CaptureEngine.startSession(
@@ -181,22 +188,39 @@ class CaptureService : Service() {
             Intent(this, CaptureService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val pauseIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, CaptureService::class.java).setAction(ACTION_TOGGLE_PAUSE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
 
+        val recording = state as? RecordingState.Recording
         val text = when (state) {
             RecordingState.Preparing -> "Menyiapkan tangkap layar"
             RecordingState.Previewing -> "Pratinjau aktif, siap merekam"
-            is RecordingState.Recording -> "Merekam layar"
+            is RecordingState.Recording ->
+                if (state.isPaused) "Rekaman dijeda" else "Merekam layar"
+
             is RecordingState.Error -> state.message
             RecordingState.Idle -> "Tidak ada rekaman"
         }
-        val actionLabel = if (state is RecordingState.Recording) "Stop" else "Tutup"
+        val actionLabel = if (recording != null) "Stop" else "Tutup"
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RoutAir")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setContentIntent(contentIntent)
+        if (recording != null) {
+            builder.addAction(
+                0,
+                if (recording.isPaused) "Lanjutkan" else "Jeda",
+                pauseIntent,
+            )
+        }
+        return builder
             .addAction(0, actionLabel, stopIntent)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
@@ -224,6 +248,7 @@ class CaptureService : Service() {
     companion object {
         const val ACTION_START = "com.rout.air.action.START"
         const val ACTION_STOP = "com.rout.air.action.STOP"
+        const val ACTION_TOGGLE_PAUSE = "com.rout.air.action.TOGGLE_PAUSE"
 
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_PROJECTION_DATA = "projection_data"
@@ -232,6 +257,7 @@ class CaptureService : Service() {
         const val EXTRA_FPS = "fps"
         const val EXTRA_BITRATE = "bitrate"
         const val EXTRA_CONTENT_MODE = "content_mode"
+        const val EXTRA_SAVE_LOCATION = "save_location"
         const val EXTRA_AUTO_RECORD = "auto_record"
 
         private const val CHANNEL_ID = "rout_air_capture"
@@ -253,6 +279,7 @@ class CaptureService : Service() {
             putExtra(EXTRA_FPS, config.fps)
             putExtra(EXTRA_BITRATE, config.videoBitrate)
             putExtra(EXTRA_CONTENT_MODE, config.contentMode.name)
+            putExtra(EXTRA_SAVE_LOCATION, config.saveLocation.name)
             putExtra(EXTRA_AUTO_RECORD, autoRecord)
         }
 

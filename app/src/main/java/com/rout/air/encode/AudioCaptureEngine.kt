@@ -77,6 +77,11 @@ class AudioCaptureEngine(
     @Volatile
     private var running = false
 
+    /** Saat dijeda, chunk tetap dicampur untuk meter/monitoring, tetapi
+     *  tidak dikirim ke encoder sehingga timeline audio ikut berhenti. */
+    @Volatile
+    private var paused = false
+
     init {
         syncSources(liveMix())
     }
@@ -132,7 +137,17 @@ class AudioCaptureEngine(
             encoders = emptyList()
             muxer = null
             recordingTracks = 0
+            paused = false
         }
+    }
+
+    /** Jeda pengiriman audio ke encoder; capture + meter tetap hidup. */
+    fun pauseRecording() {
+        paused = true
+    }
+
+    fun resumeRecording() {
+        paused = false
     }
 
     fun shutdown(limitPtsUs: Long = Long.MAX_VALUE) {
@@ -178,7 +193,7 @@ class AudioCaptureEngine(
             mixedFrames += CHUNK_FRAMES
 
             synchronized(codecLock) {
-                if (encoders.isNotEmpty()) {
+                if (encoders.isNotEmpty() && !paused) {
                     val pts = presentationTimeUs()
                     encoders.forEach { encoder ->
                         encoder.encode(trackShort[encoder.key - 1], pts)

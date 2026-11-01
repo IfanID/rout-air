@@ -71,4 +71,45 @@ class WatchdogPolicyTest {
         )
         assertEquals(WatchdogAction.Continue, action)
     }
+
+    @Test
+    fun paused_longTime_isNotTreatedAsStall() {
+        // Saat dijeda encoder memang tidak menerima frame; itu bukan macet.
+        val now = 100_000_000_000L
+        val action = WatchdogPolicy.decide(
+            recordingActive = true,
+            nowNs = now,
+            lastEncodedNs = now - 60_000_000_000L,
+            consecutiveSwapFailures = 0,
+            stallTimeoutNs = stall,
+            paused = true,
+        )
+        assertEquals(WatchdogAction.Continue, action)
+    }
+
+    @Test
+    fun repeatedWriteFailures_stopsRecording() {
+        val action = WatchdogPolicy.decide(
+            recordingActive = true,
+            nowNs = 1_000_000_000L,
+            lastEncodedNs = 900_000_000L,
+            consecutiveSwapFailures = 0,
+            stallTimeoutNs = stall,
+            writeFailures = WatchdogPolicy.MAX_WRITE_FAILURES + 1,
+        )
+        assertEquals(WatchdogAction.StorageFailed, action)
+    }
+
+    @Test
+    fun fewWriteFailures_keepsRecording() {
+        val action = WatchdogPolicy.decide(
+            recordingActive = true,
+            nowNs = 1_000_000_000L,
+            lastEncodedNs = 900_000_000L,
+            consecutiveSwapFailures = 0,
+            stallTimeoutNs = stall,
+            writeFailures = 2,
+        )
+        assertEquals(WatchdogAction.Continue, action)
+    }
 }

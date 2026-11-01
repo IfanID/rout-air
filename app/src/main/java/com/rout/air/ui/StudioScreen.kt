@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,9 +53,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.RecordingState
+import com.rout.air.core.RecordingStats
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
 import com.rout.air.output.CaptureEngine
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
 
@@ -69,6 +73,7 @@ import com.rout.air.R
 @Composable
 fun StudioScreen(
     state: RecordingState,
+    stats: RecordingStats,
     canvasConfig: CaptureConfig,
     fps: Int,
     elapsedMs: Long,
@@ -81,12 +86,15 @@ fun StudioScreen(
     onCommitProgram: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onClearError: () -> Unit,
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val isActive = state is RecordingState.Recording
+    val paused = (state as? RecordingState.Recording)?.isPaused == true
     val sessionLive = state is RecordingState.Recording || state is RecordingState.Previewing
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -208,6 +216,19 @@ fun StudioScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (isActive) {
+                    Text(
+                        text = stringResource(
+                            R.string.home_statistik,
+                            formatRecordSize(stats.bytes),
+                            String.format("%.1f", stats.bitrateKbps / 1000.0),
+                            stats.frames,
+                            stats.droppedFrames,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Tombol Transisi ala OBS: menerapkan hasil edit pratinjau ke
@@ -218,10 +239,29 @@ fun StudioScreen(
                     onClick = onCommitProgram,
                 )
                 Spacer(Modifier.width(16.dp))
+                if (isActive) {
+                    IconButton(
+                        onClick = if (paused) onResume else onPause,
+                        modifier = Modifier.size(44.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (paused) R.drawable.ic_play else R.drawable.ic_pause,
+                            ),
+                            contentDescription = stringResource(
+                                if (paused) R.string.home_lanjutkan_rekaman
+                                else R.string.home_jeda_rekaman,
+                            ),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
                 RecordButton(
                     isActive = isActive,
                     enabled = state !is RecordingState.Preparing,
                     preparing = state is RecordingState.Preparing,
+                    paused = paused,
                     onClick = { if (isActive) onStop() else onStart() },
                 )
             }
@@ -720,10 +760,10 @@ private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Idle -> stringResource(R.string.studio_pratinjau_dan_program_siap)
     RecordingState.Previewing -> stringResource(R.string.studio_pratinjau_aktif_tekan_rekam)
     RecordingState.Preparing -> stringResource(R.string.studio_menyiapkan_tangkap_layar)
-    is RecordingState.Recording -> if (state.audioActive) {
-        stringResource(R.string.studio_merekam_program_file_mixer)
-    } else {
-        stringResource(R.string.studio_merekam_program_file_tanpa_audio)
+    is RecordingState.Recording -> when {
+        state.isPaused -> stringResource(R.string.home_rekaman_dijeda)
+        state.audioActive -> stringResource(R.string.studio_merekam_program_file_mixer)
+        else -> stringResource(R.string.studio_merekam_program_file_tanpa_audio)
     }
 
     is RecordingState.Error -> state.message

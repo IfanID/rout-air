@@ -44,6 +44,16 @@
     <string name="home_pratinjau_aktif_tekan_rekam">Pratinjau aktif • tekan rekam</string>
     <string name="home_siap_merekam_layar">Siap merekam layar</string>
     <string name="home_siaran">Siaran</string>
+    <string name="home_jeda_rekaman">Jeda rekaman</string>
+    <string name="home_lanjutkan_rekaman">Lanjutkan rekaman</string>
+    <string name="home_rekaman_dijeda">Rekaman dijeda</string>
+    <string name="home_statistik">%1$s • %2$s Mb/s • %3$d frame • %4$d drop</string>
+    <string name="home_live">Live</string>
+    <string name="home_live_menyusul">Live (menyusul)</string>
+    <string name="home_overlay_record">Overlay Rekam</string>
+    <string name="home_overlay_record_hide">Tutup Overlay Rekam</string>
+    <string name="home_overlay_live">Overlay Live</string>
+    <string name="home_overlay_live_hide">Tutup Overlay Live</string>
 
     <!-- ===== Halaman Studio ===== -->
     <string name="studio_denyut_rekam">denyut-rekam</string>
@@ -188,6 +198,17 @@
     <string name="settings_aktifkan_push_to_talk">Aktifkan Push-to-talk</string>
     <string name="settings_base_canvas_resolution">Base (Canvas) Resolution</string>
     <string name="settings_bitrate_video">Bitrate video</string>
+    <string name="settings_bitrate_audio">Bitrate audio</string>
+    <string name="settings_lokasi_penyimpanan">Lokasi penyimpanan</string>
+    <string name="settings_lokasi_hint">Berkas disimpan lewat MediaStore, jadi langsung muncul di galeri tanpa izin storage.</string>
+    <string name="settings_lokasi_movies_routair">Movies/RoutAir</string>
+    <string name="settings_lokasi_movies">Movies</string>
+    <string name="settings_lokasi_dcim">DCIM/RoutAir</string>
+    <string name="settings_lokasi_dcim_camera">DCIM/Camera</string>
+    <string name="settings_qs_tile">Quick Settings tile</string>
+    <string name="settings_qs_tile_desc">Tambahkan tile RoutAir di panel Quick Settings untuk mulai/stop rekaman tanpa membuka aplikasi.</string>
+    <string name="qs_tile_record">Rekam RoutAir</string>
+    <string name="qs_tile_stop">Stop RoutAir</string>
     <string name="settings_channels">Channels</string>
     <string name="settings_diagnostik">Diagnostik</string>
     <string name="settings_encoder">Encoder</string>
@@ -291,4 +312,9 @@
     <string name="overlay_studio">Buka Studio</string>
     <string name="overlay_no_messages">Belum ada pesan</string>
     <string name="overlay_no_audio">Tidak ada audio aktif</string>
+    <string name="overlay_record_channel">Overlay rekaman</string>
+    <string name="overlay_record_title">Overlay rekaman RoutAir</string>
+    <string name="overlay_record_text">Panel rekaman melayang aktif</string>
+    <string name="overlay_record_ready">Siap merekam</string>
+    <string name="overlay_record_stats">%1$s • %2$s Mb/s • %3$d frame • %4$d drop</string>
 </resources>

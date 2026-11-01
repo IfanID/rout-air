@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ContentValues
 import android.os.Environment
 import android.provider.MediaStore
+import com.rout.air.encode.OutputTarget
 
 /** Application yang mencatat crash ke Download/RoutAir/RoutAir_crash.txt. */
 class RoutAirApplication : Application() {
@@ -15,6 +16,9 @@ class RoutAirApplication : Application() {
             runCatching { writeCrash(error) }
             previous?.uncaughtException(thread, error)
         }
+        // File pending dari sesi yang mati tanpa menutup MP4 tidak terlihat di
+        // galeri; bersihkan di latar belakang agar tidak menumpuk.
+        Thread({ runCatching { OutputTarget.cleanupOrphans(this) } }, "rout-cleanup").start()
     }
 
     private fun writeCrash(error: Throwable) {

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.view.Surface
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.RecordingState
+import com.rout.air.core.RecordingStats
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +22,9 @@ object CaptureEngine {
     private val _state = MutableStateFlow<RecordingState>(RecordingState.Idle)
 
     val state: StateFlow<RecordingState> = _state.asStateFlow()
+
+    private val _stats = MutableStateFlow(RecordingStats())
+    val stats: StateFlow<RecordingStats> = _stats.asStateFlow()
 
     private val _sessionActive = MutableStateFlow(false)
     val sessionActive: StateFlow<Boolean> = _sessionActive.asStateFlow()
@@ -154,6 +158,7 @@ object CaptureEngine {
                     if (pipeline === created) pipeline = null
                 }
             },
+            onStats = { stats -> _stats.value = stats },
         ) { newState ->
             _state.value = newState
             if (newState is RecordingState.Idle) {
@@ -161,6 +166,9 @@ object CaptureEngine {
                 synchronized(lock) {
                     if (pipeline === created) pipeline = null
                 }
+            }
+            if (newState !is RecordingState.Recording) {
+                _stats.value = RecordingStats()
             }
         }
 
@@ -175,6 +183,24 @@ object CaptureEngine {
 
     fun stopRecording() {
         synchronized(lock) { pipeline }?.stopRecording()
+    }
+
+    fun pauseRecording() {
+        synchronized(lock) { pipeline }?.pauseRecording()
+    }
+
+    fun resumeRecording() {
+        synchronized(lock) { pipeline }?.resumeRecording()
+    }
+
+    /** Jeda/lanjutkan sesuai status rekaman saat ini (dipakai notifikasi). */
+    fun togglePause() {
+        when (val state = _state.value) {
+            is RecordingState.Recording ->
+                if (state.isPaused) resumeRecording() else pauseRecording()
+
+            else -> Unit
+        }
     }
 
     /** Menutup sesi pratinjau sekaligus (dipakai saat aplikasi ke background). */

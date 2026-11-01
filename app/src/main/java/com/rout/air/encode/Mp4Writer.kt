@@ -29,6 +29,15 @@ class Mp4Writer(private val target: OutputTarget) {
     private var started = false
     private var released = false
 
+    /** Statistik live untuk halaman Siaran/Studio. */
+    @Volatile
+    var bytesWritten: Long = 0L
+        private set
+
+    @Volatile
+    var writeFailures: Int = 0
+        private set
+
     /** MediaMuxer menolak PTS yang tidak naik, jadi dijaga di sini. */
     private val lastPtsByTrack = HashMap<Int, Long>()
 
@@ -148,7 +157,9 @@ class Mp4Writer(private val target: OutputTarget) {
         try {
             muxer.writeSampleData(sample.track, ByteBuffer.wrap(sample.data), info)
             lastPtsByTrack[sample.track] = sample.presentationTimeUs
+            bytesWritten += sample.data.size
         } catch (error: IllegalStateException) {
+            writeFailures++
             Log.w(TAG, "writeSampleData gagal: ${error.message}")
         }
     }

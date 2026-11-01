@@ -101,6 +101,7 @@ internal fun RecordButton(
     enabled: Boolean,
     onClick: () -> Unit,
     preparing: Boolean = false,
+    paused: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
 
@@ -114,7 +115,7 @@ internal fun RecordButton(
         ),
         label = stringResource(R.string.studio_indikator),
     )
-    val indicatorAlpha = if (isActive) pulse.value else 1f
+    val indicatorAlpha = if (isActive && !paused) pulse.value else 1f
 
     val container = when {
         !enabled -> scheme.surfaceVariant

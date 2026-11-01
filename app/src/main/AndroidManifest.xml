@@ -58,12 +58,32 @@
             android:foregroundServiceType="mediaProjection|microphone" />
 
         <service
-            android:name=".service.OverlayRecordService"
+            android:name=".service.OverlayRecordingService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="floating recording control" />
+                android:value="floating recording panel" />
+        </service>
+
+        <service
+            android:name=".service.OverlayLiveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating live control" />
+        </service>
+
+        <service
+            android:name=".service.RecordTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_record"
+            android:label="@string/qs_tile_record"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
     </application>
 
