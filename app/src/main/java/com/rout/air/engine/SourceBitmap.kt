@@ -92,12 +92,23 @@ object SourceBitmap {
         return layout.height.coerceAtLeast(1)
     }
 
-    /** Merender teks menjadi Bitmap transparan memakai StaticLayout. */    fun renderText(
+    /**
+     * Merender teks menjadi Bitmap transparan memakai StaticLayout.
+     *
+     * `highlightIndices` memberi warna berbeda pada huruf tertentu (mis. R dan
+     * A pada "RoutAir"). `center` membuat teks rata tengah di dalam kotak,
+     * `autoFit` mengecilkan huruf agar tidak terpotong atau turun baris.
+     */
+    fun renderText(
         text: String,
         textSizeSp: Float,
         colorArgb: Long,
         maxWidth: Int,
         density: Float,
+        highlightIndices: List<Int> = emptyList(),
+        highlightColor: Long = 0xFF00E5FF,
+        center: Boolean = false,
+        autoFit: Boolean = false,
     ): Bitmap {
         val safeWidth = maxWidth.coerceIn(64, 8192)
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
@@ -105,10 +116,33 @@ object SourceBitmap {
             textSize = textSizeSp * density
             isSubpixelText = true
         }
-        val content = if (TextUtils.isEmpty(text)) " " else text
+        val raw = if (TextUtils.isEmpty(text)) " " else text
+        if (autoFit) {
+            var size = paint.textSize
+            while (size > 8f && paint.measureText(raw) > safeWidth) {
+                size *= 0.9f
+                paint.textSize = size
+            }
+        }
+        val content: CharSequence = if (highlightIndices.isEmpty()) {
+            raw
+        } else {
+            android.text.SpannableString(raw).apply {
+                highlightIndices.filter { it in raw.indices }.forEach { index ->
+                    setSpan(
+                        android.text.style.ForegroundColorSpan(highlightColor.toInt()),
+                        index,
+                        index + 1,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
+            }
+        }
         val layout = StaticLayout.Builder
             .obtain(content, 0, content.length, paint, safeWidth)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setAlignment(
+                if (center) Layout.Alignment.ALIGN_CENTER else Layout.Alignment.ALIGN_NORMAL,
+            )
             .setIncludePad(false)
             .build()
         val height = layout.height.coerceAtLeast(1)

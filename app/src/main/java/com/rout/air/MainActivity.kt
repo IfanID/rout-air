@@ -20,6 +20,10 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         if (intent.getStringExtra("open_tab") == "studio") {
             com.rout.air.data.UiEvents.openStudio.tryEmit(Unit)
+        } else if (intent.getStringExtra("open_tab") == "live") {
+            com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
+        } else if (intent.getStringExtra("open_tab") == "settings") {
+            com.rout.air.data.UiEvents.openSettings.tryEmit(Unit)
         }
     }
 
@@ -44,6 +48,8 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     RoutAirApp(
                         initialStudio = intent?.getStringExtra("open_tab") == "studio",
+                        initialLiveSetup = intent?.getStringExtra("open_tab") == "live",
+                        initialSettings = intent?.getStringExtra("open_tab") == "settings",
                         modifier = Modifier.safeDrawingPadding(),
                     )
                 }

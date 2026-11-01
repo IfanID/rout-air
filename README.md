@@ -24,8 +24,8 @@ pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
     (izin harus diminta ulang pada sesi berikutnya).
 - **Tombol Rekam** berubah sesuai kondisi: ikon rekam (siap), spinner
   (menyiapkan), ikon stop merah berdenyut (merekam).
-- **Tombol Live** disiapkan sebagai pintu masuk streaming; masih nonaktif
-  sampai M5 (RTMP) selesai.
+- **Tombol Live** untuk mulai/berhenti streaming RTMP(S); status tombol
+  mengikuti koneksi (menyambung, live, sambung ulang, error).
 - **Dua tombol overlay terpisah**: `Overlay Rekam` dan `Overlay Live`
   (hanya satu yang boleh aktif pada satu waktu).
 - **Jeda/lanjutkan rekaman** tanpa memutus sesi atau membuat gap di timeline;
@@ -42,12 +42,20 @@ pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
 - **Overlay rekaman** terpisah dari overlay live: logo transparan yang bisa
   digeser, panel 9 slot berisi Rekam/Stop, Jeda/Lanjut, pratinjau, VU audio,
   statistik live, dan tombol buka Studio.
-- **Overlay live** memakai service sendiri (`OverlayLiveService`) dengan menu
-  pesan/chat; disiapkan untuk fitur streaming.
+- **Overlay live** memakai service sendiri (`OverlayLiveService`) dengan panel
+  Obrolan YouTube dan jumlah penonton asli setelah login Google.
 - Panel bisa diperbesar/diperkecil, diingat posisinya, dan tombol tutup ada di
   notifikasi.
-- Menu pesan/chat tidak ada di overlay rekaman; overlay live disiapkan
-  terpisah untuk fitur streaming nanti.
+
+### Live Streaming
+- **RTMP / RTMPS** langsung dari encoder yang sama dengan rekaman
+  (`MediaCodec` H.264 + AAC).
+- **Rekam + live bersamaan**: keduanya memakai satu encoder; menghentikan
+  salah satu tidak menghentikan yang lain.
+- **Sambung ulang otomatis** dengan backoff 1–10 detik saat koneksi terputus.
+- **Statistik jaringan** di halaman Siaran: data terkirim, bitrate, tag yang
+  dibuang, dan jumlah reconnect.
+- Server dan kunci stream diatur di **Setelan → Live**; kunci disimpan lokal.
 
 ### Studio Mode
 - Dua panel: **Pratinjau (mentah)** untuk menyunting dan **Program (siaran)**
@@ -101,13 +109,23 @@ pratinjau ala Studio Mode, mixer audio, dan rekaman MP4.
   storage).
 
 ### Setelan
-- **Video**: resolusi kanvas, orientasi (Auto/Vertikal/Horizontal), fps,
-  bitrate, mode isi (Pas/Penuh/Peregangan).
-- **Output**: bitrate video (4–12 Mbps), bitrate audio (64–192 kbps),
-  format, track audio, dan lokasi penyimpanan.
+- **Video**: resolusi kanvas, orientasi (Auto/Vertikal/Horizontal), output
+  resolution (rescale 75/50/25%), fps, color space/range, bitrate, mode isi
+  (Pas/Penuh/Peregangan).
+- **Output**: tab **Streaming**, **Recording**, dan **Audio** (mode Advanced
+  saja, mengikuti OBS). Streaming: encoder, bitrate video/audio, rate control
+  (VBR/CBR), keyframe, profile, rescale, audio track 1–6. Recording: bitrate,
+  kualitas, format MP4, nama berkas (`{date}`, `{time}`, `{datetime}`), tanpa
+  spasi, track 1–6, lokasi penyimpanan.
+- **Stream**: Service (Custom/YouTube/Twitch/Facebook/Kick), Server, Stream Key
+  (tampil/sembunyikan), autentikasi username/password untuk Custom, Audio
+  Track 1–6, tes koneksi, tombol dashboard, sambung ulang otomatis, dan
+  **login Google** untuk chat + jumlah penonton YouTube.
 - **Audio**: sample rate, jumlah kanal, monitoring device, peak meter,
   push-to-talk/push-to-mute.
-- **Hotkeys** dan **Advanced** (informasi teknis/diagnostik).
+- **Advanced**: informasi teknis/diagnostik dan opsi performa
+  (**Hemat CPU saat layar diam** dan **Thermal throttle**, keduanya default mati
+  agar encoder selalu 60 fps seperti OBS).
 
 ## Struktur project
 

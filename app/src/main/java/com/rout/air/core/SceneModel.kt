@@ -101,6 +101,13 @@ data class SourceSettings(
     val text: String = "Teks baru",
     val textSize: Float = 48f,
     val textColor: Long = 0xFFFFFFFF,
+    /** Indeks huruf yang diberi warna lain; kosong berarti tanpa sorotan. */
+    val textHighlightIndices: List<Int> = emptyList(),
+    val textHighlightColor: Long = 0xFF00E5FF,
+    /** Teks rata tengah di dalam kotaknya (dipakai layar jeda). */
+    val textCenter: Boolean = false,
+    /** Huruf dikecilkan otomatis agar muat satu baris. */
+    val textAutoFit: Boolean = false,
     val color: Long = 0xFF00E5FF,
     val width: Int = 0,
     val height: Int = 0,

@@ -41,6 +41,13 @@ internal object SceneJson {
                         put("text", s.settings.text)
                         put("textSize", s.settings.textSize.toDouble())
                         put("textColor", s.settings.textColor)
+                        put(
+                            "textHighlightIndices",
+                            JSONArray(s.settings.textHighlightIndices),
+                        )
+                        put("textCenter", s.settings.textCenter)
+                        put("textAutoFit", s.settings.textAutoFit)
+                        put("textHighlightColor", s.settings.textHighlightColor)
                         put("color", s.settings.color)
                         put("width", s.settings.width)
                         put("height", s.settings.height)
@@ -104,6 +111,12 @@ internal object SceneJson {
                     text = s.optString("text", "Teks baru"),
                     textSize = s.optDouble("textSize", 48.0).toFloat(),
                     textColor = s.optLong("textColor", 0xFFFFFFFF),
+                    textHighlightIndices = s.optJSONArray("textHighlightIndices")
+                        ?.let { array -> (0 until array.length()).map { array.optInt(it) } }
+                        .orEmpty(),
+                    textCenter = s.optBoolean("textCenter", false),
+                    textAutoFit = s.optBoolean("textAutoFit", false),
+                    textHighlightColor = s.optLong("textHighlightColor", 0xFF00E5FF),
                     color = s.optLong("color", 0xFF00E5FF),
                     width = s.optInt("width", 0),
                     height = s.optInt("height", 0),

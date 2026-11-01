@@ -41,6 +41,26 @@ internal fun OverlayAudioPanel() {
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        // Sakelar induk, sama seperti "Rekam audio" di halaman Audio.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            MixerIconButton(
+                onClick = { AudioMixer.setMasterEnabled(!mix.masterEnabled) },
+                description = if (mix.masterEnabled) "Matikan audio" else "Aktifkan audio",
+                active = !mix.masterEnabled,
+                activeColor = Color(0xFFFF4C4C),
+            ) { color -> SpeakerIcon(!mix.masterEnabled, color, 14.dp) }
+            Text(
+                text = if (mix.masterEnabled) "Audio aktif" else "Audio mati",
+                color = if (mix.masterEnabled) Color.White else Color(0xFFFF8A8A),
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
         if (active.isEmpty()) {
             Text(
                 text = "Tidak ada audio aktif",

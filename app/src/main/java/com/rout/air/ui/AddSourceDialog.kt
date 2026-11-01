@@ -44,6 +44,8 @@ internal fun AddSourceDialog(
     hasScreen: Boolean,
     onScreen: () -> Unit,
     onImage: () -> Unit,
+    onImageUrl: () -> Unit,
+    onScreensaver: () -> Unit,
     onText: () -> Unit,
     onColor: () -> Unit,
     onApplicationAudio: () -> Unit,
@@ -74,6 +76,20 @@ internal fun AddSourceDialog(
                 ) {
                     SourceOption("▣", "Layar", "Tangkap seluruh layar perangkat", !hasScreen, onScreen)
                     SourceOption("▤", "Gambar", "File gambar dari galeri", true, onImage)
+                    SourceOption(
+                        "⛓",
+                        stringResource(R.string.scenes_image_url),
+                        stringResource(R.string.scenes_image_url_desc),
+                        true,
+                        onImageUrl,
+                    )
+                    SourceOption(
+                        "★",
+                        stringResource(R.string.scenes_screensaver),
+                        stringResource(R.string.scenes_screensaver_desc),
+                        true,
+                        onScreensaver,
+                    )
                     SourceOption("T", "Teks", "Teks yang bisa diubah", true, onText)
                     SourceOption("■", "Warna", "Latar warna solid", true, onColor)
                     SourceOption(

@@ -14,7 +14,7 @@ import java.nio.ByteBuffer
  * Karena itu sampel yang datang terlalu awal disimpan sementara, lalu
  * ditulis berurutan setelah muxer mulai.
  */
-class Mp4Writer(private val target: OutputTarget) {
+class Mp4Writer(private val target: OutputTarget) : MediaSink {
     private val muxer = MediaMuxer(
         target.fileDescriptor,
         MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
@@ -28,6 +28,9 @@ class Mp4Writer(private val target: OutputTarget) {
     private var expectedAudioTracks = 0
     private var started = false
     private var released = false
+
+    /** Saat output dimulai setelah live berjalan, MP4 tetap dimulai dari 0. */
+    private var ptsOffsetUs: Long? = null
 
     /** Statistik live untuk halaman Siaran/Studio. */
     @Volatile
@@ -56,7 +59,7 @@ class Mp4Writer(private val target: OutputTarget) {
         }
     }
 
-    fun addVideoTrack(format: MediaFormat): Int = synchronized(lock) {
+    override fun addVideoTrack(format: MediaFormat): Int = synchronized(lock) {
         if (videoTrack < 0) {
             videoTrack = muxer.addTrack(format)
             maybeStartLocked()
@@ -68,7 +71,7 @@ class Mp4Writer(private val target: OutputTarget) {
      * Menambahkan trek audio. [key] adalah nomor logis track (1..6) supaya
      * encoder bisa menulis ke trek yang benar saat multitrack aktif.
      */
-    fun addAudioTrack(key: Int, format: MediaFormat): Int = synchronized(lock) {
+    override fun addAudioTrack(key: Int, format: MediaFormat): Int = synchronized(lock) {
         audioTracks[key]?.let { return it }
         val index = muxer.addTrack(format)
         audioTracks[key] = index
@@ -76,38 +79,42 @@ class Mp4Writer(private val target: OutputTarget) {
         index
     }
 
-    fun write(track: Int, buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
-        if (track < 0 || info.size <= 0) return
+    override fun write(
+        trackId: Int,
+        data: ByteArray,
+        presentationTimeUs: Long,
+        flags: Int,
+    ) {
+        if (trackId < 0 || data.isEmpty()) return
         // Data csd sudah ikut di MediaFormat, jadi tidak perlu ditulis ulang.
-        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) return
-
-        buffer.position(info.offset)
-        buffer.limit(info.offset + info.size)
-        val copy = ByteArray(info.size)
-        buffer.get(copy)
+        if (flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) return
 
         val sample = PendingSample(
-            track = track,
-            data = copy,
-            presentationTimeUs = info.presentationTimeUs,
-            flags = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME,
+            track = trackId,
+            data = data,
+            presentationTimeUs = presentationTimeUs,
+            flags = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME,
         )
 
         synchronized(lock) {
             if (released) return
+            val offset = ptsOffsetUs ?: presentationTimeUs.also { ptsOffsetUs = it }
+            val adjusted = sample.copy(
+                presentationTimeUs = (sample.presentationTimeUs - offset).coerceAtLeast(0L),
+            )
             if (!started) {
                 if (pending.size < MAX_PENDING_SAMPLES) {
-                    pending.addLast(sample)
+                    pending.addLast(adjusted)
                 } else {
                     Log.w(TAG, "Sampel dibuang: muxer belum siap")
                 }
                 return
             }
-            writeLocked(sample)
+            writeLocked(adjusted)
         }
     }
 
-    fun finish(): Boolean = synchronized(lock) {
+    override fun finish(): Boolean = synchronized(lock) {
         if (released) return false
         var wroteData = started
         if (started) {
@@ -166,6 +173,6 @@ class Mp4Writer(private val target: OutputTarget) {
 
     private companion object {
         const val TAG = "RoutAirMp4"
-        const val MAX_PENDING_SAMPLES = 120
+        const val MAX_PENDING_SAMPLES = 60
     }
 }

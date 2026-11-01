@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -17,6 +19,23 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Kredensial OAuth tidak disimpan di repo (GitHub push protection).
+        // Isi di local.properties: routair.googleClientId / googleClientSecret.
+        val local = Properties().apply {
+            val file = rootProject.file("local.properties")
+            if (file.exists()) file.inputStream().use { load(it) }
+        }
+        buildConfigField(
+            "String",
+            "GOOGLE_CLIENT_ID",
+            "\"${local.getProperty("routair.googleClientId", "")}\"",
+        )
+        buildConfigField(
+            "String",
+            "GOOGLE_CLIENT_SECRET",
+            "\"${local.getProperty("routair.googleClientSecret", "")}\"",
+        )
     }
 
     buildTypes {
@@ -33,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

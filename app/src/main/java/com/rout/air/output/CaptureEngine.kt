@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.view.Surface
 import com.rout.air.core.CaptureConfig
+import com.rout.air.core.LiveConfig
+import com.rout.air.core.LiveStats
 import com.rout.air.core.RecordingState
 import com.rout.air.core.RecordingStats
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +27,9 @@ object CaptureEngine {
 
     private val _stats = MutableStateFlow(RecordingStats())
     val stats: StateFlow<RecordingStats> = _stats.asStateFlow()
+
+    private val _liveStats = MutableStateFlow(LiveStats())
+    val liveStats: StateFlow<LiveStats> = _liveStats.asStateFlow()
 
     private val _sessionActive = MutableStateFlow(false)
     val sessionActive: StateFlow<Boolean> = _sessionActive.asStateFlow()
@@ -154,11 +159,13 @@ object CaptureEngine {
             autoRecord = autoRecord,
             onSessionEnd = {
                 _sessionActive.value = false
+                _liveStats.value = LiveStats()
                 synchronized(lock) {
                     if (pipeline === created) pipeline = null
                 }
             },
             onStats = { stats -> _stats.value = stats },
+            onLiveStats = { live -> _liveStats.value = live },
         ) { newState ->
             _state.value = newState
             if (newState is RecordingState.Idle) {
@@ -183,6 +190,22 @@ object CaptureEngine {
 
     fun stopRecording() {
         synchronized(lock) { pipeline }?.stopRecording()
+    }
+
+    fun startLive(config: LiveConfig) {
+        synchronized(lock) { pipeline }?.startLive(config)
+    }
+
+    fun stopLive() {
+        synchronized(lock) { pipeline }?.stopLive()
+    }
+
+    /** Hentikan koneksi yang error lalu mulai ulang (dipakai tombol coba lagi). */
+    fun restartLive(config: LiveConfig) {
+        synchronized(lock) { pipeline }?.let {
+            it.stopLive()
+            it.startLive(config)
+        }
     }
 
     fun pauseRecording() {

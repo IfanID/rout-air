@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.provider.Settings
@@ -32,11 +33,18 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.rout.air.core.LiveService
+import com.rout.air.live.GoogleAuthStore
+import com.rout.air.live.YouTubeApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -77,7 +85,12 @@ enum class AppTab(val title: String, val symbol: String) {
 private enum class OverlayTarget { Recording, Live }
 
 @Composable
-fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
+fun RoutAirApp(
+    initialStudio: Boolean = false,
+    initialLiveSetup: Boolean = false,
+    initialSettings: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val store = remember(context) { SettingsStore(context) }
@@ -89,13 +102,23 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     val audioMix by AudioMixer.mix.collectAsState()
 
     var config by remember { mutableStateOf(store.load()) }
+    var liveConfig by remember { mutableStateOf(store.loadLive()) }
     var tab by rememberSaveable {
-        mutableStateOf(if (initialStudio) AppTab.Studio else AppTab.Home)
+        mutableStateOf(
+            when {
+                initialStudio -> AppTab.Studio
+                initialSettings -> AppTab.Settings
+                else -> AppTab.Home
+            },
+        )
     }
 
-    // Overlay dapat meminta membuka tab Studio.
+    // Overlay dapat meminta membuka tab Studio atau Setelan.
     LaunchedEffect(Unit) {
         com.rout.air.data.UiEvents.openStudio.collect { tab = AppTab.Studio }
+    }
+    LaunchedEffect(Unit) {
+        com.rout.air.data.UiEvents.openSettings.collect { tab = AppTab.Settings }
     }
     var elapsedMs by remember { mutableStateOf(0L) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -108,6 +131,7 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
 
     val state by CaptureEngine.state.collectAsState()
     val stats by CaptureEngine.stats.collectAsState()
+    val liveStats by CaptureEngine.liveStats.collectAsState()
 
     // Kanvas = orientasi video. Selama rekaman berjalan nilainya dibekukan
     // supaya ukuran video tidak berubah walau layar diputar.
@@ -130,6 +154,12 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     val canvasConfig = lockedCanvas ?: liveCanvas
     val collection = scenes ?: SceneCollection.default(canvasConfig.width, canvasConfig.height)
 
+    // Scene layar jeda dibuat sebelum orientasi diketahui; posisinya
+    // disesuaikan dengan kanvas yang benar-benar dipakai.
+    LaunchedEffect(canvasConfig.width, canvasConfig.height) {
+        SceneManager.ensureScreensaverLayout(canvasConfig.width, canvasConfig.height)
+    }
+
     // Program = snapshot yang sedang mengudara. Perubahan pratinjau baru masuk
     // ke sini setelah tombol Transisi ditekan, seperti OBS Studio Mode.
     val programScenes by SceneManager.program.collectAsState()
@@ -139,6 +169,11 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     // izin baru karena memakai sesi yang sama.
     var appForeground by remember { mutableStateOf(true) }
     var pendingAutoRecord by remember { mutableStateOf(false) }
+    var pendingLive by remember { mutableStateOf(false) }
+    var setupOpen by remember { mutableStateOf(false) }
+    var setupBusy by remember { mutableStateOf(false) }
+    var setupError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     // Otomatis membuka dialog izin hanya sekali per sesi foreground, supaya
     // pembatalan tidak memunculkan dialog terus-menerus.
@@ -177,6 +212,10 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
         if (state !is RecordingState.Recording) lockedCanvas = null
     }
 
+    LaunchedEffect(liveConfig) {
+        store.saveLive(liveConfig)
+    }
+
     val projectionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -196,6 +235,7 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
             pendingAutoRecord = false
         } else {
             pendingAutoRecord = false
+            pendingLive = false
             // Izin dibatalkan: tidak ada tangkapan yang berjalan. Beri pesan
             // dan biarkan pengguna mencoba lagi lewat tombol rekam.
             CaptureEngine.reportPermissionCancelled()
@@ -335,6 +375,68 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     val pauseRecording: () -> Unit = { CaptureEngine.pauseRecording() }
     val resumeRecording: () -> Unit = { CaptureEngine.resumeRecording() }
     val endSession: () -> Unit = { CaptureEngine.closeSession() }
+    // Mulai siaran tanpa dialog; juga dipakai setelah dialog disetujui.
+    val startLive: () -> Unit = {
+        when {
+            liveStats.status == com.rout.air.core.LiveStatus.Error -> {
+                if (CaptureEngine.sessionActive.value) {
+                    CaptureEngine.restartLive(liveConfig)
+                } else {
+                    pendingLive = true
+                    beginSession(autoRecord = false)
+                }
+            }
+
+            CaptureEngine.sessionActive.value -> CaptureEngine.startLive(liveConfig)
+            else -> {
+                pendingLive = true
+                beginSession(autoRecord = false)
+            }
+        }
+    }
+
+    /**
+     * YouTube dengan akun Google aktif: minta judul/deskripsi dulu seperti
+     * OBS yang membuat siaran sebelum mulai streaming.
+     */
+    val openSetupOrStart: () -> Unit = {
+        if (liveConfig.service == LiveService.YouTube &&
+            GoogleAuthStore(context).loggedIn
+        ) {
+            setupError = null
+            setupOpen = true
+        } else {
+            startLive()
+        }
+    }
+
+    val toggleLive: () -> Unit = {
+        when {
+            liveStats.status == com.rout.air.core.LiveStatus.Error -> startLive()
+            liveStats.active -> CaptureEngine.stopLive()
+            !liveConfig.isConfigured -> Unit
+            else -> openSetupOrStart()
+        }
+    }
+
+    // Membuka dialog siap-siaran bila memungkinkan; kalau tidak (bukan
+    // YouTube atau belum login), langsung mulai siaran.
+    LaunchedEffect(Unit) {
+        com.rout.air.data.UiEvents.openLiveSetup.collect { openSetupOrStart() }
+    }
+    // Overlay membuka aplikasi dengan permintaan yang sama.
+    LaunchedEffect(initialLiveSetup) {
+        if (initialLiveSetup) openSetupOrStart()
+    }
+
+    // Live diminta saat sesi belum aktif: tunggu sesi siap lalu mulai.
+    LaunchedEffect(state, liveConfig) {
+        if (state is RecordingState.Previewing && pendingLive) {
+            pendingLive = false
+            CaptureEngine.startLive(liveConfig)
+        }
+        if (state is RecordingState.Idle) pendingLive = false
+    }
 
     LaunchedEffect(state) {
         val recording = state as? RecordingState.Recording
@@ -437,6 +539,8 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                 AppTab.Home -> HomeScreen(
                     state = state,
                     stats = stats,
+                    liveStats = liveStats,
+                    liveConfigured = liveConfig.isConfigured,
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
@@ -444,6 +548,7 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                     onStop = stopRecording,
                     onPause = pauseRecording,
                     onResume = resumeRecording,
+                    onToggleLive = toggleLive,
                     onEndSession = endSession,
                     onRequestPermission = { beginSession(autoRecord = false) },
                     onClearError = { CaptureEngine.clearError() },
@@ -456,6 +561,8 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                 AppTab.Studio -> StudioScreen(
                     state = state,
                     stats = stats,
+                    liveStats = liveStats,
+                    liveConfigured = liveConfig.isConfigured,
                     canvasConfig = canvasConfig,
                     fps = config.fps,
                     elapsedMs = elapsedMs,
@@ -470,6 +577,7 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                     onStop = stopRecording,
                     onPause = pauseRecording,
                     onResume = resumeRecording,
+                    onToggleLive = toggleLive,
                     onClearError = { CaptureEngine.clearError() },
                     fullscreen = studioFullscreen,
                     onFullscreenChange = { studioFullscreen = it },
@@ -497,11 +605,59 @@ fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
                     config = config,
                     canvasConfig = canvasConfig,
                     mix = audioMix,
+                    liveConfig = liveConfig,
                     onConfigChange = { config = it },
                     onMixChange = { AudioMixer.update(it) },
                     onMasterEnabledChange = { AudioMixer.setMasterEnabled(it) },
+                    onLiveConfigChange = { liveConfig = it },
                 )
             }
+        }
+
+        if (setupOpen) {
+            LiveSetupDialog(
+                busy = setupBusy,
+                error = setupError,
+                onDismiss = { if (!setupBusy) setupOpen = false },
+                onStart = { title, description, privacy ->
+                    setupBusy = true
+                    setupError = null
+                    scope.launch {
+                        val apiToken = withContext(Dispatchers.IO) {
+                            GoogleAuthStore(context).freshAccessToken()
+                        }
+                        if (apiToken.isNullOrBlank()) {
+                            setupError = "Sesi Google berakhir. Hubungkan akun lagi di Setelan > Stream."
+                            setupBusy = false
+                            return@launch
+                        }
+                        val api = YouTubeApi(apiToken)
+                        var streamTarget: com.rout.air.live.StreamTarget? = null
+                        val created = withContext(Dispatchers.IO) {
+                            val target = api.streamTarget() ?: return@withContext null
+                            streamTarget = target
+                            val broadcast = api.createBroadcast(title, description, privacy)
+                                ?: return@withContext null
+                            broadcast.takeIf { api.bindBroadcast(broadcast, target.streamId) }
+                        }
+                        val target = streamTarget
+                        if (created == null || target == null) {
+                            setupError = "Gagal membuat siaran. Periksa koneksi atau log."
+                            setupBusy = false
+                            return@launch
+                        }
+                        setupBusy = false
+                        setupOpen = false
+                        // Pastikan server/kunci terisi sebelum siaran dimulai.
+                        liveConfig = liveConfig.copy(
+                            serverUrl = target.server,
+                            streamKey = target.key,
+                            accountLinked = true,
+                        )
+                        startLive()
+                    }
+                },
+            )
         }
     }
 }
@@ -549,8 +705,18 @@ internal fun buildCanvasConfig(
  * Intent izin tangkap layar. Memakai dialog bawaan sistem supaya pengguna
  * tetap bisa memilih "seluruh layar" atau "satu aplikasi" (Android 14+).
  */
-private fun createCaptureIntent(manager: MediaProjectionManager): Intent =
-    manager.createScreenCaptureIntent()
+private fun createCaptureIntent(manager: MediaProjectionManager): Intent {
+    // Paksa seluruh layar. Di Android 14+ dialog bawaan bisa memilih satu
+    // aplikasi, dan pilihan itu menghasilkan frame hitam saat aplikasi lain
+    // yang sedang tampil tidak ikut ditangkap.
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        manager.createScreenCaptureIntent(
+            MediaProjectionConfig.createConfigForDefaultDisplay(),
+        )
+    } else {
+        manager.createScreenCaptureIntent()
+    }
+}
 
 /** Label mode isi untuk ditampilkan di halaman Siaran/Studio/Setelan. */
 @Composable

@@ -19,6 +19,8 @@ import com.rout.air.MainActivity
 import com.rout.air.R
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
+import com.rout.air.core.LiveStats
+import com.rout.air.core.LiveStatus
 import com.rout.air.core.RecordingState
 import com.rout.air.core.SaveLocation
 import com.rout.air.data.AudioMixer
@@ -71,12 +73,24 @@ class CaptureService : Service() {
                     is RecordingState.Recording,
                     -> {
                         sawActiveState = true
-                        notificationManager().notify(NOTIFICATION_ID, buildNotification(state))
+                        notificationManager().notify(
+                NOTIFICATION_ID,
+                buildNotification(state, CaptureEngine.liveStats.value),
+            )
                     }
 
                     RecordingState.Idle,
                     is RecordingState.Error,
                     -> Unit
+                }
+            }
+        }
+
+        scope.launch {
+            CaptureEngine.liveStats.collect {
+                val state = CaptureEngine.state.value
+                if (state is RecordingState.Recording || state is RecordingState.Previewing) {
+                    notificationManager().notify(NOTIFICATION_ID, buildNotification(state, it))
                 }
             }
         }
@@ -114,7 +128,7 @@ class CaptureService : Service() {
 
         startForeground(
             NOTIFICATION_ID,
-            buildNotification(RecordingState.Preparing),
+            buildNotification(RecordingState.Preparing, CaptureEngine.liveStats.value),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
                 if (hasAudioPermission()) {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -174,7 +188,7 @@ class CaptureService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(state: RecordingState): Notification {
+    private fun buildNotification(state: RecordingState, live: LiveStats): Notification {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -196,11 +210,16 @@ class CaptureService : Service() {
         )
 
         val recording = state as? RecordingState.Recording
+        val liveOn = live.status == LiveStatus.Live
         val text = when (state) {
             RecordingState.Preparing -> "Menyiapkan tangkap layar"
-            RecordingState.Previewing -> "Pratinjau aktif, siap merekam"
-            is RecordingState.Recording ->
-                if (state.isPaused) "Rekaman dijeda" else "Merekam layar"
+            RecordingState.Previewing -> if (liveOn) "Live streaming" else "Pratinjau aktif, siap merekam"
+            is RecordingState.Recording -> when {
+                liveOn && state.isPaused -> "Rekaman dijeda • Live"
+                liveOn -> "Merekam + Live"
+                state.isPaused -> "Rekaman dijeda"
+                else -> "Merekam layar"
+            }
 
             is RecordingState.Error -> state.message
             RecordingState.Idle -> "Tidak ada rekaman"

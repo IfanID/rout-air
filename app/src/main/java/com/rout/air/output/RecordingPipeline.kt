@@ -9,8 +9,10 @@ import android.hardware.display.DisplayManager
 import android.media.projection.MediaProjection
 import android.os.PowerManager
 import android.media.projection.MediaProjectionManager
+import android.net.TrafficStats
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.os.Debug
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
@@ -28,6 +30,9 @@ import com.rout.air.core.BlendMode
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.Crop
+import com.rout.air.core.LiveConfig
+import com.rout.air.core.LiveStats
+import com.rout.air.core.MixSnapshot
 import com.rout.air.core.RecordingState
 import com.rout.air.core.RecordingStats
 import com.rout.air.core.RecordingClock
@@ -41,11 +46,15 @@ import com.rout.air.data.SceneManager
 import com.rout.air.encode.AudioCaptureEngine
 import com.rout.air.encode.Mp4Writer
 import com.rout.air.encode.OutputTarget
+import com.rout.air.encode.TeeSink
 import com.rout.air.encode.VideoEncoder
 import com.rout.air.engine.EglCore
 import com.rout.air.engine.GlCompositor
 import com.rout.air.engine.GlUtil
 import com.rout.air.engine.SourceBitmap
+import com.rout.air.live.RtmpSink
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -78,6 +87,7 @@ class RecordingPipeline(
     private val autoRecord: Boolean = false,
     private val onSessionEnd: () -> Unit = {},
     private val onStats: (RecordingStats) -> Unit = {},
+    private val onLiveStats: (LiveStats) -> Unit = {},
     private val onState: (RecordingState) -> Unit,
 ) {
     private val glThread = HandlerThread("rout-gl").apply { start() }
@@ -85,7 +95,29 @@ class RecordingPipeline(
     private val startTimeNs = System.nanoTime()
     private val frameIntervalNs = 1_000_000_000L / config.fps
     private val frameIntervalMs = (1_000L / config.fps).coerceAtLeast(1L)
-    private val previewIntervalNs = 1_000_000_000L / 60
+
+    /** Interval pacer aktif; bisa turun ke 30 fps saat perangkat panas. */
+    @Volatile
+    private var pacerIntervalNs = 1_000_000_000L / config.fps
+
+    @Volatile
+    private var thermalThrottled = false
+
+    /** Waktu frame layar terakhir benar-benar berubah. */
+    @Volatile
+    private var lastCaptureChangeNs = 0L
+
+    // Deteksi layar statis lewat sampling piksel (bukan kedatangan frame).
+    private val pixelSample = ByteBuffer.allocateDirect(9 * 64 * 4)
+        .order(ByteOrder.nativeOrder())
+    private var lastPixelSampleNs = 0L
+    private var lastPixelBytes: ByteArray? = null
+    private var lastVisualChangeNs = 0L
+    private var changeStreak = 0
+    private var pixelReadSupported = true
+    // Pratinjau 30 fps (15 fps saat layar statis) agar GPU lebih hemat.
+    @Volatile
+    private var previewIntervalNs = 1_000_000_000L / 30
     private val texMatrix = FloatArray(16)
 
     // --- Thread preview: semua field di bawah hanya disentuh thread preview ---
@@ -115,6 +147,8 @@ class RecordingPipeline(
     private var videoEncoder: VideoEncoder? = null
     private var audioEncoder: AudioCaptureEngine? = null
     private var muxer: Mp4Writer? = null
+    /** Semua tujuan keluaran aktif: MP4 dan/atau RTMP. */
+    private val sinks = TeeSink()
     private var target: OutputTarget? = null
     private var encoderEglSurface: EGLSurface? = null
     private var outputUri: String? = null
@@ -153,10 +187,13 @@ class RecordingPipeline(
 
     @Volatile
     private var hasEncodedFrame = false
+
+    @Volatile
+    private var hasCapturedFrame = false
     private var capturedFrames = 0
     private var submittedFrames = 0
     private var pacedFrames = 0
-    private var pacerCapturedFrames = 0
+    private var nextPacerNs = 0L
     private var swapFailures = 0
     private var consecutiveSwapFailures = 0
     private var watchdogTicks = 0
@@ -164,9 +201,24 @@ class RecordingPipeline(
     private var stopReason: String? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // Baseline telemetri untuk log diagnostik.
+    private var telemetryCpuNs = 0L
+    private var telemetryTxBytes = 0L
+    private var telemetryRxBytes = 0L
+
     @Volatile
     private var recordingActive = false
     private var recordingStopping = false
+
+    /** Encoder video/audio hidup selama salah satu output aktif. */
+    private var encodersRunning = false
+
+    @Volatile
+    private var liveActive = false
+    private var liveSink: RtmpSink? = null
+
+    /** PTS saat rekaman mulai; dipakai agar MP4 mulai dari 0 walau live sudah jalan. */
+    private var recordingBaseElapsedNs = 0L
 
     /** Titik nol PTS rekaman, terpisah dari waktu sesi pratinjau. */
     private val recordingClock = RecordingClock()
@@ -188,6 +240,12 @@ class RecordingPipeline(
     @Volatile
     private var previewVisible = true
 
+    @Volatile
+    private var previewSurfaceAttached = false
+
+    @Volatile
+    private var programSurfaceAttached = false
+
     /** Satu frame preview menunggu; mencegah antrean menumpuk saat preview lambat. */
     private val previewInFlight = AtomicBoolean(false)
 
@@ -196,6 +254,8 @@ class RecordingPipeline(
 
     @Volatile
     private var previewSwaps = 0
+
+    private var previewLogged = false
 
     @Volatile
     private var running = false
@@ -229,8 +289,9 @@ class RecordingPipeline(
                     "t=${seconds}s frames=$capturedFrames submitted=$submittedFrames " +
                         "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
                         "preview=$previewSwaps src=${sourceWidth}x$sourceHeight " +
-                        "audio=$audioActive",
+                        "audio=$audioActive ${telemetryText()}",
                 )
+                DiagLog.flush(context)
             }
             // Layar mati/terkunci membuat frame tangkapan berhenti. Jangan
             // hentikan rekaman: frame terakhir diulang oleh pengisi frame dan
@@ -245,7 +306,7 @@ class RecordingPipeline(
             // dijeda encoder memang sengaja tidak menerima frame.
             val writer = muxer
             when (WatchdogPolicy.decide(
-                recordingActive = recordingActive,
+                recordingActive = recordingActive || liveActive,
                 nowNs = now,
                 lastEncodedNs = lastEncoded,
                 consecutiveSwapFailures = consecutiveSwapFailures,
@@ -256,27 +317,28 @@ class RecordingPipeline(
                 WatchdogAction.EncoderStalled -> {
                     diag("watchdog: encoder macet")
                     stopReason = "encoder video macet"
-                    stopRecording()
+                    if (recordingActive) stopRecording() else stopLive()
                     return
                 }
 
                 WatchdogAction.EncoderSurfaceFailed -> {
                     diag("watchdog: surface encoder gagal")
                     stopReason = "surface encoder gagal"
-                    stopRecording()
+                    if (recordingActive) stopRecording() else stopLive()
                     return
                 }
 
                 WatchdogAction.StorageFailed -> {
                     diag("watchdog: penulisan file gagal terus")
                     stopReason = "penyimpanan penuh atau gagal menulis"
-                    stopRecording()
+                    if (recordingActive) stopRecording() else stopLive()
                     return
                 }
 
                 WatchdogAction.Continue -> Unit
             }
 
+            if (watchdogTicks % 5 == 0) updateThermalPolicy()
             if (recordingActive) publishStats(now)
 
             // Preview boleh tertahan tanpa mengganggu rekaman; dicatat saja.
@@ -301,29 +363,49 @@ class RecordingPipeline(
         override fun run() {
             if (!running || teardownStarted) return
 
-            if (!recordingActive || recordingClock.isPaused) {
-                // Saat hanya pratinjau atau dijeda, tidak ada yang perlu di-encode.
-                glHandler.postDelayed(this, frameIntervalMs)
-                return
-            }
-
-            val core = egl
-            val encoderSurface = encoderEglSurface
-            if (core != null && encoderSurface != null) {
-                if (capturedFrames == pacerCapturedFrames) {
-                    // Tidak ada frame baru sejak tick sebelumnya.
-                    if (hasEncodedFrame) {
-                        val pts = maxOf(currentPresentationNs(), lastEncodedNs + 1_000L)
-                        lastEncodedNs = pts
-                        renderToEncoder(core, encoderSurface, pts)
-                        submittedFrames++
-                        pacedFrames++
+            applyPacerPolicy(System.nanoTime())
+            val outputActive = (recordingActive || liveActive) && !recordingClock.isPaused
+            if (outputActive && hasCapturedFrame) {
+                val core = egl
+                val encoderSurface = encoderEglSurface
+                if (core != null && encoderSurface != null) {
+                    val elapsed = currentPresentationNs()
+                    val target = if (lastEncodedNs == Long.MIN_VALUE) {
+                        elapsed
+                    } else {
+                        lastEncodedNs + pacerIntervalNs
                     }
-                } else {
-                    pacerCapturedFrames = capturedFrames
+                    // Jangan biarkan jadwal tertinggal jauh bila render lambat.
+                    val pts = if (target < elapsed - pacerIntervalNs) elapsed else target
+                    hasEncodedFrame = true
+                    lastEncodedNs = pts
+                    renderToEncoder(core, encoderSurface, pts)
+                    submittedFrames++
+                    pacedFrames++
                 }
             }
-            glHandler.postDelayed(this, frameIntervalMs)
+
+            // Pratinjau digerakkan di sini, bukan dari onFrameAvailable, supaya
+            // tetap hidup saat layar diam atau surface baru dipasang.
+            if ((previewVisible || previewSurfaceAttached || programSurfaceAttached) &&
+                hasCapturedFrame
+            ) {
+                val previewNow = System.nanoTime()
+                if (previewNow - lastPreviewNs >= previewIntervalNs) {
+                    lastPreviewNs = previewNow
+                    requestPreview(texMatrix.copyOf(), sourceWidth, sourceHeight, renderLayers)
+                }
+            }
+
+            // Jadwal absolut dengan akumulasi pecahan agar rata-rata tepat 60 fps.
+            if (nextPacerNs == 0L) nextPacerNs = System.nanoTime()
+            nextPacerNs += pacerIntervalNs
+            var delayNs = nextPacerNs - System.nanoTime()
+            if (delayNs < 0L) {
+                nextPacerNs = System.nanoTime()
+                delayNs = 0L
+            }
+            glHandler.postDelayed(this, (delayNs / 1_000_000L).coerceAtLeast(0L))
         }
     }
 
@@ -372,27 +454,65 @@ class RecordingPipeline(
         }
     }
 
-    /** Hentikan penulisan file; pratinjau tetap berjalan. */
+    /** Hentikan penulisan file; live (bila aktif) dan pratinjau tetap berjalan. */
     fun stopRecording() {
         if (!recordingActive || recordingStopping) return
         recordingStopping = true
-        // Audio dipotong tepat di frame video terakhir supaya durasinya tidak
-        // lebih panjang dari gambar.
+        releaseWakeLock()
+        if (liveActive) {
+            // Encoder dipakai live; cukup lepas MP4 tanpa menghentikan kodek.
+            glHandler.post { detachRecording() }
+            return
+        }
+        stopEncodersAsync()
+    }
+
+    /**
+     * Melepas file MP4 saat live masih berjalan. Encoder tetap hidup sehingga
+     * streaming tidak terputus.
+     */
+    private fun detachRecording() {
+        if (!recordingActive) {
+            recordingStopping = false
+            return
+        }
+        recordingActive = false
+        val writer = muxer
+        val finalBytes = writer?.bytesWritten ?: 0L
+        writer?.let { sinks.remove(it, finish = false) }
+        val saved = runCatching { writer?.finish() ?: false }.getOrDefault(false)
+        muxer = null
+        runCatching { target?.finish(context, saved) }
+        target = null
+
+        diag("rekam: lepas (live lanjut) saved=$saved")
+        publishStats(System.nanoTime(), finalBytes)
+        recordingStopping = false
+        recordingBaseElapsedNs = 0L
+        recordingStartedAtMs = 0L
+        if (saved) {
+            onState(RecordingState.Previewing)
+        } else {
+            onState(RecordingState.Error("Rekaman gagal disimpan"))
+        }
+    }
+
+    /** Menghentikan semua encoder setelah audio selesai (di luar thread GL). */
+    private fun stopEncodersAsync() {
         val stopPtsUs = if (hasEncodedFrame) lastEncodedNs / 1_000L else Long.MAX_VALUE
-        // Audio dihentikan di luar thread GL supaya tidak menahan swapBuffers
-        // terakhir; video baru ditutup setelah semua frame masuk encoder.
         Thread({
             runCatching { audioEncoder?.endRecording(stopPtsUs) }
                 .onFailure { Log.w(TAG, "Trek audio gagal dihentikan: ${it.message}") }
             glHandler.post { endRecording() }
         }, "rout-stop").start()
-        releaseWakeLock()
     }
 
     /** Jeda rekaman: frame dan audio berhenti masuk timeline. */
     fun pauseRecording() {
         glHandler.post {
             if (!recordingActive || recordingStopping) return@post
+            // Satu encoder dipakai live; menjeda akan membekukan siaran.
+            if (liveActive) return@post
             if (recordingClock.isPaused) return@post
             recordingClock.pause(System.nanoTime())
             audioEncoder?.pauseRecording()
@@ -408,9 +528,8 @@ class RecordingPipeline(
             if (!recordingClock.isPaused) return@post
             recordingClock.resume(System.nanoTime())
             audioEncoder?.resumeRecording()
-            // Pacing dimulai lagi dari frame baru; frame terakhir diulang bila
-            // layar belum mengirim frame setelah resume.
-            pacerCapturedFrames = capturedFrames
+            // Mulai jadwal pacer dari sekarang setelah jeda.
+            nextPacerNs = 0L
             diag("rekam: dilanjutkan")
             publishRecordingState()
         }
@@ -440,6 +559,7 @@ class RecordingPipeline(
             releaseSurface(core, previewEglSurface)
             previewEglSurface = null
             previewTarget = surface
+            previewSurfaceAttached = surface != null
             if (surface != null && width > 0 && height > 0) {
                 previewWidth = width
                 previewHeight = height
@@ -452,6 +572,7 @@ class RecordingPipeline(
                 },
             )
         }
+        if (surface != null) requestPreviewNow()
     }
 
     /** Surface panel Program (Studio Mode); dirender di thread preview yang sama. */
@@ -461,6 +582,7 @@ class RecordingPipeline(
             releaseSurface(core, programEglSurface)
             programEglSurface = null
             programTarget = surface
+            programSurfaceAttached = surface != null
             if (surface != null && width > 0 && height > 0) {
                 programWidth = width
                 programHeight = height
@@ -472,6 +594,16 @@ class RecordingPipeline(
                     "program: surface ${width}x$height"
                 },
             )
+        }
+        if (surface != null) requestPreviewNow()
+    }
+
+    /** Segera gambar satu frame saat surface pratinjau baru terpasang. */
+    private fun requestPreviewNow() {
+        glHandler.post {
+            if (!hasCapturedFrame || teardownStarted) return@post
+            lastPreviewNs = 0L
+            requestPreview(texMatrix.copyOf(), sourceWidth, sourceHeight, renderLayers)
         }
     }
 
@@ -596,9 +728,9 @@ class RecordingPipeline(
         }
     }
 
-    /** Menyiapkan encoder dan file output memakai sesi yang sudah berjalan. */
+    /** Menyiapkan file MP4 memakai sesi dan encoder yang (mungkin) sudah jalan. */
     private fun beginRecording() {
-        val core = egl ?: error("Sesi tangkap layar belum siap")
+        check(egl != null) { "Sesi tangkap layar belum siap" }
         check(projection != null) { "Izin tangkap layar tidak valid" }
 
         diag("rekam: mulai")
@@ -610,46 +742,136 @@ class RecordingPipeline(
             error("Penyimpanan hampir penuh ($freeMb MB tersisa, minimal 200 MB)")
         }
 
-        val output = OutputTarget.create(context, config.saveLocation)
+        val output = OutputTarget.create(
+            context = context,
+            location = config.saveLocation,
+            nameTemplate = config.fileNameTemplate,
+            noSpaceFileName = config.noSpaceFileName,
+        )
         target = output
         outputUri = output.uri.toString()
 
         val writer = Mp4Writer(output)
         muxer = writer
 
-        recordingStartedAtMs = System.currentTimeMillis()
-        recordingClock.start(System.nanoTime())
-
         val mixSnapshot = AudioMixer.snapshot()
         val wantsAudio = audioEncoder != null && mixSnapshot.masterEnabled &&
             mixSnapshot.channels.values.any { it.enabled }
         val trackCount = Integer.bitCount(mixSnapshot.outputTracks and 0x3F).coerceAtLeast(1)
+        // Harus dijanjikan sebelum format pertama datang.
         writer.expectTracks(videoTracks = 1, audioTrackCount = if (wantsAudio) trackCount else 0)
+
+        if (!recordingClock.isStarted) {
+            recordingClock.start(System.nanoTime())
+            resetTelemetryBaseline()
+        }
+        recordingBaseElapsedNs = recordingClock.elapsedNs(System.nanoTime())
+        recordingStartedAtMs = System.currentTimeMillis()
+
+        if (!encodersRunning) startEncoders(wantsAudio, mixSnapshot)
+        sinks.add(writer)
+
+        recordingStopping = false
+        recordingActive = true
+
+        diag("rekam: audio=$audioActive tujuan=$outputUri")
+        onStats(RecordingStats())
+        publishRecordingState()
+    }
+
+    /** Memulai live tanpa rekaman, atau menambah live saat rekaman berjalan. */
+    fun startLive(liveConfig: LiveConfig) {
+        glHandler.post {
+            if (teardownStarted || liveActive) return@post
+            if (!running) {
+                onLiveStats(
+                    LiveStats(
+                        status = com.rout.air.core.LiveStatus.Error,
+                        lastError = "Sesi tangkap layar belum aktif",
+                    ),
+                )
+                return@post
+            }
+            try {
+                val sink = RtmpSink(liveConfig, onLiveStats)
+                liveSink = sink
+                if (!recordingClock.isStarted) {
+                    recordingClock.start(System.nanoTime())
+                    resetTelemetryBaseline()
+                }
+                if (!encodersRunning) {
+                    val mix = AudioMixer.snapshot()
+                    val wantsAudio = audioEncoder != null && mix.masterEnabled &&
+                        mix.channels.values.any { it.enabled }
+                    startEncoders(wantsAudio, mix)
+                }
+                sinks.add(sink)
+                sink.start()
+                liveActive = true
+                diag("live: mulai ${liveConfig.serverUrl}")
+            } catch (error: Throwable) {
+                diag("live gagal: ${error.message}")
+                liveSink?.let { sinks.remove(it, finish = true) }
+                liveSink = null
+                onLiveStats(
+                    LiveStats(
+                        status = com.rout.air.core.LiveStatus.Error,
+                        lastError = error.message ?: "Live gagal dimulai",
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Menghentikan live; rekaman (bila ada) tetap berjalan. */
+    fun stopLive() {
+        glHandler.post {
+            if (!liveActive) {
+                onLiveStats(LiveStats())
+                return@post
+            }
+            liveActive = false
+            val sink = liveSink
+            liveSink = null
+            sink?.let { sinks.remove(it, finish = true) }
+            diag("live: berhenti")
+            onLiveStats(LiveStats())
+            if (!recordingActive) stopEncodersAsync()
+        }
+    }
+
+    /** Membuat encoder video+audio pertama kali untuk output apa pun. */
+    private fun startEncoders(wantsAudio: Boolean, mixSnapshot: MixSnapshot) {
+        val core = egl ?: error("Sesi tangkap layar belum siap")
 
         var audioStarted = false
         if (wantsAudio) {
             try {
-                audioEncoder?.beginRecording(writer, recordingClock.startTimeNs, mixSnapshot)
+                audioEncoder?.beginRecording(sinks, recordingClock.startTimeNs, mixSnapshot)
                 audioStarted = audioEncoder != null
             } catch (error: Throwable) {
                 Log.w(TAG, "Trek audio gagal dimulai: ${error.message}")
-                writer.expectTracks(videoTracks = 1, audioTrackCount = 0)
             }
         }
         audioActive = audioStarted
 
         val encoder = VideoEncoder(
-            width = config.width,
-            height = config.height,
+            width = config.encoderWidth,
+            height = config.encoderHeight,
             fps = config.fps,
             bitrate = config.videoBitrate,
-            muxer = writer,
+            keyframeIntervalSec = config.keyframeIntervalSec,
+            bitrateMode = config.bitrateMode,
+            profile = config.videoProfile,
+            colorSpace = config.colorSpace,
+            colorRange = config.colorRange,
+            sink = sinks,
             onEncoderError = { error ->
                 diag("encoder error: ${error.message}")
                 glHandler.post {
-                    if (recordingActive) {
+                    if (recordingActive || liveActive) {
                         stopReason = "encoder video berhenti: ${error.message}"
-                        stopRecording()
+                        if (recordingActive) stopRecording() else stopLive()
                     }
                 }
             },
@@ -665,31 +887,32 @@ class RecordingPipeline(
         // Konteks harus aktif pada surface encoder sebelum frame pertama.
         core.makeCurrent(encoderSurface)
 
-        // Statistik perekaman dimulai dari nol untuk setiap file.
+        lastPixelSampleNs = 0L
+        lastPixelBytes = null
+        lastVisualChangeNs = 0L
+        changeStreak = 0
+        pixelReadSupported = true
         submittedFrames = 0
         pacedFrames = 0
         encodedOutputs = 0
         swapFailures = 0
         consecutiveSwapFailures = 0
-        pacerCapturedFrames = capturedFrames
+        nextPacerNs = 0L
         hasEncodedFrame = false
         lastEncodedNs = Long.MIN_VALUE
         lastEncodedWallNs = System.nanoTime()
-        recordingStopping = false
-        recordingActive = true
-
-        diag("rekam: audio=$audioActive tujuan=$outputUri")
-        onStats(RecordingStats())
-        publishRecordingState()
+        encodersRunning = true
     }
 
-    /** Dipanggil setelah audio selesai; menutup file tanpa mematikan sesi. */
+    /** Dipanggil setelah audio selesai; menutup semua output tanpa mematikan sesi. */
     private fun endRecording() {
-        if (!recordingActive) {
+        if (!recordingActive && !liveActive && !encodersRunning) {
             recordingStopping = false
             return
         }
+        val hadRecording = recordingActive
         recordingActive = false
+        liveActive = false
         glHandler.removeCallbacks(pacer)
 
         runCatching { videoEncoder?.finish() }
@@ -701,30 +924,38 @@ class RecordingPipeline(
         encoderEglSurface = null
 
         val finalBytes = muxer?.bytesWritten ?: 0L
+        muxer?.let { sinks.remove(it, finish = false) }
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
         runCatching { target?.finish(context, saved) }
         target = null
 
+        liveSink?.let { sinks.remove(it, finish = true) }
+        liveSink = null
+        sinks.finishAll()
+
         diag(
             "stop: reason=${stopReason ?: "-"} frames=$capturedFrames submitted=$submittedFrames " +
                 "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
-                "preview=$previewSwaps saved=$saved",
+                "preview=$previewSwaps saved=$saved ${telemetryText()}",
         )
         DiagLog.writeToDownloads(context)
 
         publishStats(System.nanoTime(), finalBytes)
+        onLiveStats(LiveStats())
 
         val reason = stopReason
         stopReason = null
         recordingStopping = false
+        encodersRunning = false
         hasEncodedFrame = false
         lastEncodedNs = Long.MIN_VALUE
         lastEncodedWallNs = System.nanoTime()
         recordingClock.reset()
         recordingStartedAtMs = 0L
+        recordingBaseElapsedNs = 0L
 
-        if (saved) {
+        if (!hadRecording || saved) {
             onState(RecordingState.Previewing)
             if (reason != null) Log.i(TAG, "Rekaman berhenti lebih awal: $reason")
         } else {
@@ -739,7 +970,9 @@ class RecordingPipeline(
 
     /** Menghitung statistik live dari pipeline; dipanggil tiap detik. */
     private fun publishStats(nowNs: Long, bytesOverride: Long? = null) {
-        val durationMs = recordingClock.elapsedMs(nowNs)
+        val durationNs = (recordingClock.elapsedNs(nowNs) - recordingBaseElapsedNs)
+            .coerceAtLeast(0L)
+        val durationMs = durationNs / 1_000_000L
         val bytes = bytesOverride ?: muxer?.bytesWritten ?: 0L
         val seconds = durationMs / 1000.0
         val kbps = if (seconds > 0.5) {
@@ -767,7 +1000,8 @@ class RecordingPipeline(
                 outputUri = outputUri,
                 audioActive = audioActive,
                 pausedAtMs = if (recordingClock.isPaused) {
-                    recordingClock.elapsedMs(System.nanoTime())
+                    (recordingClock.elapsedMs(System.nanoTime()) -
+                        recordingBaseElapsedNs / 1_000_000L).coerceAtLeast(0L)
                 } else {
                     null
                 },
@@ -779,6 +1013,7 @@ class RecordingPipeline(
     /** Gagal saat menyiapkan encoder: bersihkan file dan kembali ke pratinjau. */
     private fun abortRecording(message: String) {
         recordingActive = false
+        liveActive = false
         glHandler.removeCallbacks(pacer)
         runCatching { audioEncoder?.endRecording() }
         runCatching { videoEncoder?.finish() }
@@ -786,14 +1021,20 @@ class RecordingPipeline(
         val core = egl
         encoderEglSurface?.let { runCatching { core?.releaseSurface(it) } }
         encoderEglSurface = null
+        muxer?.let { sinks.remove(it, finish = false) }
         runCatching { muxer?.finish() }
         muxer = null
         runCatching { target?.finish(context, false) }
         target = null
+        sinks.finishAll()
+        liveSink = null
+        encodersRunning = false
         recordingStopping = false
         recordingClock.reset()
         recordingStartedAtMs = 0L
+        recordingBaseElapsedNs = 0L
         onStats(RecordingStats())
+        onLiveStats(LiveStats())
         onState(RecordingState.Error(message))
     }
 
@@ -842,11 +1083,13 @@ class RecordingPipeline(
     private fun rebuildLayers() {
         val layers = buildLayers(SceneManager.programCurrent(), "program")
         renderLayers = layers
+        pruneTextures()
     }
 
     /** Menyusun layer pratinjau dari hasil edit yang belum di-transisikan. */
     private fun rebuildPreviewLayers() {
         previewLayers = buildLayers(SceneManager.current(), "pratinjau")
+        pruneTextures()
     }
 
     private fun buildLayers(collection: SceneCollection, label: String): List<RenderLayer> {
@@ -878,6 +1121,7 @@ class RecordingPipeline(
                     colorArgb = 0,
                     blend = item.blend,
                     opacity = item.opacity,
+                    sourceId = null,
                 )
 
                 SourceType.Image, SourceType.Text -> {
@@ -892,6 +1136,7 @@ class RecordingPipeline(
                         colorArgb = 0,
                         blend = item.blend,
                         opacity = item.opacity,
+                        sourceId = source.id,
                     )
                 }
 
@@ -915,6 +1160,30 @@ class RecordingPipeline(
         return layers
     }
 
+    /** Melepas tekstur yang tidak dipakai program maupun pratinjau. */
+    private fun pruneTextures() {
+        val keep = (renderLayers + previewLayers)
+            .mapNotNull { it.sourceId }
+            .toSet()
+        val unused = textureCache.keys.filter { it !in keep }
+        unused.forEach { sourceId ->
+            textureCache.remove(sourceId)?.let { retiredTextures += it.textureId }
+        }
+        flushRetiredTextures()
+    }
+
+    /** Menghapus tekstur lama setelah frame pratinjau yang memakainya selesai. */
+    private fun flushRetiredTextures() {
+        if (retiredTextures.isEmpty() || teardownStarted) return
+        if (previewInFlight.get()) {
+            glHandler.postDelayed({ flushRetiredTextures() }, 50)
+            return
+        }
+        val ids = retiredTextures.toIntArray()
+        retiredTextures.clear()
+        runCatching { GLES20.glDeleteTextures(ids.size, ids, 0) }
+    }
+
     /** Memuat tekstur sumber gambar/teks; dipakai ulang selama isinya sama. */
     private fun ensureTexture(source: SceneSource): CachedTexture? {
         val signature = sourceSignature(source)
@@ -933,6 +1202,10 @@ class RecordingPipeline(
                 colorArgb = source.settings.textColor,
                 maxWidth = source.settings.width.takeIf { it > 0 } ?: config.width,
                 density = context.resources.displayMetrics.density,
+                highlightIndices = source.settings.textHighlightIndices,
+                highlightColor = source.settings.textHighlightColor,
+                center = source.settings.textCenter,
+                autoFit = source.settings.textAutoFit,
             )
 
             else -> null
@@ -1104,7 +1377,7 @@ class RecordingPipeline(
         val core = egl ?: return
         val frameTexture = surfaceTexture ?: return
         val encoderSurface = encoderEglSurface
-        val recording = recordingActive
+        val recording = recordingActive || liveActive
 
         // updateTexImage butuh konteks EGL aktif pada thread ini. Saat hanya
         // pratinjau (belum ada encoder), konteks diaktifkan tanpa surface.
@@ -1119,6 +1392,10 @@ class RecordingPipeline(
             return
         }
 
+        val nowNs = System.nanoTime()
+        // Wajib dipanggil untuk SETIAP callback: ini melepas buffer
+        // SurfaceTexture. Tanpa ini producer berhenti setelah 1-2 frame
+        // sehingga rekaman/pratinjau membeku (frames=1).
         try {
             frameTexture.updateTexImage()
             frameTexture.getTransformMatrix(texMatrix)
@@ -1126,43 +1403,19 @@ class RecordingPipeline(
             Log.w(TAG, "Frame layar tidak bisa dibaca: ${error.message}")
             return
         }
-        lastFrameWallNs = System.nanoTime()
-        capturedFrames++
-
-        // Jam pratinjau selalu dihitung dari awal sesi, sedangkan PTS rekaman
-        // dihitung dari saat tombol rekam ditekan.
-        val sessionNs = (System.nanoTime() - startTimeNs).coerceAtLeast(0L)
-
-        if (recording && !recordingClock.isPaused && encoderSurface != null) {
-            val presentationNs = if (recordingClock.isStarted) {
-                recordingClock.elapsedNs(System.nanoTime())
-            } else {
-                sessionNs
-            }
-            if (!hasEncodedFrame ||
-                presentationNs - lastEncodedNs >= frameIntervalNs - FRAME_SLACK_NS
-            ) {
-                // Jangan bandingkan dengan Long.MIN_VALUE: selisihnya overflow.
-                // PTS dibuat selalu naik walau timestamp sumber jitter/duplikat.
-                val pts = if (hasEncodedFrame) {
-                    maxOf(presentationNs, lastEncodedNs + 1_000L)
-                } else {
-                    presentationNs
-                }
-                hasEncodedFrame = true
-                lastEncodedNs = pts
-                renderToEncoder(core, encoderSurface, pts)
-                submittedFrames++
-                if (submittedFrames == 1 || submittedFrames % 300 == 0) {
-                    Log.i(TAG, "Submit $submittedFrames frame (${pts / 1_000_000} ms)")
-                }
-            }
+        lastFrameWallNs = nowNs
+        lastCaptureChangeNs = nowNs
+        if (capturedFrames == 0) {
+            diag(
+                "frame pertama: src=${sourceWidth}x$sourceHeight " +
+                    "layer=${renderLayers.size} preview=$previewVisible",
+            )
         }
+        capturedFrames++
+        hasCapturedFrame = true
 
-        if (!previewVisible) return
-        if (sessionNs - lastPreviewNs < previewIntervalNs) return
-        lastPreviewNs = sessionNs
-        requestPreview(texMatrix.copyOf(), sourceWidth, sourceHeight, renderLayers)
+        // Encoder dan pratinjau digerakkan pacer; di sini hanya tekstur
+        // diperbarui agar tidak bergantung pada frekuensi callback layar.
     }
 
     /**
@@ -1226,6 +1479,16 @@ class RecordingPipeline(
         // Kompositor preview dibuat setelah ada surface yang current; shader
         // tidak bisa dikompilasi tanpa konteks EGL aktif.
         val painter = ensurePainter(core, previewEglSurface ?: programEglSurface) ?: return
+
+        if (!previewLogged) {
+            previewLogged = true
+            diag(
+                "render pratinjau pertama: preview=${previewEglSurface != null} " +
+                    "program=${programEglSurface != null} " +
+                    "pw=$previewWidth ph=$previewHeight " +
+                    "layerProgram=${frame.layers.size} layerPreview=${frame.previewLayers.size}",
+            )
+        }
 
         drawPane(core, painter, previewEglSurface, previewWidth, previewHeight, frame, frame.previewLayers)
         drawPane(core, painter, programEglSurface, programWidth, programHeight, frame, frame.layers)
@@ -1322,10 +1585,11 @@ class RecordingPipeline(
         }
 
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
-        GLES20.glViewport(0, 0, config.width, config.height)
+        GLES20.glViewport(0, 0, config.encoderWidth, config.encoderHeight)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         drawLayers(compositor ?: return, texMatrix, renderLayers, config.width, config.height)
+        samplePixelChange(System.nanoTime())
 
         core.setPresentationTime(surface, presentationNs)
         if (!core.swapBuffers(surface)) {
@@ -1340,6 +1604,7 @@ class RecordingPipeline(
     private fun teardownSession() {
         running = false
         recordingActive = false
+        liveActive = false
         glHandler.removeCallbacks(watchdog)
         glHandler.removeCallbacks(pacer)
 
@@ -1392,11 +1657,16 @@ class RecordingPipeline(
         runCatching { core?.release() }
         egl = null
 
+        muxer?.let { sinks.remove(it, finish = false) }
+        sinks.finishAll()
+        liveSink = null
+        encodersRunning = false
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
         runCatching { audioEncoder?.shutdown() }
         audioEncoder = null
         AudioMixer.clearRuntime()
+        onLiveStats(LiveStats())
 
         releaseProjection()
 
@@ -1406,7 +1676,7 @@ class RecordingPipeline(
         diag(
             "stop: reason=${stopReason ?: "-"} frames=$capturedFrames submitted=$submittedFrames " +
                 "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
-                "preview=$previewSwaps saved=$saved",
+                "preview=$previewSwaps saved=$saved ${telemetryText()}",
         )
         DiagLog.writeToDownloads(context)
         glThread.quitSafely()
@@ -1475,6 +1745,7 @@ class RecordingPipeline(
                 egl = null
                 runCatching { muxer?.finish() }
                 muxer = null
+                sinks.finishAll()
                 releaseProjection()
                 runCatching { target?.finish(context, false) }
                 target = null
@@ -1496,6 +1767,162 @@ class RecordingPipeline(
     private fun hasAudioPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Membaca 9 kotak kecil dari frame encoder sekali per detik dan
+     * membandingkan hash-nya. Bila konten tidak berubah >2 detik, pacer
+     * boleh turun ke 30 fps.
+     */
+    private fun samplePixelChange(nowNs: Long) {
+        if (!config.staticThrottleEnabled || !pixelReadSupported) return
+        // Saat dianggap statis, cek lebih sering agar respons kembali 60 fps
+        // tidak menunggu sampai 1 detik.
+        val intervalNs = if (lastVisualChangeNs > 0L &&
+            nowNs - lastVisualChangeNs > 2_000_000_000L
+        ) {
+            250_000_000L
+        } else {
+            1_000_000_000L
+        }
+        if (lastPixelSampleNs > 0L && nowNs - lastPixelSampleNs < intervalNs) return
+        lastPixelSampleNs = nowNs
+
+        val width = config.encoderWidth
+        val height = config.encoderHeight
+        val size = 8
+        // Area tengah saja: hindari jam/status bar yang berubah sendiri.
+        val points = intArrayOf(
+            width / 4, height / 4,
+            width / 2, height / 4,
+            width * 3 / 4, height / 4,
+            width / 4, height / 2,
+            width / 2, height / 2,
+            width * 3 / 4, height / 2,
+            width / 4, height * 3 / 4,
+            width / 2, height * 3 / 4,
+            width * 3 / 4, height * 3 / 4,
+        )
+        var index = 0
+        var sampleIndex = 0
+        while (index < points.size) {
+            val x = (points[index] - size / 2).coerceIn(0, (width - size).coerceAtLeast(0))
+            val y = (points[index + 1] - size / 2).coerceIn(0, (height - size).coerceAtLeast(0))
+            pixelSample.position(sampleIndex * size * size * 4)
+            GLES20.glReadPixels(x, y, size, size, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixelSample)
+            index += 2
+            sampleIndex++
+        }
+        if (GLES20.glGetError() != GLES20.GL_NO_ERROR) {
+            // Sebagian GPU tidak mengizinkan readback surface; matikan deteksi.
+            pixelReadSupported = false
+            diag("pixel sample: tidak didukung, pakai deteksi frame")
+            return
+        }
+        pixelSample.rewind()
+        val current = ByteArray(pixelSample.remaining())
+        pixelSample.get(current)
+        val previous = lastPixelBytes
+        lastPixelBytes = current
+        if (previous == null || previous.size != current.size) {
+            lastVisualChangeNs = nowNs
+            return
+        }
+        var changed = 0
+        for (i in current.indices) {
+            if (kotlin.math.abs(current[i].toInt() - previous[i].toInt()) > 12) changed++
+        }
+        // Butuh 2 sampel berturut-turut (>5%) agar noise readback tidak
+        // membuat fps bolak-balik 30/60.
+        if (changed > current.size * 5 / 100) {
+            changeStreak++
+            if (changeStreak >= 2) {
+                lastVisualChangeNs = nowNs
+                changeStreak = 0
+            }
+        } else {
+            changeStreak = 0
+        }
+    }
+
+    /**
+     * Pilih interval pacer: 60 fps normal, 30 fps saat perangkat panas atau
+     * layar tidak berubah lebih dari 2 detik. Hemat CPU/GPU tanpa mengubah
+     * durasi video.
+     */
+    private fun applyPacerPolicy(nowNs: Long) {
+        val staticScreen = if (pixelReadSupported && lastVisualChangeNs > 0L) {
+            nowNs - lastVisualChangeNs > 3_000_000_000L
+        } else {
+            hasCapturedFrame &&
+                lastCaptureChangeNs > 0L &&
+                nowNs - lastCaptureChangeNs > 2_000_000_000L
+        }
+        val thermalActive = config.thermalThrottleEnabled && thermalThrottled
+        val staticActive = config.staticThrottleEnabled && staticScreen
+        val desired = if (thermalActive || staticActive) {
+            1_000_000_000L / 30
+        } else {
+            frameIntervalNs
+        }
+        val throttled = desired != frameIntervalNs
+        previewIntervalNs = if (throttled) {
+            1_000_000_000L / 15
+        } else {
+            1_000_000_000L / 30
+        }
+        if (desired == pacerIntervalNs) return
+        pacerIntervalNs = desired
+        nextPacerNs = nowNs
+        diag(
+            "pacer: fps=${if (desired == frameIntervalNs) config.fps else 30} " +
+                "alasan=${when {
+                    thermalActive -> "thermal"
+                    staticActive -> "layar statis"
+                    else -> "normal"
+                }}",
+        )
+    }
+
+    /** Turunkan pacer ke 30 fps saat perangkat panas, pulih saat dingin. */
+    private fun updateThermalPolicy() {
+        val power = context.getSystemService(PowerManager::class.java) ?: return
+        val status = runCatching { power.currentThermalStatus }.getOrNull() ?: return
+        val shouldThrottle = status >= PowerManager.THERMAL_STATUS_MODERATE
+        if (shouldThrottle == thermalThrottled) return
+        thermalThrottled = shouldThrottle
+        applyPacerPolicy(System.nanoTime())
+        val active = shouldThrottle && config.thermalThrottleEnabled
+        diag("thermal: status=$status throttle=$active fps=${if (active) 30 else config.fps}")
+    }
+
+    private fun resetTelemetryBaseline() {
+        telemetryCpuNs = Debug.threadCpuTimeNanos()
+        telemetryTxBytes = TrafficStats.getTotalTxBytes().coerceAtLeast(0L)
+        telemetryRxBytes = TrafficStats.getTotalRxBytes().coerceAtLeast(0L)
+    }
+
+    /** Memori, storage, jaringan, dan CPU thread untuk log diagnostik. */
+    private fun telemetryText(): String {
+        val runtime = Runtime.getRuntime()
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024L * 1024L)
+        val maxMb = runtime.maxMemory() / (1024L * 1024L)
+        val freeGb = runCatching {
+            StatFs(Environment.getExternalStorageDirectory().path).availableBytes /
+                (1024L * 1024L * 1024L)
+        }.getOrDefault(-1L)
+        val cpuNs = (Debug.threadCpuTimeNanos() - telemetryCpuNs).coerceAtLeast(0L)
+        val txMb = ((TrafficStats.getTotalTxBytes().coerceAtLeast(0L) - telemetryTxBytes)
+            .coerceAtLeast(0L)) / (1024L * 1024L)
+        val rxMb = ((TrafficStats.getTotalRxBytes().coerceAtLeast(0L) - telemetryRxBytes)
+            .coerceAtLeast(0L)) / (1024L * 1024L)
+        val cpuSec = "%.2f".format(cpuNs / 1_000_000_000.0)
+        val thermal = runCatching {
+            context.getSystemService(PowerManager::class.java)?.currentThermalStatus
+        }.getOrNull()
+        return "mem=${usedMb}MB/${maxMb}MB storage=${freeGb}GB " +
+            "netTx=+${txMb}MB netRx=+${rxMb}MB cpuThread=${cpuSec}s " +
+            "thermal=${thermal ?: "-"} cache=${textureCache.size} throttled=$thermalThrottled"
+    }
 
     private fun diag(message: String) {
         val elapsedMs = (System.nanoTime() - startTimeNs).coerceAtLeast(0L) / 1_000_000L
@@ -1522,6 +1949,7 @@ class RecordingPipeline(
         val colorArgb: Long,
         val blend: BlendMode = BlendMode.Normal,
         val opacity: Float = 1f,
+        val sourceId: String? = null,
     )
 
     private data class CachedTexture(
@@ -1533,7 +1961,6 @@ class RecordingPipeline(
 
     private companion object {
         const val TAG = "RoutAirPipeline"
-        const val FRAME_SLACK_NS = 2_000_000L
         const val STALL_TIMEOUT_NS = 5_000_000_000L
         const val PREVIEW_STALL_NS = 3_000_000_000L
         const val WATCHDOG_INTERVAL_MS = 1_000L

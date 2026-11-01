@@ -49,7 +49,7 @@ class AudioCaptureEngine(
 ) {
     private val codecLock = Any()
     private var encoders: List<TrackEncoder> = emptyList()
-    private var muxer: Mp4Writer? = null
+    private var sink: MediaSink? = null
     private var recordingTracks = 0
     private var totalSamples = 0L
     private var startOffsetUs = 0L
@@ -96,7 +96,7 @@ class AudioCaptureEngine(
      * Mulai trek audio. [mix] dipakai sekali agar jumlah track dan pilihan
      * track konsisten dengan yang sudah dijanjikan ke muxer.
      */
-    fun beginRecording(target: Mp4Writer, recordingStartNs: Long, mix: MixSnapshot) {
+    fun beginRecording(target: MediaSink, recordingStartNs: Long, mix: MixSnapshot) {
         synchronized(codecLock) {
             if (encoders.isNotEmpty()) return
 
@@ -109,7 +109,7 @@ class AudioCaptureEngine(
                 ids.forEach { key ->
                     created += TrackEncoder(
                         key = key,
-                        muxer = target,
+                        sink = target,
                         sampleRate = sampleRate,
                         channels = channels,
                         bitrate = bitrate,
@@ -120,7 +120,7 @@ class AudioCaptureEngine(
                 throw error
             }
 
-            this.muxer = target
+            this.sink = target
             encoders = created
             recordingTracks = tracks
             totalSamples = 0L
@@ -135,7 +135,7 @@ class AudioCaptureEngine(
             val pts = presentationTimeUs()
             encoders.forEach { it.finish(pts, limitPtsUs, timeoutMs) }
             encoders = emptyList()
-            muxer = null
+            sink = null
             recordingTracks = 0
             paused = false
         }
@@ -697,7 +697,7 @@ class AudioCaptureEngine(
 
     private class TrackEncoder(
         val key: Int,
-        private val muxer: Mp4Writer,
+        private val sink: MediaSink,
         sampleRate: Int,
         channels: Int,
         bitrate: Int,
@@ -740,13 +740,24 @@ class AudioCaptureEngine(
                     index >= 0 -> {
                         if (bufferInfo.size > 0 && trackIndex >= 0) {
                             val buffer = codec.getOutputBuffer(index)
-                            if (buffer != null) muxer.write(trackIndex, buffer, bufferInfo)
+                            if (buffer != null) {
+                                val data = ByteArray(bufferInfo.size)
+                                buffer.position(bufferInfo.offset)
+                                buffer.limit(bufferInfo.offset + bufferInfo.size)
+                                buffer.get(data)
+                                sink.write(
+                                    trackIndex,
+                                    data,
+                                    bufferInfo.presentationTimeUs,
+                                    bufferInfo.flags,
+                                )
+                            }
                         }
                         codec.releaseOutputBuffer(index, false)
                     }
 
                     index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        trackIndex = muxer.addAudioTrack(key, codec.outputFormat)
+                        trackIndex = sink.addAudioTrack(key, codec.outputFormat)
                     }
 
                     else -> return
@@ -776,7 +787,18 @@ class AudioCaptureEngine(
                         val withinLimit = bufferInfo.presentationTimeUs < limitPtsUs
                         if (bufferInfo.size > 0 && trackIndex >= 0 && withinLimit) {
                             val buffer = codec.getOutputBuffer(index)
-                            if (buffer != null) muxer.write(trackIndex, buffer, bufferInfo)
+                            if (buffer != null) {
+                                val data = ByteArray(bufferInfo.size)
+                                buffer.position(bufferInfo.offset)
+                                buffer.limit(bufferInfo.offset + bufferInfo.size)
+                                buffer.get(data)
+                                sink.write(
+                                    trackIndex,
+                                    data,
+                                    bufferInfo.presentationTimeUs,
+                                    bufferInfo.flags,
+                                )
+                            }
                         }
                         val eos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                         codec.releaseOutputBuffer(index, false)
@@ -784,7 +806,7 @@ class AudioCaptureEngine(
                     }
 
                     index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        trackIndex = muxer.addAudioTrack(key, codec.outputFormat)
+                        trackIndex = sink.addAudioTrack(key, codec.outputFormat)
                     }
 
                     else -> Unit

@@ -26,6 +26,29 @@ enum class ContentMode {
     Stretch,
 }
 
+/** Padanan "Rate Control" OBS untuk encoder MediaCodec. */
+enum class VideoBitrateMode {
+    VBR,
+    CBR,
+}
+
+/** Profil H.264 yang bisa dipilih; Auto memakai High lalu fallback. */
+enum class VideoProfile {
+    Auto,
+    High,
+    Baseline,
+}
+
+enum class ColorSpaceMode {
+    BT709,
+    BT601,
+}
+
+enum class ColorRangeMode {
+    Limited,
+    Full,
+}
+
 /**
  * Pengaturan satu sesi rekam. Nilai default sengaja konservatif supaya
  * langsung jalan di sebagian besar perangkat.
@@ -41,6 +64,37 @@ data class CaptureConfig(
     val canvasOrientation: CanvasOrientation = CanvasOrientation.Auto,
     val contentMode: ContentMode = ContentMode.Fit,
     val saveLocation: SaveLocation = SaveLocation.MoviesRoutAir,
+    /** 0 = mengikuti kanvas; 75/50/25 = Rescale Output ala OBS. */
+    val outputScalePercent: Int = 0,
+    val keyframeIntervalSec: Int = 2,
+    val bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    val videoProfile: VideoProfile = VideoProfile.Auto,
+    val colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
+    val colorRange: ColorRangeMode = ColorRangeMode.Limited,
+    val fileNameTemplate: String = "RoutAir_{date}_{time}",
+    val noSpaceFileName: Boolean = false,
+    /** Default mati: selalu fps penuh seperti OBS. */
+    val staticThrottleEnabled: Boolean = false,
+    val thermalThrottleEnabled: Boolean = false,
 ) {
     val aspectRatio: Float get() = width.toFloat() / height.toFloat()
+
+    val encoderWidth: Int
+        get() = if (outputScalePercent in 1..99) {
+            evenSide(width.toLong() * outputScalePercent / 100L)
+        } else {
+            width
+        }
+    val encoderHeight: Int
+        get() = if (outputScalePercent in 1..99) {
+            evenSide(height.toLong() * outputScalePercent / 100L)
+        } else {
+            height
+        }
+    val rescaled: Boolean get() = encoderWidth != width || encoderHeight != height
+
+    private fun evenSide(value: Long): Int {
+        val scaled = value.toInt().coerceAtLeast(2)
+        return if (scaled % 2 == 0) scaled else scaled + 1
+    }
 }

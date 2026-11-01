@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.R
 import com.rout.air.core.CaptureConfig
+import com.rout.air.core.LiveStats
+import com.rout.air.core.LiveStatus
 import com.rout.air.core.RecordingState
 import com.rout.air.core.RecordingStats
 import com.rout.air.output.CaptureEngine
@@ -54,6 +56,8 @@ import androidx.compose.ui.res.stringResource
 fun HomeScreen(
     state: RecordingState,
     stats: RecordingStats,
+    liveStats: LiveStats,
+    liveConfigured: Boolean,
     canvasConfig: CaptureConfig,
     fps: Int,
     elapsedMs: Long,
@@ -61,6 +65,7 @@ fun HomeScreen(
     onStop: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onToggleLive: () -> Unit,
     onEndSession: () -> Unit,
     onRequestPermission: () -> Unit,
     onClearError: () -> Unit,
@@ -196,12 +201,7 @@ fun HomeScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
+        Column {
                 Text(
                     text = formatDuration(elapsedMs),
                     style = MaterialTheme.typography.titleMedium,
@@ -225,47 +225,73 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isActive) {
-                    IconButton(
-                        onClick = if (paused) onResume else onPause,
-                        modifier = Modifier.size(44.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                if (paused) R.drawable.ic_play else R.drawable.ic_pause,
-                            ),
-                            contentDescription = stringResource(
-                                if (paused) R.string.home_lanjutkan_rekaman
-                                else R.string.home_jeda_rekaman,
-                            ),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
+                if (liveStats.status != LiveStatus.Idle) {
+                    Text(
+                        text = stringResource(
+                            R.string.home_live_stats,
+                            formatRecordSize(liveStats.bytesSent),
+                            String.format("%.1f", liveStats.bitrateKbps / 1000.0),
+                            liveStats.droppedTags,
+                            liveStats.reconnects,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (liveStats.status == LiveStatus.Error) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
                 }
-                // Tombol rekam cadangan (tanpa perlu tombol melayang).
-                RecordButton(
-                    isActive = isActive,
-                    enabled = state !is RecordingState.Preparing,
-                    preparing = state is RecordingState.Preparing,
-                    paused = paused,
-                    onClick = { if (isActive) onStop() else onStart() },
-                )
             }
-        }
 
         Spacer(Modifier.height(10.dp))
 
-        // Aksi live dan overlay dipisah dari tombol rekam supaya jelas.
+        // Sejajar seperti OBS: tombol Rekam dan Live bersebelahan.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LiveButton(modifier = Modifier.weight(0.8f))
+            RecordButton(
+                isActive = isActive,
+                enabled = state !is RecordingState.Preparing,
+                preparing = state is RecordingState.Preparing,
+                paused = paused,
+                modifier = Modifier.weight(1f),
+                onClick = { if (isActive) onStop() else onStart() },
+            )
+            LiveButton(
+                stats = liveStats,
+                configured = liveConfigured,
+                modifier = Modifier.weight(1f),
+                onClick = onToggleLive,
+            )
+            if (isActive && !liveStats.active) {
+                IconButton(
+                    onClick = if (paused) onResume else onPause,
+                    modifier = Modifier.size(52.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (paused) R.drawable.ic_play else R.drawable.ic_pause,
+                        ),
+                        contentDescription = stringResource(
+                            if (paused) R.string.home_lanjutkan_rekaman
+                            else R.string.home_jeda_rekaman,
+                        ),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             OverlayToggleButton(
                 label = if (recordingOverlayEnabled) {
                     stringResource(R.string.home_overlay_record_hide)
@@ -273,7 +299,7 @@ fun HomeScreen(
                     stringResource(R.string.home_overlay_record)
                 },
                 active = recordingOverlayEnabled,
-                modifier = Modifier.weight(1.1f),
+                modifier = Modifier.weight(1f),
                 onClick = onToggleRecordingOverlay,
             )
             OverlayToggleButton(
@@ -283,7 +309,7 @@ fun HomeScreen(
                     stringResource(R.string.home_overlay_live)
                 },
                 active = liveOverlayEnabled,
-                modifier = Modifier.weight(1.1f),
+                modifier = Modifier.weight(1f),
                 onClick = onToggleLiveOverlay,
             )
         }
@@ -343,35 +369,3 @@ private fun OverlayToggleButton(
     }
 }
 
-/** Tombol live: disiapkan untuk M5, belum bisa dipakai. */
-@Composable
-private fun LiveButton(modifier: Modifier = Modifier) {
-    val scheme = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = scheme.surfaceVariant,
-        contentColor = scheme.onSurfaceVariant.copy(alpha = 0.6f),
-        modifier = modifier.height(44.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_signal),
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = stringResource(R.string.home_live_menyusul),
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}

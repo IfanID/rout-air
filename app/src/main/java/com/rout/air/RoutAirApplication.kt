@@ -16,6 +16,10 @@ class RoutAirApplication : Application() {
             runCatching { writeCrash(error) }
             previous?.uncaughtException(thread, error)
         }
+        // Rekam jejak crash ke log/crash.txt sebelum proses dimatikan.
+        com.rout.air.data.CrashLog.install(this)
+        // Satu berkas log per sesi aplikasi; ditimpa setiap aplikasi dibuka.
+        com.rout.air.data.DiagLog.startSession(this)
         // File pending dari sesi yang mati tanpa menutup MP4 tidak terlihat di
         // galeri; bersihkan di latar belakang agar tidak menumpuk.
         Thread({ runCatching { OutputTarget.cleanupOrphans(this) } }, "rout-cleanup").start()

@@ -97,6 +97,10 @@ fun ScenePreview(
                         colorArgb = source.settings.textColor,
                         maxWidth = source.settings.width.takeIf { it > 0 } ?: canvas.width,
                         density = density,
+                        highlightIndices = source.settings.textHighlightIndices,
+                        highlightColor = source.settings.textHighlightColor,
+                        center = source.settings.textCenter,
+                        autoFit = source.settings.textAutoFit,
                     )
 
                     else -> null

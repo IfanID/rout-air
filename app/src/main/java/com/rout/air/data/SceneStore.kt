@@ -103,16 +103,57 @@ object SceneManager {
     private var programCollection: SceneCollection? = null
 
     private var store: SceneStore? = null
+    private var appContext: Context? = null
 
     fun attach(context: Context) {
         if (store != null) return
         val s = SceneStore(context)
         store = s
-        val loaded = s.load() ?: SceneCollection.default(1920, 1080)
+        appContext = context.applicationContext
+        val settings = SettingsStore(context)
+        val config = settings.load()
+        val width = config.width.coerceAtLeast(2)
+        val height = config.height.coerceAtLeast(2)
+        val density = context.resources.displayMetrics.density
+
+        var loaded = s.load() ?: SceneCollection.default(width, height)
+        // Scene layar jeda selalu tersedia; dibuat sekali lalu dipakai ulang.
+        val (withJeda, jedaId) = loaded.withScreensaverScene(width, height) {
+                text, size, maxWidth ->
+            com.rout.air.engine.SourceBitmap.measureTextHeight(text, size, maxWidth, density)
+        }
+        if (withJeda != loaded) {
+            loaded = withJeda
+            s.save(loaded)
+        }
+        settings.saveScreensaverSceneId(jedaId)
+
         collection = loaded
         programCollection = loaded
         _state.value = loaded
         _program.value = loaded
+    }
+
+    /**
+     * Menyesuaikan posisi layar jeda dengan kanvas sebenarnya. Dipanggil
+     * setelah orientasi perangkat diketahui.
+     */
+    fun ensureScreensaverLayout(width: Int, height: Int) {
+        val current = collection ?: return
+        val context = appContext ?: return
+        val density = context.resources.displayMetrics.density
+        val next = current.upgradeScreensaverScenes(width, height) { text, size, maxWidth ->
+            com.rout.air.engine.SourceBitmap.measureTextHeight(text, size, maxWidth, density)
+        }
+        if (next == current) return
+        collection = next
+        _state.value = next
+        // Jangan ganggu program yang sedang menampilkan layar jeda.
+        if (programBeforeScreensaver == null) {
+            programCollection = next
+            _program.value = next
+        }
+        store?.save(next)
     }
 
     /** Dipakai UI saat flow belum terisi (mis. sesi dipulihkan). */
@@ -137,9 +178,46 @@ object SceneManager {
      */
     fun commitToProgram() {
         val next = collection ?: return
+        // Selama layar jeda tampil, simpan program asli yang baru saja
+        // diedit tanpa mengganti apa yang sedang mengudara.
+        if (programBeforeScreensaver != null) {
+            programBeforeScreensaver = next
+            return
+        }
         programCollection = next
         _program.value = next
         listeners.forEach { it(next) }
+    }
+
+    /** Program sebelum layar jeda aktif; null berarti layar jeda tidak aktif. */
+    private var programBeforeScreensaver: SceneCollection? = null
+
+    /** True bila program sedang menampilkan layar jeda. */
+    fun screensaverActive(): Boolean = programBeforeScreensaver != null
+
+    /**
+     * Menampilkan scene layar jeda di program tanpa mengubah koleksi edit.
+     * Live dan rekaman tetap berjalan, hanya gambarnya yang diganti.
+     */
+    fun showScreensaver(sceneId: String): Boolean {
+        val base = programCollection ?: return false
+        if (base.scenes.none { it.id == sceneId }) return false
+        if (programBeforeScreensaver == null) programBeforeScreensaver = base
+        val next = base.copy(activeSceneId = sceneId)
+        programCollection = next
+        _program.value = next
+        listeners.forEach { it(next) }
+        return true
+    }
+
+    /** Mengembalikan program seperti sebelum layar jeda. */
+    fun hideScreensaver(): Boolean {
+        val previous = programBeforeScreensaver ?: return false
+        programBeforeScreensaver = null
+        programCollection = previous
+        _program.value = previous
+        listeners.forEach { it(previous) }
+        return true
     }
 
     /** True bila ada perubahan pratinjau yang belum di-transisikan. */

@@ -74,6 +74,7 @@ import com.rout.air.core.SourceSettings
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
 import com.rout.air.data.SceneStore
+import com.rout.air.data.addScreensaverScene
 import com.rout.air.data.addScene
 import com.rout.air.data.addScreenItem
 import com.rout.air.data.addSource
@@ -94,6 +95,10 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Halaman Adegan: daftar scene, sumber pada scene aktif, dan panel properti
@@ -129,17 +134,13 @@ fun ScenesScreen(
     val selectedItem = collection.item(selectedItemId)
     val selectedSource = selectedItem?.let { collection.source(it.sourceId) }
 
-    // Pemilih gambar: disalin ke penyimpanan aplikasi agar path tetap valid.
-    // Dipakai untuk menambah sumber baru maupun mengganti gambar yang ada.
-    val imagePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri == null) {
-            // Pilihan dibatalkan: jangan biarkan mode "ganti gambar" tertinggal.
-            replaceSourceId = null
-            return@rememberLauncherForActivityResult
-        }
-        val path = store.importImage(uri) ?: return@rememberLauncherForActivityResult
+    var showUrlDialog by remember { mutableStateOf(false) }
+    var urlError by remember { mutableStateOf<String?>(null) }
+    var urlLoading by remember { mutableStateOf(false) }
+    val pageScope = rememberCoroutineScope()
+
+    // Menambah sumber gambar baru atau mengganti gambar sumber terpilih.
+    val applyImagePath: (String) -> Unit = { path ->
         val size = SourceBitmap.probeSize(path, canvasConfig.width, canvasConfig.height)
             ?: (canvasConfig.width to canvasConfig.height)
 
@@ -157,24 +158,36 @@ fun ScenesScreen(
                     ),
                 ),
             )
+        } else {
+            val source = SceneSource(
+                type = SourceType.Image,
+                name = uniqueSourceName(collection, "Gambar"),
+                settings = SourceSettings(
+                    imagePath = path,
+                    width = size.first,
+                    height = size.second,
+                ),
+            )
+            val item = SceneItem(
+                sourceId = source.id,
+                transform = fitTransform(size.first, size.second, canvasConfig),
+            )
+            onCollectionChange(collection.addSource(source, item))
+            onSelectItem(item.id)
+        }
+    }
+
+    // Pemilih gambar: disalin ke penyimpanan aplikasi agar path tetap valid.
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) {
+            // Pilihan dibatalkan: jangan biarkan mode "ganti gambar" tertinggal.
+            replaceSourceId = null
             return@rememberLauncherForActivityResult
         }
-
-        val source = SceneSource(
-            type = SourceType.Image,
-            name = uniqueSourceName(collection, "Gambar"),
-            settings = SourceSettings(
-                imagePath = path,
-                width = size.first,
-                height = size.second,
-            ),
-        )
-        val item = SceneItem(
-            sourceId = source.id,
-            transform = fitTransform(size.first, size.second, canvasConfig),
-        )
-        onCollectionChange(collection.addSource(source, item))
-        onSelectItem(item.id)
+        val path = store.importImage(uri) ?: return@rememberLauncherForActivityResult
+        applyImagePath(path)
     }
 
     BackHandler(enabled = selectedItem != null) { onSelectItem(null) }
@@ -393,6 +406,35 @@ fun ScenesScreen(
         )
     }
 
+    if (showUrlDialog) {
+        UrlSourceDialog(
+            loading = urlLoading,
+            error = urlError,
+            onDismiss = {
+                if (!urlLoading) {
+                    showUrlDialog = false
+                    urlError = null
+                }
+            },
+            onConfirm = { url ->
+                urlLoading = true
+                urlError = null
+                pageScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        com.rout.air.data.ImageFetcher.download(context, url)
+                    }
+                    urlLoading = false
+                    result.onSuccess { path ->
+                        showUrlDialog = false
+                        applyImagePath(path)
+                    }.onFailure { error ->
+                        urlError = error.message ?: "gagal"
+                    }
+                }
+            },
+        )
+    }
+
     if (showRenameScene && activeScene != null) {
         NameDialog(
             title = stringResource(R.string.scenes_ganti_nama_scene),
@@ -415,6 +457,30 @@ fun ScenesScreen(
                     onCollectionChange(next)
                     onSelectItem(itemId)
                 }
+            },
+            onImageUrl = {
+                showAddSource = false
+                urlError = null
+                showUrlDialog = true
+            },
+            onScreensaver = {
+                showAddSource = false
+                val (next, sceneId) = collection.addScreensaverScene(
+                    canvasConfig.width,
+                    canvasConfig.height,
+                ) { text, size, maxWidth ->
+                    com.rout.air.engine.SourceBitmap.measureTextHeight(
+                        text,
+                        size,
+                        maxWidth,
+                        density,
+                    )
+                }
+                onCollectionChange(next)
+                onSelectItem(
+                    next.scenes.firstOrNull { it.id == sceneId }
+                        ?.items?.firstOrNull()?.id,
+                )
             },
             onImage = {
                 showAddSource = false

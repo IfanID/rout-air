@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rout.air.core.CaptureConfig
+import com.rout.air.core.LiveStats
 import com.rout.air.core.RecordingState
 import com.rout.air.core.RecordingStats
 import com.rout.air.core.SceneCollection
@@ -74,6 +75,8 @@ import com.rout.air.R
 fun StudioScreen(
     state: RecordingState,
     stats: RecordingStats,
+    liveStats: LiveStats,
+    liveConfigured: Boolean,
     canvasConfig: CaptureConfig,
     fps: Int,
     elapsedMs: Long,
@@ -88,6 +91,7 @@ fun StudioScreen(
     onStop: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
+    onToggleLive: () -> Unit,
     onClearError: () -> Unit,
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
@@ -203,67 +207,73 @@ fun StudioScreen(
 
         Spacer(Modifier.height(10.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                Text(formatDuration(elapsedMs), style = MaterialTheme.typography.titleMedium)
+        Column {
+            Text(formatDuration(elapsedMs), style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
+                    "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (isActive) {
                 Text(
-                    text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
-                        "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
+                    text = stringResource(
+                        R.string.home_statistik,
+                        formatRecordSize(stats.bytes),
+                        String.format("%.1f", stats.bitrateKbps / 1000.0),
+                        stats.frames,
+                        stats.droppedFrames,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (isActive) {
-                    Text(
-                        text = stringResource(
-                            R.string.home_statistik,
-                            formatRecordSize(stats.bytes),
-                            String.format("%.1f", stats.bitrateKbps / 1000.0),
-                            stats.frames,
-                            stats.droppedFrames,
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Tombol Transisi ala OBS: menerapkan hasil edit pratinjau ke
+            // Program (dan ke rekaman). Sebelum ditekan, Program tetap.
+            val pending = collection != programCollection
+            TransitionButton(
+                pending = pending,
+                onClick = onCommitProgram,
+            )
+            RecordButton(
+                isActive = isActive,
+                enabled = state !is RecordingState.Preparing,
+                preparing = state is RecordingState.Preparing,
+                paused = paused,
+                modifier = Modifier.weight(1f),
+                onClick = { if (isActive) onStop() else onStart() },
+            )
+            LiveButton(
+                stats = liveStats,
+                configured = liveConfigured,
+                modifier = Modifier.weight(1f),
+                onClick = onToggleLive,
+            )
+            if (isActive && !liveStats.active) {
+                IconButton(
+                    onClick = if (paused) onResume else onPause,
+                    modifier = Modifier.size(52.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (paused) R.drawable.ic_play else R.drawable.ic_pause,
                         ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        contentDescription = stringResource(
+                            if (paused) R.string.home_lanjutkan_rekaman
+                            else R.string.home_jeda_rekaman,
+                        ),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Tombol Transisi ala OBS: menerapkan hasil edit pratinjau ke
-                // Program (dan ke rekaman). Sebelum ditekan, Program tetap.
-                val pending = collection != programCollection
-                TransitionButton(
-                    pending = pending,
-                    onClick = onCommitProgram,
-                )
-                Spacer(Modifier.width(16.dp))
-                if (isActive) {
-                    IconButton(
-                        onClick = if (paused) onResume else onPause,
-                        modifier = Modifier.size(44.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                if (paused) R.drawable.ic_play else R.drawable.ic_pause,
-                            ),
-                            contentDescription = stringResource(
-                                if (paused) R.string.home_lanjutkan_rekaman
-                                else R.string.home_jeda_rekaman,
-                            ),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-                RecordButton(
-                    isActive = isActive,
-                    enabled = state !is RecordingState.Preparing,
-                    preparing = state is RecordingState.Preparing,
-                    paused = paused,
-                    onClick = { if (isActive) onStop() else onStart() },
-                )
             }
         }
     }

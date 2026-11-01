@@ -30,12 +30,14 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.rout.air.ui.OverlayAudioPanel
+import com.rout.air.ui.OverlayScreensaverPanel
 import com.rout.air.ui.theme.RoutAirTheme
 import com.rout.air.MainActivity
 import com.rout.air.R
 import com.rout.air.core.AudioChannelId
 import com.rout.air.core.RecordingState
 import com.rout.air.data.AudioMixer
+import com.rout.air.data.SceneManager
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -66,7 +69,13 @@ class OverlayLiveService : Service() {
     private var textureSurface: Surface? = null
     private lateinit var previewBox: FrameLayout
     private lateinit var messageBox: FrameLayout
+    private lateinit var chatBody: TextView
+    private lateinit var viewerLabel: TextView
+    private lateinit var signalLabel: TextView
+    private lateinit var screensaverButton: ImageButton
+    private val liveConfig by lazy { com.rout.air.data.SettingsStore(this).loadLive() }
     private lateinit var vuBox: FrameLayout
+    private lateinit var jedaBox: FrameLayout
     private lateinit var audioCompose: ComposeView
     private val overlayOwner = OverlayViewOwner()
     private lateinit var resizeHandle: ImageView
@@ -109,7 +118,12 @@ class OverlayLiveService : Service() {
             return
         }
         observeState()
+        observeChat()
+        observeScreensaver()
+        observeLive()
+        startTicker()
         watchPreview()
+        com.rout.air.live.ChatMonitor.start(this)
         running.value = true
     }
 
@@ -123,6 +137,7 @@ class OverlayLiveService : Service() {
 
     override fun onDestroy() {
         overlayOwner.destroy()
+        com.rout.air.live.ChatMonitor.stop()
         com.rout.air.data.DiagLog.line("OverlayLiveService: onDestroy")
         running.value = false
         detachPreview()
@@ -229,13 +244,14 @@ class OverlayLiveService : Service() {
         header.addView(headerIcon(R.drawable.ic_person), LinearLayout.LayoutParams(dp(12), dp(12)).apply {
             marginStart = dp(12)
         })
-        header.addView(headerLabel("0"))
+        viewerLabel = headerLabel("0")
+        header.addView(viewerLabel)
 
         header.addView(headerIcon(R.drawable.ic_signal), LinearLayout.LayoutParams(dp(12), dp(12)).apply {
             marginStart = dp(12)
         })
-        val kbps = com.rout.air.data.SettingsStore(this).load().videoBitrate / 1000
-        header.addView(headerLabel("$kbps kbps"))
+        signalLabel = headerLabel("-- kbps")
+        header.addView(signalLabel)
 
         // Dorong ikon kanan ke ujung.
         header.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
@@ -328,6 +344,7 @@ class OverlayLiveService : Service() {
                 setTextColor(Color.parseColor("#B8C2CC"))
                 textSize = 12f
             }
+            chatBody = body
             addView(title, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -337,10 +354,14 @@ class OverlayLiveService : Service() {
                 topMargin = dp(10)
             })
             addView(body, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
             ).apply {
-                gravity = Gravity.CENTER
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = dp(12)
+                rightMargin = dp(12)
+                topMargin = dp(34)
+                bottomMargin = dp(8)
             })
         }
         panel.addView(messageBox, contentParams())
@@ -358,6 +379,28 @@ class OverlayLiveService : Service() {
         }
         panel.addView(vuBox, contentParams())
 
+        jedaBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            addView(
+                ComposeView(this@OverlayLiveService).apply {
+                    setContent {
+                        RoutAirTheme {
+                            OverlayScreensaverPanel(
+                                onPick = { id -> SceneManager.showScreensaver(id) },
+                                onStop = { SceneManager.hideScreensaver() },
+                            )
+                        }
+                    }
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        panel.addView(jedaBox, contentParams())
+
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -367,15 +410,17 @@ class OverlayLiveService : Service() {
             stateListAnimator = null
             elevation = 0f
             background = circleBackground(Color.parseColor("#00E5FF"))
-            setImageResource(R.drawable.ic_record)
+            setImageResource(R.drawable.ic_live)
             setColorFilter(Color.WHITE)
-            contentDescription = getString(R.string.floating_record)
+            contentDescription = getString(R.string.overlay_live_start)
             setOnClickListener {
-                val state = CaptureEngine.state.value
-                when {
-                    state is RecordingState.Recording -> CaptureEngine.stopRecording()
-                    !CaptureEngine.sessionActive.value -> openApp()
-                    else -> CaptureEngine.startRecording()
+                if (CaptureEngine.liveStats.value.active) {
+                    CaptureEngine.stopLive()
+                } else {
+                    // Dialog judul/deskripsi hanya ada di aplikasi utama, jadi
+                    // overlay membuka aplikasi lalu meminta dialog yang sama.
+                    com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
+                    openApp("live")
                 }
             }
         }
@@ -434,7 +479,14 @@ class OverlayLiveService : Service() {
         )
         addEmptyCell()
         addEmptyCell()
-        addEmptyCell()
+        // Slot 8: panel layar jeda (daftar scene penutup yang tersedia).
+        screensaverButton = toolButton(
+            R.drawable.ic_screensaver,
+            getString(R.string.overlay_screensaver),
+        ) {
+            showContent(ContentMode.Screensaver)
+        }
+        addCell(screensaverButton)
         addCell(
             toolButton(R.drawable.ic_studio, getString(R.string.overlay_studio)) { openStudio() },
         )
@@ -788,6 +840,12 @@ class OverlayLiveService : Service() {
     }
 
     private fun updateTimer() {
+        val live = CaptureEngine.liveStats.value
+        if (live.active) {
+            val seconds = (live.uptimeMs / 1000).coerceAtLeast(0)
+            timerView.text = "%02d:%02d".format(seconds / 60, seconds % 60)
+            return
+        }
         val state = CaptureEngine.state.value
         val elapsed = if (state is RecordingState.Recording) {
             if (state.isPaused) {
@@ -800,6 +858,66 @@ class OverlayLiveService : Service() {
             0
         }
         timerView.text = "%02d:%02d".format(elapsed / 60, elapsed % 60)
+    }
+
+    private fun observeChat() {
+        scope.launch {
+            com.rout.air.live.ChatMonitor.state.collect { chat ->
+                viewerLabel.text = if (chat.viewers >= 0) chat.viewers.toString() else "–"
+                chatBody.text = when {
+                    chat.messages.isNotEmpty() -> chat.messages
+                        .takeLast(CHAT_LINES)
+                        .joinToString("\n") { "${it.author}: ${it.text}" }
+                    chat.status.isNotBlank() -> chat.status
+                    else -> getString(R.string.overlay_no_messages)
+                }
+            }
+        }
+    }
+
+
+    /** Ikon tombol dan angka kbps mengikuti status siaran sebenarnya. */
+    private fun observeLive() {
+        scope.launch {
+            CaptureEngine.liveStats.collect { stats ->
+                val live = stats.active
+                action.setImageResource(if (live) R.drawable.ic_stop else R.drawable.ic_live)
+                action.background = circleBackground(
+                    if (live) Color.parseColor("#E53935") else Color.parseColor("#00E5FF"),
+                )
+                action.contentDescription = getString(
+                    if (live) R.string.floating_stop else R.string.overlay_live_start,
+                )
+                signalLabel.text = if (stats.bitrateKbps > 0) {
+                    "${stats.bitrateKbps} kbps"
+                } else {
+                    "-- kbps"
+                }
+                updateTimer()
+            }
+        }
+    }
+
+    /** Ikon slot 8 menyala merah selama layar jeda tampil. */
+    private fun observeScreensaver() {
+        scope.launch {
+            SceneManager.program.collect {
+                val active = SceneManager.screensaverActive()
+                screensaverButton.setColorFilter(
+                    if (active) Color.parseColor("#FF4C4C") else Color.WHITE,
+                )
+            }
+        }
+    }
+
+    /** Timer harus berdetak tiap detik, bukan hanya saat status berubah. */
+    private fun startTicker() {
+        scope.launch {
+            while (true) {
+                updateTimer()
+                delay(1000)
+            }
+        }
     }
 
     private fun observeState() {
@@ -817,15 +935,6 @@ class OverlayLiveService : Service() {
                     }
                     runCatching { windowManager.updateViewLayout(root, params) }
                 }
-                action.setImageResource(
-                    if (recording) R.drawable.ic_stop else R.drawable.ic_record,
-                )
-                action.background = circleBackground(
-                    if (recording) Color.parseColor("#E53935") else Color.parseColor("#00E5FF"),
-                )
-                action.contentDescription = getString(
-                    if (recording) R.string.floating_stop else R.string.floating_record,
-                )
                 action.isEnabled = state !is RecordingState.Preparing
                 action.alpha = if (action.isEnabled) 1f else 0.4f
                 updateTimer()
@@ -833,13 +942,14 @@ class OverlayLiveService : Service() {
         }
     }
 
-    private enum class ContentMode { Preview, Messages, Vu }
+    private enum class ContentMode { Preview, Messages, Vu, Screensaver }
 
     /** Ganti isi panel overlay: pratinjau, pesan, atau VU audio. */
     private fun showContent(mode: ContentMode) {
         previewBox.visibility = if (mode == ContentMode.Preview) View.VISIBLE else View.GONE
         messageBox.visibility = if (mode == ContentMode.Messages) View.VISIBLE else View.GONE
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
+        jedaBox.visibility = if (mode == ContentMode.Screensaver) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
     }
 
@@ -852,16 +962,21 @@ class OverlayLiveService : Service() {
         )
     }
 
-    private fun openApp() {
-        startActivity(
-            Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-        )
+    private fun toast(res: Int) {
+        android.widget.Toast.makeText(this, res, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openApp(tab: String? = null) {
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (tab != null) intent.putExtra("open_tab", tab)
+        startActivity(intent)
     }
 
     companion object {
         private const val CHANNEL_ID = "routair_overlay"
         private const val NOTIFICATION_ID = 21
+        private const val CHAT_LINES = 10
         const val ACTION_STOP = "com.rout.air.action.OVERLAY_LIVE_STOP"
 
         val running = MutableStateFlow(false)

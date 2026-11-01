@@ -7,6 +7,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
+import com.rout.air.core.ColorRangeMode
+import com.rout.air.core.ColorSpaceMode
+import com.rout.air.core.VideoBitrateMode
+import com.rout.air.core.VideoProfile
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -19,7 +23,12 @@ class VideoEncoder(
     height: Int,
     fps: Int,
     bitrate: Int,
-    private val muxer: Mp4Writer,
+    keyframeIntervalSec: Int = 2,
+    bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    profile: VideoProfile = VideoProfile.Auto,
+    colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
+    colorRange: ColorRangeMode = ColorRangeMode.Limited,
+    private val sink: MediaSink,
     private val onEncoderError: (Throwable) -> Unit = {},
     private val onFrameEncoded: () -> Unit = {},
 ) {
@@ -34,7 +43,17 @@ class VideoEncoder(
     val inputSurface: Surface get() = checkNotNull(inputSurfaceRef)
 
     init {
-        codec = createCodec(width, height, fps, bitrate)
+        codec = createCodec(
+            width = width,
+            height = height,
+            fps = fps,
+            bitrate = bitrate,
+            keyframeIntervalSec = keyframeIntervalSec,
+            bitrateMode = bitrateMode,
+            profile = profile,
+            colorSpace = colorSpace,
+            colorRange = colorRange,
+        )
         inputSurfaceRef = codec.createInputSurface()
         codec.start()
     }
@@ -60,13 +79,25 @@ class VideoEncoder(
         thread.quitSafely()
     }
 
-    private fun createCodec(width: Int, height: Int, fps: Int, bitrate: Int): MediaCodec {
-        // Profil High lebih efisien, tetapi tidak semua encoder perangkat menerimanya.
-        val profiles = listOf(
-            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
-            MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
-            -1,
-        )
+    private fun createCodec(
+        width: Int,
+        height: Int,
+        fps: Int,
+        bitrate: Int,
+        keyframeIntervalSec: Int,
+        bitrateMode: VideoBitrateMode,
+        profile: VideoProfile,
+        colorSpace: ColorSpaceMode,
+        colorRange: ColorRangeMode,
+    ): MediaCodec {
+        // High lebih efisien, tetapi tidak semua encoder perangkat menerimanya.
+        val high = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+        val baseline = MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
+        val profiles = when (profile) {
+            VideoProfile.Auto -> listOf(high, baseline, -1)
+            VideoProfile.High -> listOf(high, baseline, -1)
+            VideoProfile.Baseline -> listOf(baseline, -1)
+        }
 
         var lastError: Throwable? = null
         for (profile in profiles) {
@@ -88,17 +119,47 @@ class VideoEncoder(
                     )
                     setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                     setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)
                     setInteger(
                         MediaFormat.KEY_BITRATE_MODE,
-                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                        when (bitrateMode) {
+                            VideoBitrateMode.CBR ->
+                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+
+                            VideoBitrateMode.VBR ->
+                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+                        },
+                    )
+                    setInteger(
+                        "color-space",
+                        when (colorSpace) {
+                            ColorSpaceMode.BT709 -> 1
+                            ColorSpaceMode.BT601 -> 2
+                        },
+                    )
+                    setInteger(
+                        MediaFormat.KEY_COLOR_RANGE,
+                        when (colorRange) {
+                            ColorRangeMode.Limited -> MediaFormat.COLOR_RANGE_LIMITED
+                            ColorRangeMode.Full -> MediaFormat.COLOR_RANGE_FULL
+                        },
                     )
                     if (profile >= 0) {
                         setInteger(MediaFormat.KEY_PROFILE, profile)
                     }
                 }
 
-                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                try {
+                    codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                } catch (error: Throwable) {
+                    // Sebagian encoder menolak CBR; fallback ke VBR.
+                    if (bitrateMode != VideoBitrateMode.CBR) throw error
+                    format.setInteger(
+                        MediaFormat.KEY_BITRATE_MODE,
+                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                    )
+                    codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                }
                 return codec
             } catch (error: Throwable) {
                 lastError = error
@@ -129,7 +190,11 @@ class VideoEncoder(
             try {
                 val buffer = codec.getOutputBuffer(index)
                 if (buffer != null && info.size > 0) {
-                    muxer.write(trackIndex, buffer, info)
+                    val data = ByteArray(info.size)
+                    buffer.position(info.offset)
+                    buffer.limit(info.offset + info.size)
+                    buffer.get(data)
+                    sink.write(trackIndex, data, info.presentationTimeUs, info.flags)
                     onFrameEncoded()
                 }
                 if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -147,7 +212,7 @@ class VideoEncoder(
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
-            trackIndex = muxer.addVideoTrack(format)
+            trackIndex = sink.addVideoTrack(format)
         }
 
         override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {

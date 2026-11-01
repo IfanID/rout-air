@@ -49,11 +49,28 @@ class OutputTarget private constructor(
             context: Context,
             location: SaveLocation = SaveLocation.MoviesRoutAir,
             timestampMs: Long = System.currentTimeMillis(),
+            nameTemplate: String = "RoutAir_{date}_{time}",
+            noSpaceFileName: Boolean = false,
         ): OutputTarget {
             val resolver = context.contentResolver
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestampMs))
+            val time = SimpleDateFormat("HH-mm-ss", Locale.US).format(Date(timestampMs))
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
+            var name = nameTemplate
+                .replace("{date}", date)
+                .replace("{time}", time)
+                .replace("{datetime}", stamp)
+                .ifBlank { "RoutAir_$stamp" }
+            if (!name.contains(stamp) &&
+                !nameTemplate.contains("{date}") &&
+                !nameTemplate.contains("{time}") &&
+                !nameTemplate.contains("{datetime}")
+            ) {
+                name = "${name}_$stamp"
+            }
+            if (noSpaceFileName) name = name.replace(' ', '_')
             val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, "RoutAir_$stamp.mp4")
+                put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                 put(MediaStore.Video.Media.RELATIVE_PATH, location.relativePath)
                 put(MediaStore.Video.Media.IS_PENDING, 1)
