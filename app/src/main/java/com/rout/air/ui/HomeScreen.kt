@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -205,12 +206,20 @@ fun HomeScreen(
                 )
             }
 
-            // Aksi rekam ada di menu tombol melayang; tombol ini hanya
-            // menampilkan/menyembunyikan tombol tersebut.
-            FloatingToggleButton(
-                enabled = floatingEnabled,
-                onClick = onToggleFloating,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Tombol rekam cadangan (tanpa perlu tombol melayang).
+                RecordButton(
+                    isActive = isActive,
+                    enabled = state !is RecordingState.Preparing,
+                    preparing = state is RecordingState.Preparing,
+                    onClick = { if (isActive) onStop() else onStart() },
+                )
+                Spacer(Modifier.width(8.dp))
+                FloatingToggleButton(
+                    enabled = floatingEnabled,
+                    onClick = onToggleFloating,
+                )
+            }
         }
     }
 }
@@ -253,7 +262,12 @@ private fun FloatingToggleButton(enabled: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.size(20.dp),
             )
             Text(
-                text = stringResource(R.string.floating_label),
+                // Label mengikuti status: aktif → tombol untuk menyembunyikan.
+                text = if (enabled) {
+                    stringResource(R.string.floating_hide)
+                } else {
+                    stringResource(R.string.floating_label)
+                },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )

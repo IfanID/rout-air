@@ -25,7 +25,12 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.compose.ui.platform.ComposeView
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.rout.air.ui.OverlayAudioPanel
+import com.rout.air.ui.theme.RoutAirTheme
 import com.rout.air.MainActivity
 import com.rout.air.R
 import com.rout.air.core.AudioChannelId
@@ -58,14 +63,18 @@ class OverlayRecordService : Service() {
     private lateinit var preview: TextureView
     private var textureSurface: Surface? = null
     private lateinit var previewBox: FrameLayout
+    private lateinit var messageBox: FrameLayout
+    private lateinit var vuBox: FrameLayout
+    private lateinit var audioCompose: ComposeView
+    private val overlayOwner = OverlayViewOwner()
+    private lateinit var resizeHandle: ImageView
     private lateinit var action: ImageButton
-    private lateinit var micButton: ImageButton
-    private lateinit var audioButton: ImageButton
     private lateinit var timerView: TextView
     private lateinit var params: WindowManager.LayoutParams
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var menuOpen = false
+    private var keepScreenOn = false
     private var previewAttached = false
     private var attachedSurface: android.view.Surface? = null
 
@@ -91,13 +100,13 @@ class OverlayRecordService : Service() {
             return
         }
         startAsForeground()
+        overlayOwner.attach()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         runCatching { buildOverlay() }.onFailure {
             stopSelf()
             return
         }
         observeState()
-        observeAudio()
         watchPreview()
         running.value = true
     }
@@ -111,6 +120,8 @@ class OverlayRecordService : Service() {
     }
 
     override fun onDestroy() {
+        overlayOwner.destroy()
+        com.rout.air.data.DiagLog.line("OverlayService: onDestroy")
         running.value = false
         detachPreview()
         scope.cancel()
@@ -167,7 +178,12 @@ class OverlayRecordService : Service() {
     // --- Overlay -------------------------------------------------------------
 
     private fun buildOverlay() {
-        root = FrameLayout(this).apply { elevation = 0f }
+        root = FrameLayout(this).apply {
+            elevation = 0f
+            // Compose di dalam Service butuh owner pada pohon view.
+            setViewTreeLifecycleOwner(overlayOwner)
+            setViewTreeSavedStateRegistryOwner(overlayOwner)
+        }
 
         logo = ImageView(this).apply {
             setImageResource(R.drawable.ic_logo_mark)
@@ -223,9 +239,9 @@ class OverlayRecordService : Service() {
         header.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
 
         fun addHeaderButton(view: View) {
-            (view as ImageButton).setPadding(dp(2), dp(2), dp(2), dp(2))
-            header.addView(view, LinearLayout.LayoutParams(dp(16), dp(16)).apply {
-                marginStart = dp(8)
+            (view as ImageButton).setPadding(dp(7), dp(7), dp(7), dp(7))
+            header.addView(view, LinearLayout.LayoutParams(dp(32), dp(32)).apply {
+                marginStart = dp(2)
             })
         }
         // Hanya tombol tutup di header.
@@ -287,18 +303,63 @@ class OverlayRecordService : Service() {
         ))
         panel.addView(previewBox, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
-            0,
+            FrameLayout.LayoutParams.MATCH_PARENT,
         ).apply {
             topMargin = headerPx + dp(4)
+            bottomMargin = controlsPx + dp(6)
             leftMargin = sidePadPx
             rightMargin = sidePadPx
             gravity = Gravity.TOP
         })
 
+        // Panel pesan (placeholder) dan panel VU audio.
+        messageBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            val title = TextView(this@OverlayRecordService).apply {
+                text = getString(R.string.overlay_chat)
+                setTextColor(Color.WHITE)
+                textSize = 13f
+            }
+            val body = TextView(this@OverlayRecordService).apply {
+                text = getString(R.string.overlay_no_messages)
+                setTextColor(Color.parseColor("#B8C2CC"))
+                textSize = 12f
+            }
+            addView(title, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = dp(12)
+                topMargin = dp(10)
+            })
+            addView(body, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.CENTER
+            })
+        }
+        panel.addView(messageBox, contentParams())
+
+        vuBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            audioCompose = ComposeView(this@OverlayRecordService).apply {
+                setContent { RoutAirTheme { OverlayAudioPanel() } }
+            }
+            addView(audioCompose, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        panel.addView(vuBox, contentParams())
+
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), 0)
+            setPadding(dp(8), 0, dp(26), 0)
         }
         action = ImageButton(this).apply {
             stateListAnimator = null
@@ -318,39 +379,83 @@ class OverlayRecordService : Service() {
         }
         controls.gravity = Gravity.CENTER_VERTICAL
 
-        fun addControl(view: View, size: Int = dp(14)) {
-            (view as ImageButton).setPadding(0, 0, 0, 0)
+        fun addCell(view: View, size: Int = dp(0)) {
+            (view as? ImageButton)?.apply {
+                if (size > 0) {
+                    // Tombol rekam: ikon hampir memenuhi lingkaran.
+                    setPadding(dp(3), dp(3), dp(3), dp(3))
+                } else {
+                    setPadding(dp(7), dp(10), dp(7), dp(10))
+                }
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            }
             val cell = FrameLayout(this)
-            cell.addView(view, FrameLayout.LayoutParams(size, size).apply {
-                gravity = Gravity.CENTER
-            })
+            if (size > 0) {
+                // Tombol bulat (rekam) tetap ukuran tetap, sel tetap clickable.
+                cell.addView(view, FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.CENTER
+                })
+                cell.setOnClickListener { view.performClick() }
+                cell.isClickable = true
+            } else {
+                // Ikon biasa mengisi seluruh sel agar mudah ditekan.
+                cell.addView(view, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ))
+            }
             controls.addView(cell, LinearLayout.LayoutParams(0, controlsPx, 1f))
         }
 
-        addControl(action, dp(21))
-        addControl(toolButton(R.drawable.ic_chat, getString(R.string.overlay_chat), null))
-        addControl(toolButton(R.drawable.ic_sliders, getString(R.string.overlay_mixer)) { openApp() })
-
-        micButton = toolButton(R.drawable.ic_mic, getString(R.string.overlay_mic)) {
-            val muted = AudioMixer.mix.value.channel(AudioChannelId.Microphone).muted
-            AudioMixer.setMuted(AudioChannelId.Microphone, !muted)
+        fun addEmptyCell() {
+            controls.addView(FrameLayout(this), LinearLayout.LayoutParams(0, controlsPx, 1f))
         }
-        addControl(micButton)
 
-        audioButton = toolButton(R.drawable.ic_volume, getString(R.string.overlay_master)) {
-            AudioMixer.setMasterEnabled(!AudioMixer.mix.value.masterEnabled)
-        }
-        addControl(audioButton)
+        // 1. Rekam/Stop, 2. kosong, 3. kotak isi mata, 4. pesan,
+        // 5. VU meter audio, 6-8 kosong, 9. buka Studio.
+        addCell(action, dp(32))
+        addEmptyCell()
+        addCell(
+            toolButton(R.drawable.ic_eye_box, getString(R.string.overlay_preview)) {
+                showContent(ContentMode.Preview)
+            },
+        )
+        addCell(
+            toolButton(R.drawable.ic_chat, getString(R.string.overlay_chat)) {
+                showContent(ContentMode.Messages)
+            },
+        )
+        addCell(
+            toolButton(R.drawable.ic_volume, getString(R.string.overlay_master)) {
+                showContent(ContentMode.Vu)
+            },
+        )
+        addEmptyCell()
+        addEmptyCell()
+        addEmptyCell()
+        addCell(
+            toolButton(R.drawable.ic_studio, getString(R.string.overlay_studio)) { openStudio() },
+        )
 
-        addControl(toolButton(R.drawable.ic_link, getString(R.string.overlay_link), null))
-        addControl(toolButton(R.drawable.ic_camera, getString(R.string.overlay_camera), null))
-        addControl(toolButton(R.drawable.ic_settings, getString(R.string.overlay_settings)) { openApp() })
-        addControl(toolButton(R.drawable.ic_warning, getString(R.string.overlay_warning), null))
         panel.addView(controls, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             controlsPx,
         ).apply {
             gravity = Gravity.BOTTOM
+        })
+
+        // Pegangan resize di pojok kanan bawah.
+        resizeHandle = ImageView(this).apply {
+            setImageResource(R.drawable.ic_resize)
+            setColorFilter(Color.WHITE)
+            alpha = 0.8f
+            contentDescription = getString(R.string.overlay_resize)
+            setOnTouchListener(resizeTouchListener)
+        }
+        panel.addView(resizeHandle, FrameLayout.LayoutParams(dp(22), dp(22)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            marginEnd = dp(4)
+            bottomMargin = dp(4)
         })
 
         val screenH = resources.displayMetrics.heightPixels
@@ -416,6 +521,24 @@ class OverlayRecordService : Service() {
             setColor(Color.parseColor("#B8243A55"))
         }
 
+    private fun contentParams(): FrameLayout.LayoutParams =
+        FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ).apply {
+            topMargin = headerPx + dp(4)
+            bottomMargin = controlsPx + dp(6)
+            leftMargin = sidePadPx
+            rightMargin = sidePadPx
+            gravity = Gravity.TOP
+        }
+
+    private fun boxBackground(): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(14).toFloat()
+        setColor(Color.BLACK)
+    }
+
     private fun circleBackground(color: Int): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -426,21 +549,35 @@ class OverlayRecordService : Service() {
      * Ukuran panel tetap (lanskap) di kedua orientasi, seperti panel perekam.
      * Tombol aksi berada di baris terpisah di bawah pratinjau.
      */
+    /** Lebar minimum: ikut foto (±40% layar) dan cukup untuk header + ✕. */
+    private fun minPanelWidthPx(): Int {
+        val screenW = resources.displayMetrics.widthPixels
+        return maxOf(dp(200), (screenW * 0.42f).roundToInt())
+    }
+
     private fun computePanelSize() {
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
         val base = min(screenW, screenH)
-        panelW = min((base * 0.80f).roundToInt(), dp(300))
-            .coerceAtMost((screenW * 0.95f).roundToInt())
-            .coerceAtLeast(dp(150))
-        previewH = ((panelW - sidePadPx * 2) * 9f / 16f).roundToInt()
-        panelH = headerPx + dp(4) + previewH + dp(6) + controlsPx
+        val size = OverlayLayout.panelSize(
+            requestedWidth = if (panelW > 0) panelW else (base * 0.80f).roundToInt(),
+            screenWidth = screenW,
+            screenHeight = screenH,
+            sidePad = sidePadPx,
+            header = headerPx,
+            controls = controlsPx,
+            gapTop = dp(4),
+            gapBottom = dp(6),
+            minWidth = minPanelWidthPx(),
+            availableWidth = resources.displayMetrics.widthPixels - logoX,
+            availableHeight = resources.displayMetrics.heightPixels - logoY,
+        )
+        panelW = size.panelWidth
+        previewH = size.previewHeight
+        panelH = size.panelHeight
         (panel.layoutParams as FrameLayout.LayoutParams).apply {
             width = panelW
             height = panelH
-        }
-        (previewBox.layoutParams as FrameLayout.LayoutParams).apply {
-            height = previewH
         }
         panel.requestLayout()
         previewBox.requestLayout()
@@ -504,6 +641,82 @@ class OverlayRecordService : Service() {
             }
 
             else -> false
+        }
+    }
+
+    private var resizeDownX = 0f
+    private var resizeDownY = 0f
+    private var resizeStartW = 0
+    private var lastPreviewSync = 0L
+
+    private val resizeTouchListener = View.OnTouchListener { _, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                resizeDownX = event.rawX
+                resizeDownY = event.rawY
+                resizeStartW = panelW
+                true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - resizeDownX
+                val dy = event.rawY - resizeDownY
+                resizePanel(
+                    OverlayLayout.widthFromDrag(resizeStartW, dx, dy).toFloat(),
+                    commit = false,
+                )
+                true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                resizePanel(panelW.toFloat(), commit = true)
+                true
+            }
+
+            else -> false
+        }
+    }
+
+    /** Ubah ukuran panel; commit=true saat jari dilepas. */
+    private fun resizePanel(newWidth: Float, commit: Boolean) {
+        val size = OverlayLayout.panelSize(
+            requestedWidth = newWidth.roundToInt(),
+            screenWidth = resources.displayMetrics.widthPixels,
+            screenHeight = resources.displayMetrics.heightPixels,
+            sidePad = sidePadPx,
+            header = headerPx,
+            controls = controlsPx,
+            gapTop = dp(4),
+            gapBottom = dp(6),
+            minWidth = minPanelWidthPx(),
+        )
+        panelW = size.panelWidth
+        previewH = size.previewHeight
+        panelH = size.panelHeight
+        (panel.layoutParams as FrameLayout.LayoutParams).apply {
+            width = panelW
+            height = panelH
+        }
+        panel.requestLayout()
+        // Jangan geser posisi saat drag agar pegangan tidak "kabur".
+        if (commit) {
+            applyPosition(panelW, panelH)
+        } else {
+            params.x = logoX
+            params.y = logoY
+            runCatching { windowManager.updateViewLayout(root, params) }
+        }
+
+        val w = (panelW - sidePadPx * 2).coerceAtLeast(1)
+        val now = android.os.SystemClock.uptimeMillis()
+        // Ikutkan ukuran pratinjau secara berkala saat drag agar isi
+        // (termasuk video vertikal) benar-benar mengikuti resize.
+        if (commit || now - lastPreviewSync > 60) {
+            lastPreviewSync = now
+            preview.surfaceTexture?.setDefaultBufferSize(w, previewH.coerceAtLeast(1))
+            if (previewAttached) {
+                CaptureEngine.attachOverlayPreview(textureSurface, w, previewH)
+            }
         }
     }
 
@@ -586,6 +799,17 @@ class OverlayRecordService : Service() {
         scope.launch {
             CaptureEngine.state.collect { state ->
                 val recording = state is RecordingState.Recording
+                // Cegah layar auto-lock selama merekam agar MediaProjection
+                // tidak dihentikan sistem (izin tidak hilang).
+                if (recording != keepScreenOn) {
+                    keepScreenOn = recording
+                    params.flags = if (recording) {
+                        params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    } else {
+                        params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+                    }
+                    runCatching { windowManager.updateViewLayout(root, params) }
+                }
                 action.setImageResource(
                     if (recording) R.drawable.ic_stop else R.drawable.ic_record,
                 )
@@ -602,20 +826,23 @@ class OverlayRecordService : Service() {
         }
     }
 
-    private fun observeAudio() {
-        scope.launch {
-            AudioMixer.mix.collect { mix ->
-                val micMuted = mix.channel(AudioChannelId.Microphone).muted
-                micButton.setImageResource(
-                    if (micMuted) R.drawable.ic_mic_off else R.drawable.ic_mic,
-                )
-                micButton.alpha = if (micMuted) 0.45f else 0.9f
-                audioButton.setImageResource(
-                    if (mix.masterEnabled) R.drawable.ic_volume else R.drawable.ic_volume_off,
-                )
-                audioButton.alpha = if (mix.masterEnabled) 0.9f else 0.45f
-            }
-        }
+    private enum class ContentMode { Preview, Messages, Vu }
+
+    /** Ganti isi panel overlay: pratinjau, pesan, atau VU audio. */
+    private fun showContent(mode: ContentMode) {
+        previewBox.visibility = if (mode == ContentMode.Preview) View.VISIBLE else View.GONE
+        messageBox.visibility = if (mode == ContentMode.Messages) View.VISIBLE else View.GONE
+        vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
+        if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
+    }
+
+    private fun openStudio() {
+        com.rout.air.data.UiEvents.openStudio.tryEmit(Unit)
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra("open_tab", "studio")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        )
     }
 
     private fun openApp() {

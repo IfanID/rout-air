@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.display.DisplayManager
 import android.media.projection.MediaProjection
+import android.os.PowerManager
 import android.media.projection.MediaProjectionManager
 import android.opengl.EGLSurface
 import android.opengl.GLES20
@@ -156,6 +157,7 @@ class RecordingPipeline(
     private var watchdogTicks = 0
     private var teardownStarted = false
     private var stopReason: String? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile
     private var recordingActive = false
@@ -194,6 +196,7 @@ class RecordingPipeline(
         override fun onStop() {
             if (!teardownStarted) {
                 Log.i(TAG, "MediaProjection dihentikan sistem")
+                diag("projection: onStop dari sistem (layar mati/izin dicabut)")
                 stopReason = "izin tangkap layar dihentikan"
                 closeSession()
             }
@@ -221,24 +224,38 @@ class RecordingPipeline(
                         "audio=$audioActive",
                 )
             }
+            // Layar mati/terkunci membuat frame tangkapan berhenti. Jangan
+            // hentikan rekaman: frame terakhir diulang oleh pengisi frame dan
+            // audio tetap jalan, sehingga sesi + izin tidak hilang.
             if (recordingActive && lastFrame > 0 && now - lastFrame > STALL_TIMEOUT_NS) {
-                diag("watchdog: frame berhenti")
-                stopReason = "tangkapan layar berhenti"
-                stopRecording()
-                return
+                if (watchdogTicks % 20 == 0) {
+                    diag("watchdog: frame layar berhenti, pakai frame terakhir")
+                }
             }
-            // Frame tetap datang tetapi encoder tidak menghasilkan apa pun.
-            if (recordingActive && lastEncoded > 0 && now - lastEncoded > STALL_TIMEOUT_NS) {
-                diag("watchdog: encoder macet")
-                stopReason = "encoder video macet"
-                stopRecording()
-                return
-            }
-            if (recordingActive && consecutiveSwapFailures > 30) {
-                diag("watchdog: surface encoder gagal")
-                stopReason = "surface encoder gagal"
-                stopRecording()
-                return
+            // Keputusan diambil dari WatchdogPolicy (diuji lewat unit test):
+            // frame layar berhenti TIDAK menghentikan rekaman.
+            when (WatchdogPolicy.decide(
+                recordingActive = recordingActive,
+                nowNs = now,
+                lastEncodedNs = lastEncoded,
+                consecutiveSwapFailures = consecutiveSwapFailures,
+                stallTimeoutNs = STALL_TIMEOUT_NS,
+            )) {
+                WatchdogAction.EncoderStalled -> {
+                    diag("watchdog: encoder macet")
+                    stopReason = "encoder video macet"
+                    stopRecording()
+                    return
+                }
+
+                WatchdogAction.EncoderSurfaceFailed -> {
+                    diag("watchdog: surface encoder gagal")
+                    stopReason = "surface encoder gagal"
+                    stopRecording()
+                    return
+                }
+
+                WatchdogAction.Continue -> Unit
             }
             // Preview boleh tertahan tanpa mengganggu rekaman; dicatat saja.
             if (previewVisible && previewInFlight.get() &&
@@ -301,14 +318,33 @@ class RecordingPipeline(
     }
 
     /** Mulai menulis MP4 memakai sesi pratinjau yang sudah berjalan. */
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        // PARTIAL menjaga CPU; layar bright menjaga display tetap hidup agar
+        // MediaProjection tidak dihentikan sistem saat layar auto-lock.
+        val flags = PowerManager.PARTIAL_WAKE_LOCK
+        wakeLock = power.newWakeLock(flags, "RoutAir::recording").apply {
+            setReferenceCounted(false)
+            runCatching { acquire(6 * 60 * 60 * 1000L) }
+        }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.release() }
+        wakeLock = null
+    }
+
     fun startRecording() {
         glHandler.post {
             if (teardownStarted || recordingActive) return@post
             try {
+                acquireWakeLock()
                 beginRecording()
             } catch (error: Throwable) {
                 Log.e(TAG, "Gagal memulai rekaman", error)
                 diag("rekam gagal: ${error.message}")
+                releaseWakeLock()
                 abortRecording(error.message ?: "Gagal memulai rekaman")
             }
         }
@@ -328,6 +364,7 @@ class RecordingPipeline(
                 .onFailure { Log.w(TAG, "Trek audio gagal dihentikan: ${it.message}") }
             glHandler.post { endRecording() }
         }, "rout-stop").start()
+        releaseWakeLock()
     }
 
     /** Menutup sesi sepenuhnya: pratinjau berhenti dan projection dilepas. */
@@ -335,6 +372,7 @@ class RecordingPipeline(
         if (teardownStarted) return
         teardownStarted = true
         running = false
+        releaseWakeLock()
         val stopPtsUs = if (hasEncodedFrame) lastEncodedNs / 1_000L else Long.MAX_VALUE
         Thread({
             runCatching { audioEncoder?.shutdown(stopPtsUs) }
@@ -1344,6 +1382,7 @@ class RecordingPipeline(
     }
 
     private fun releaseProjection() {
+        releaseWakeLock()
         val active = projection ?: return
         runCatching { active.unregisterCallback(projectionCallback) }
         runCatching { active.stop() }

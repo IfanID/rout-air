@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -34,8 +36,29 @@ class CaptureService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var sawActiveState = false
 
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val off = intent?.action == Intent.ACTION_SCREEN_OFF
+            com.rout.air.data.DiagLog.line(
+                if (off) "layar: SCREEN_OFF" else "layar: SCREEN_ON",
+            )
+            if (off) {
+                com.rout.air.data.DiagLog.writeToDownloads(this@CaptureService)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+        runCatching {
+            registerReceiver(
+                screenReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                },
+            )
+        }
         AudioMixer.attach(this)
         createChannel()
 
@@ -133,6 +156,8 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(screenReceiver) }
+        com.rout.air.data.DiagLog.line("CaptureService: onDestroy")
         if (CaptureEngine.sessionActive.value) {
             CaptureEngine.closeSession()
         }

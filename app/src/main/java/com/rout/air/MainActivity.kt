@@ -1,5 +1,6 @@
 package com.rout.air
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -15,6 +16,13 @@ import com.rout.air.ui.RoutAirApp
 import com.rout.air.ui.theme.RoutAirTheme
 
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getStringExtra("open_tab") == "studio") {
+            com.rout.air.data.UiEvents.openStudio.tryEmit(Unit)
+        }
+    }
+
     override fun onStart() {
         super.onStart()
         visible = true
@@ -34,7 +42,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             RoutAirTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    RoutAirApp(modifier = Modifier.safeDrawingPadding())
+                    RoutAirApp(
+                        initialStudio = intent?.getStringExtra("open_tab") == "studio",
+                        modifier = Modifier.safeDrawingPadding(),
+                    )
                 }
             }
         }

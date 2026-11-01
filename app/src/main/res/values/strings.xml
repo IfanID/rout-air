@@ -283,4 +283,12 @@
     <string name="overlay_link">Tautan</string>
     <string name="overlay_camera">Kamera</string>
     <string name="overlay_warning">Peringatan</string>
+    <string name="overlay_resize">Ubah ukuran</string>
+    <string name="floating_hide">Sembunyikan</string>
+    <string name="session_lost_title">Sesi tangkap layar berhenti</string>
+    <string name="session_lost_text">Izin dihentikan sistem saat layar mati. Lanjutkan sesi sekarang?</string>
+    <string name="overlay_preview">Pratinjau</string>
+    <string name="overlay_studio">Buka Studio</string>
+    <string name="overlay_no_messages">Belum ada pesan</string>
+    <string name="overlay_no_audio">Tidak ada audio aktif</string>
 </resources>

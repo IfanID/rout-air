@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.provider.Settings
 import android.os.Build
+import android.os.PowerManager
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,10 +19,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -70,7 +73,7 @@ enum class AppTab(val title: String, val symbol: String) {
 }
 
 @Composable
-fun RoutAirApp(modifier: Modifier = Modifier) {
+fun RoutAirApp(initialStudio: Boolean = false, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val store = remember(context) { SettingsStore(context) }
@@ -82,7 +85,14 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
     val audioMix by AudioMixer.mix.collectAsState()
 
     var config by remember { mutableStateOf(store.load()) }
-    var tab by rememberSaveable { mutableStateOf(AppTab.Home) }
+    var tab by rememberSaveable {
+        mutableStateOf(if (initialStudio) AppTab.Studio else AppTab.Home)
+    }
+
+    // Overlay dapat meminta membuka tab Studio.
+    LaunchedEffect(Unit) {
+        com.rout.air.data.UiEvents.openStudio.collect { tab = AppTab.Studio }
+    }
     var elapsedMs by remember { mutableStateOf(0L) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
     // Status pratinjau penuh disimpan di sini supaya tetap diingat saat
@@ -186,12 +196,33 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
         }
     }
 
+    // Minta bebas battery optimization agar OEM tidak membunuh sesi saat layar mati.
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        OverlayRecordService.start(context)
+    }
+
+    fun startOverlayWithBatteryExemption() {
+        val power = context.getSystemService(PowerManager::class.java)
+        if (power != null && !power.isIgnoringBatteryOptimizations(context.packageName)) {
+            batteryLauncher.launch(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        } else {
+            OverlayRecordService.start(context)
+        }
+    }
+
     // Izin "tampil di atas aplikasi lain" untuk tombol melayang sistem.
     val overlayLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
         if (Settings.canDrawOverlays(context)) {
-            OverlayRecordService.start(context)
+            startOverlayWithBatteryExemption()
         }
     }
 
@@ -208,7 +239,7 @@ fun RoutAirApp(modifier: Modifier = Modifier) {
                 ),
             )
         } else {
-            OverlayRecordService.start(context)
+            startOverlayWithBatteryExemption()
         }
     }
 
