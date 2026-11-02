@@ -255,12 +255,25 @@ object CaptureEngine {
     /**
      * Dipanggil saat pengguna membatalkan dialog izin tangkap layar. Sesi
      * tidak pernah dimulai, jadi tidak ada tangkapan yang berjalan; pesan
-     * ini hanya memberi jalan mencoba lagi lewat tombol rekam.
+     * ini mengarahkan ke tombol cadangan di pojok kanan atas.
      */
     fun reportPermissionCancelled() {
         if (!_sessionActive.value) {
             _state.value = RecordingState.Error(
-                "Izin tangkap layar dibatalkan • tekan rekam untuk mencoba lagi",
+                "Izin tangkap layar dibatalkan • tekan ikon izin di kanan atas untuk mencoba lagi",
+            )
+        }
+    }
+
+    /**
+     * Aksi rekam/siaran dipanggil tanpa sesi tangkapan. Dialog izin sengaja
+     * tidak dibuka dari sini; tombol ikon di pojok kanan atas yang menjadi
+     * satu-satunya cara manual meminta izin.
+     */
+    fun reportPermissionNeeded() {
+        if (!_sessionActive.value) {
+            _state.value = RecordingState.Error(
+                "Izin tangkap layar belum aktif • tekan ikon izin di kanan atas",
             )
         }
     }

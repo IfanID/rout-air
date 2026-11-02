@@ -382,14 +382,14 @@ fun RoutAirApp(
         }
     }
 
-    // Tombol rekam: kalau sesi pratinjau belum ada (mis. izin tadi dibatalkan),
-    // buka sesi dulu — jangan langsung merekam. Rekaman dimulai oleh tekanan
-    // berikutnya setelah sesi siap.
+    // Tombol rekam hanya merekam saat sesi tangkapan sudah aktif. Bila izin
+    // belum ada, jangan buka dialog izin dari sini: pengguna diarahkan ke
+    // tombol cadangan di pojok kanan atas.
     val startRecording: () -> Unit = {
         if (CaptureEngine.sessionActive.value) {
             CaptureEngine.startRecording()
         } else {
-            beginSession(autoRecord = false)
+            CaptureEngine.reportPermissionNeeded()
         }
     }
     val stopRecording: () -> Unit = { CaptureEngine.stopRecording() }
@@ -403,15 +403,17 @@ fun RoutAirApp(
                 if (CaptureEngine.sessionActive.value) {
                     CaptureEngine.restartLive(liveConfig)
                 } else {
+                    // Siaran ditunda: izin diminta lewat ikon di kanan atas,
+                    // lalu siaran mulai sendiri saat sesi siap.
                     pendingLive = true
-                    beginSession(autoRecord = false)
+                    CaptureEngine.reportPermissionNeeded()
                 }
             }
 
             CaptureEngine.sessionActive.value -> CaptureEngine.startLive(liveConfig)
             else -> {
                 pendingLive = true
-                beginSession(autoRecord = false)
+                CaptureEngine.reportPermissionNeeded()
             }
         }
     }
@@ -621,6 +623,7 @@ fun RoutAirApp(
                     onResume = resumeRecording,
                     onToggleLive = toggleLive,
                     onClearError = { CaptureEngine.clearError() },
+                    onRequestPermission = { beginSession(autoRecord = false) },
                     fullscreen = studioFullscreen,
                     onFullscreenChange = { studioFullscreen = it },
                 )

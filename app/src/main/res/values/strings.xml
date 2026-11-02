@@ -434,6 +434,7 @@
     <string name="overlay_settings">Buka aplikasi</string>
     <string name="overlay_grid">Tata letak</string>
     <string name="overlay_chat">Obrolan</string>
+    <string name="overlay_chat_latest">Ke pesan terbaru</string>
     <string name="overlay_mixer">Mixer</string>
     <string name="overlay_link">Tautan</string>
     <string name="overlay_camera">Kamera</string>

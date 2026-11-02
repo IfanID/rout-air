@@ -11,6 +11,11 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
+import android.graphics.Typeface
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -24,6 +29,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.app.NotificationCompat
@@ -44,6 +50,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.rout.air.live.prepareYouTubeBroadcast
+import com.rout.air.live.ChatBubble
+import com.rout.air.live.ChatMessage
+import com.rout.air.live.VERIFIED_COLOR
+import com.rout.air.live.bubbleDurationMs
+import com.rout.air.live.emoji
+import com.rout.air.live.nameColor
+import com.rout.air.ui.ChatBubbleStack
 import com.rout.air.ui.LiveSetupCard
 import com.rout.air.ui.OverlayAudioPanel
 import com.rout.air.ui.OverlayScreensaverPanel
@@ -86,8 +99,11 @@ class OverlayLiveService : Service() {
     private lateinit var previewBox: FrameLayout
     private lateinit var messageBox: FrameLayout
     private lateinit var chatBody: TextView
+    private lateinit var chatScroll: ScrollView
+    private lateinit var chatJumpButton: ImageButton
     private lateinit var viewerLabel: TextView
     private lateinit var signalLabel: TextView
+    private lateinit var bubbleCompose: ComposeView
     private lateinit var screensaverButton: ImageButton
     private var setupWindow: ComposeView? = null
     private lateinit var vuBox: FrameLayout
@@ -113,9 +129,19 @@ class OverlayLiveService : Service() {
 
     private var logoX = 0
     private var logoY = 0
+    private lateinit var logoParams: FrameLayout.LayoutParams
     private var panelW = 0
     private var panelH = 0
     private var previewH = 0
+
+    /** Bubble chat yang tampil di bawah logo; maksimal [MAX_BUBBLES]. */
+    private val bubbleState = mutableStateOf<List<ChatBubble>>(emptyList())
+    private val seenBubbleIds = LinkedHashSet<String>()
+    /** Pesan lama saat siaran baru terdeteksi tidak ikut muncul sebagai bubble. */
+    private var bubblePrimed = false
+    /** Penanda transisi live -> tidak live untuk membersihkan bubble. */
+    private var chatWasLive = false
+    private val bubbleGapPx by lazy { dp(6) }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).roundToInt()
@@ -225,9 +251,29 @@ class OverlayLiveService : Service() {
             contentDescription = getString(R.string.floating_button)
             setOnTouchListener(logoDragListener)
         }
-        root.addView(logo, FrameLayout.LayoutParams(logoPx, logoPx).apply {
+        logoParams = FrameLayout.LayoutParams(logoPx, logoPx).apply {
             gravity = Gravity.TOP or Gravity.START
-        })
+        }
+        root.addView(logo, logoParams)
+
+        bubbleCompose = ComposeView(this).apply {
+            visibility = View.GONE
+            setContent {
+                RoutAirTheme {
+                    ChatBubbleStack(
+                        bubbles = bubbleState.value,
+                        onGone = { id -> removeBubble(id) },
+                    )
+                }
+            }
+        }
+        root.addView(
+            bubbleCompose,
+            FrameLayout.LayoutParams(bubbleWidthPx(false), FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = logoPx + bubbleGapPx
+            },
+        )
 
         panel = FrameLayout(this).apply {
             background = panelBackground()
@@ -347,38 +393,77 @@ class OverlayLiveService : Service() {
             gravity = Gravity.TOP
         })
 
-        // Panel pesan (placeholder) dan panel VU audio.
+        // Panel obrolan: judul tetap di atas, isi memenuhi sisa panel dan
+        // bisa digulir bila pesan lebih banyak dari tinggi panel.
         messageBox = FrameLayout(this).apply {
             background = boxBackground()
             visibility = View.GONE
             val title = TextView(this@OverlayLiveService).apply {
                 text = getString(R.string.overlay_chat)
-                setTextColor(Color.WHITE)
-                textSize = 13f
-            }
-            val body = TextView(this@OverlayLiveService).apply {
-                text = getString(R.string.overlay_no_messages)
-                setTextColor(Color.parseColor("#B8C2CC"))
+                setTextColor(Color.parseColor("#DCE3EA"))
                 textSize = 12f
+                setPadding(dp(14), dp(10), dp(14), dp(8))
             }
-            chatBody = body
+            chatBody = TextView(this@OverlayLiveService).apply {
+                text = getString(R.string.overlay_no_messages)
+                setTextColor(Color.parseColor("#E6EAEE"))
+                textSize = 12f
+                setLineSpacing(dp(2).toFloat(), 1f)
+                setPadding(dp(14), dp(10), dp(14), dp(12))
+            }
+            chatScroll = ScrollView(this@OverlayLiveService).apply {
+                isFillViewport = true
+                isVerticalScrollBarEnabled = true
+                addView(
+                    chatBody,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            // Tombol ke pesan terbaru: hanya terlihat saat digulir ke atas.
+            chatJumpButton = ImageButton(this@OverlayLiveService).apply {
+                stateListAnimator = null
+                elevation = 0f
+                setBackgroundColor(Color.TRANSPARENT)
+                setImageResource(R.drawable.ic_arrow_down)
+                setColorFilter(Color.parseColor("#00E5FF"))
+                contentDescription = getString(R.string.overlay_chat_latest)
+                setPadding(dp(5), dp(5), dp(5), dp(5))
+                visibility = View.GONE
+                setOnClickListener {
+                    chatScroll.smoothScrollTo(0, chatBody.height)
+                    visibility = View.GONE
+                }
+            }
+            chatScroll.setOnScrollChangeListener { _, _, _, _, _ -> updateChatJumpButton() }
             addView(title, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                leftMargin = dp(12)
-                topMargin = dp(10)
             })
-            addView(body, FrameLayout.LayoutParams(
+            addView(View(this@OverlayLiveService).apply {
+                setBackgroundColor(Color.parseColor("#1FFFFFFF"))
+            }, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(1),
+            ).apply {
+                gravity = Gravity.TOP
+                topMargin = dp(34)
+            })
+            addView(chatScroll, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = dp(12)
-                rightMargin = dp(12)
-                topMargin = dp(34)
-                bottomMargin = dp(8)
+                gravity = Gravity.TOP
+                topMargin = dp(35)
+            })
+            addView(chatJumpButton, FrameLayout.LayoutParams(dp(28), dp(28)).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dp(3)
+                marginEnd = dp(8)
             })
         }
         panel.addView(messageBox, contentParams())
@@ -799,11 +884,60 @@ class OverlayLiveService : Service() {
         val metrics = resources.displayMetrics
         val screenW = metrics.widthPixels
         val screenH = metrics.heightPixels
-        logoX = logoX.coerceIn(0, (screenW - width).coerceAtLeast(0))
-        logoY = logoY.coerceIn(0, (screenH - height).coerceAtLeast(0))
-        params.x = logoX
+
+        if (menuOpen) {
+            // Panel selalu tumbuh ke kanan dari titik logo.
+            logoX = logoX.coerceIn(0, (screenW - width).coerceAtLeast(0))
+            logoY = logoY.coerceIn(0, (screenH - height).coerceAtLeast(0))
+            params.x = logoX
+            params.y = logoY
+            runCatching { windowManager.updateViewLayout(root, params) }
+            return
+        }
+
+        // Sisi bubble mengikuti posisi logo: logo di kiri -> bubble ke kanan,
+        // logo di kanan -> bubble ke kiri agar tidak keluar layar.
+        val logoCenter = logoX + logoPx / 2f
+        val bubbleOnRight = logoCenter <= screenW / 2f
+        val bubbleW = bubbleWidthPx(bubbleOnRight)
+        (bubbleCompose.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.width != bubbleW) {
+                lp.width = bubbleW
+                bubbleCompose.layoutParams = lp
+            }
+        }
+
+        // Jendela selebar bubble; logo digeser ke tepi kanan jendela saat
+        // bubble berada di kiri.
+        val windowW = maxOf(logoPx, bubbleW)
+        val marginLeft = if (bubbleOnRight) 0 else windowW - logoPx
+        if (logoParams.leftMargin != marginLeft) {
+            logoParams.leftMargin = marginLeft
+            logo.layoutParams = logoParams
+        }
+
+        // Sisakan ruang bawah untuk bubble yang sedang tampil.
+        val reserve = bubbleReservePx()
+        if (bubbleOnRight) {
+            logoX = logoX.coerceIn(0, (screenW - windowW).coerceAtLeast(0))
+        } else {
+            logoX = logoX.coerceIn(
+                marginLeft,
+                (screenW - logoPx).coerceAtLeast(0),
+            )
+        }
+        logoY = logoY.coerceIn(0, (screenH - logoPx - reserve).coerceAtLeast(0))
+
+        params.x = logoX - marginLeft
         params.y = logoY
         runCatching { windowManager.updateViewLayout(root, params) }
+    }
+
+    /** Perkiraan tinggi bubble yang sedang tampil agar jendela tidak terpotong. */
+    private fun bubbleReservePx(): Int {
+        val count = bubbleState.value.count { !it.leaving }
+        if (count == 0) return 0
+        return count * dp(58) + (count - 1) * bubbleGapPx
     }
 
     private fun setMenuOpen(open: Boolean) {
@@ -811,6 +945,7 @@ class OverlayLiveService : Service() {
         if (open) {
             computePanelSize()
             logo.visibility = View.GONE
+            bubbleCompose.visibility = View.GONE
             panel.visibility = View.VISIBLE
             applyPosition(panelW, panelH)
             maybeAttach()
@@ -819,6 +954,8 @@ class OverlayLiveService : Service() {
             applyPosition(logoPx, logoPx)
             panel.visibility = View.GONE
             logo.visibility = View.VISIBLE
+            updateBubbleVisibility()
+            updateChatJumpButton()
             detachPreview()
         }
     }
@@ -885,15 +1022,167 @@ class OverlayLiveService : Service() {
         scope.launch {
             com.rout.air.live.ChatMonitor.state.collect { chat ->
                 viewerLabel.text = if (chat.viewers >= 0) chat.viewers.toString() else "–"
-                chatBody.text = when {
-                    chat.messages.isNotEmpty() -> chat.messages
-                        .takeLast(CHAT_LINES)
-                        .joinToString("\n") { "${it.author}: ${it.text}" }
-                    chat.status.isNotBlank() -> chat.status
-                    else -> getString(R.string.overlay_no_messages)
+                if (!chat.live) {
+                    // Siaran berakhir: bubble lama dibuang dan id dilupakan.
+                    if (chatWasLive) {
+                        chatWasLive = false
+                        bubblePrimed = false
+                        seenBubbleIds.clear()
+                        bubbleState.value = emptyList()
+                    }
+                } else {
+                    chatWasLive = true
+                    syncBubbles(chat.messages)
                 }
+                renderChat(chat.messages, chat.status)
+                updateBubbleVisibility()
             }
         }
+    }
+
+    /** Isi panel Obrolan: pesan terakhir dari chat YouTube. */
+    private fun renderChat(messages: List<ChatMessage>, status: String) {
+        val shown = messages.takeLast(CHAT_LINES)
+        // Tetap di bawah bila pengguna belum menggulir ke atas.
+        val stickToBottom = chatScroll.height == 0 ||
+            chatScroll.scrollY + chatScroll.height >= chatBody.height - dp(24)
+        chatBody.text = when {
+            shown.isNotEmpty() -> chatSpans(shown)
+            status.isNotBlank() -> status
+            else -> getString(R.string.overlay_no_messages)
+        }
+        if (stickToBottom) {
+            chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+        chatScroll.post { updateChatJumpButton() }
+    }
+
+    /** Tombol panah hanya tampil saat isi obrolan tidak berada di dasar. */
+    private fun updateChatJumpButton() {
+        if (!::chatJumpButton.isInitialized || !::chatScroll.isInitialized) return
+        val atBottom = chatBody.height == 0 ||
+            chatScroll.scrollY + chatScroll.height >= chatBody.height - dp(24)
+        val show = !atBottom && menuOpen && messageBox.visibility == View.VISIBLE
+        chatJumpButton.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    /** Bubble tampil saat live atau saat ada pesan uji di layar. */
+    private fun updateBubbleVisibility() {
+        val visible = !menuOpen && (
+            com.rout.air.live.ChatMonitor.state.value.live || bubbleState.value.isNotEmpty()
+            )
+        bubbleCompose.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    /** Mencatat pesan baru sebagai bubble; pesan lama saat baru tersambung dilewati. */
+    private fun syncBubbles(messages: List<ChatMessage>) {
+        val fresh = messages.filter { it.id.isNotBlank() }
+        if (!bubblePrimed) {
+            bubblePrimed = true
+            fresh.forEach { rememberBubbleId(it.id) }
+            return
+        }
+        fresh.forEach { message ->
+            if (rememberBubbleId(message.id)) showBubble(message)
+        }
+    }
+
+    /** true bila id ini belum pernah tampil. */
+    private fun rememberBubbleId(id: String): Boolean {
+        if (!seenBubbleIds.add(id)) return false
+        if (seenBubbleIds.size > SEEN_LIMIT) {
+            val oldest = seenBubbleIds.iterator()
+            if (oldest.hasNext()) {
+                oldest.next()
+                oldest.remove()
+            }
+        }
+        return true
+    }
+
+    private fun showBubble(message: ChatMessage) {
+        val bubble = ChatBubble(
+            id = message.id,
+            author = message.author,
+            text = message.text,
+            role = message.role,
+            verified = message.verified,
+        )
+        // Bubble baru di atas; hanya [MAX_BUBBLES] yang terlihat. Pesan ke-4
+        // mendorong yang paling bawah keluar, seperti chat YouTube.
+        var visible = 0
+        bubbleState.value = (listOf(bubble) + bubbleState.value).map { item ->
+            val keep = !item.leaving && visible < MAX_BUBBLES
+            if (keep) visible++
+            if (keep || item.leaving) item else item.copy(leaving = true)
+        }
+        // Bubble hilang sendiri agar tidak menutupi layar saat chat sepi.
+        scope.launch {
+            delay(bubbleDurationMs(message.text))
+            markBubbleLeaving(bubble.id)
+        }
+        if (!menuOpen) {
+            // Pastikan ruang di bawah logo cukup untuk bubble yang tampil.
+            applyPosition(logoPx, logoPx)
+        }
+    }
+
+    private fun markBubbleLeaving(id: String) {
+        bubbleState.value = bubbleState.value.map {
+            if (it.id == id && !it.leaving) it.copy(leaving = true) else it
+        }
+    }
+
+    private fun removeBubble(id: String) {
+        bubbleState.value = bubbleState.value.filterNot { it.id == id }
+        updateBubbleVisibility()
+    }
+
+    /** Panel obrolan: nama (berwarna per peran) di atas, pesan di bawah. */
+    private fun chatSpans(messages: List<ChatMessage>): CharSequence {
+        val out = SpannableStringBuilder()
+        messages.forEachIndexed { index, message ->
+            if (index > 0) out.append("\n\n")
+            val badge = message.role.emoji()
+            val nameStart = out.length
+            if (badge.isNotEmpty()) out.append(badge).append(' ')
+            out.append(message.author)
+            out.setSpan(
+                ForegroundColorSpan(message.role.nameColor()),
+                nameStart,
+                out.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            out.setSpan(
+                StyleSpan(Typeface.BOLD),
+                nameStart,
+                out.length,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            if (message.verified) {
+                val checkStart = out.length
+                out.append(" ✔")
+                out.setSpan(
+                    ForegroundColorSpan(VERIFIED_COLOR),
+                    checkStart,
+                    out.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+            out.append('\n').append(message.text)
+        }
+        return out
+    }
+
+    /** Lebar bubble mengikuti ruang di sisi logo agar tidak keluar layar. */
+    private fun bubbleWidthPx(bubbleOnRight: Boolean): Int {
+        val screenW = resources.displayMetrics.widthPixels
+        val room = if (bubbleOnRight) {
+            screenW - logoX - dp(8)
+        } else {
+            logoX + logoPx - dp(8)
+        }
+        return min(dp(260), room.coerceAtLeast(dp(140)))
     }
 
 
@@ -972,6 +1261,15 @@ class OverlayLiveService : Service() {
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
         jedaBox.visibility = if (mode == ContentMode.Screensaver) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
+        // Saat panel obrolan dibuka, tampilkan pesan terbaru di bawah.
+        if (mode == ContentMode.Messages) {
+            chatScroll.post {
+                chatScroll.fullScroll(View.FOCUS_DOWN)
+                updateChatJumpButton()
+            }
+        } else {
+            updateChatJumpButton()
+        }
     }
 
     private fun openStudio() {
@@ -1094,7 +1392,12 @@ class OverlayLiveService : Service() {
     companion object {
         private const val CHANNEL_ID = "routair_overlay"
         private const val NOTIFICATION_ID = 21
-        private const val CHAT_LINES = 10
+        /** Jumlah pesan terakhir yang tampil di panel Obrolan (sama dengan buffer ChatMonitor). */
+        private const val CHAT_LINES = 60
+        /** Maksimal bubble chat yang tampil bersamaan di bawah logo. */
+        private const val MAX_BUBBLES = 3
+        /** Batas ingatan id pesan agar chat lama tidak muncul lagi. */
+        private const val SEEN_LIMIT = 200
         const val ACTION_STOP = "com.rout.air.action.OVERLAY_LIVE_STOP"
 
         val running = MutableStateFlow(false)

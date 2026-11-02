@@ -106,6 +106,8 @@ internal fun RecordButton(
     onClick: () -> Unit,
     preparing: Boolean = false,
     paused: Boolean = false,
+    /** Halaman Siaran memakai gaya netral seperti tombol Live/Overlay. */
+    neutralWhenReady: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -125,11 +127,13 @@ internal fun RecordButton(
     val container = when {
         !enabled -> scheme.surfaceVariant
         isActive -> Color(0xFFE53935)
+        neutralWhenReady -> scheme.surfaceVariant
         else -> scheme.primary
     }
     val content = when {
         !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.6f)
         isActive -> Color.White
+        neutralWhenReady -> scheme.onSurfaceVariant
         else -> scheme.onPrimary
     }
 

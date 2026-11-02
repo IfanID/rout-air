@@ -93,6 +93,7 @@ fun StudioScreen(
     onResume: () -> Unit,
     onToggleLive: () -> Unit,
     onClearError: () -> Unit,
+    onRequestPermission: () -> Unit,
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -127,6 +128,17 @@ fun StudioScreen(
             }
             if (state is RecordingState.Error) {
                 TextButton(onClick = onClearError) { Text(stringResource(R.string.common_tutup)) }
+            }
+            // Cadangan izin tangkap layar: satu-satunya jalan manual, sama
+            // seperti ikon di pojok kanan atas halaman Siaran.
+            if (state is RecordingState.Idle || state is RecordingState.Error) {
+                IconButton(onClick = onRequestPermission) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_screen_permission),
+                        contentDescription = stringResource(R.string.home_izin_rekam_layar),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             // Satu tombol di header: ikon full screen saat normal, ikon ✕
             // saat pratinjau penuh. Posisinya sama supaya konsisten.

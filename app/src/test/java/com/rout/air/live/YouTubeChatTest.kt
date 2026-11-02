@@ -52,19 +52,60 @@ class YouTubeChatTest {
               "nextPageToken":"NEXT1",
               "pollingIntervalMillis":3000,
               "items":[
-                {"snippet":{"displayMessage":"halo"},"authorDetails":{"displayName":"Budi"}},
-                {"snippet":{"displayMessage":"  "},"authorDetails":{"displayName":"Ani"}},
-                {"snippet":{"displayMessage":"hai"},"authorDetails":{}}
+                {"id":"M1","snippet":{"displayMessage":"halo"},"authorDetails":{"displayName":"Budi"}},
+                {"id":"M2","snippet":{"displayMessage":"  "},"authorDetails":{"displayName":"Ani"}},
+                {"id":"M3","snippet":{"displayMessage":"hai"},"authorDetails":{}}
               ]
             }
             """.trimIndent(),
         )
         val page = parseChatPage(json)
         assertEquals(2, page.messages.size)
-        assertEquals(ChatMessage("Budi", "halo"), page.messages[0])
+        assertEquals(
+            ChatMessage(id = "M1", author = "Budi", text = "halo"),
+            page.messages[0],
+        )
         assertEquals("Penonton", page.messages[1].author)
         assertEquals("NEXT1", page.nextPageToken)
         assertEquals(3000L, page.intervalMs)
+    }
+
+    @Test
+    fun `peran diambil dengan prioritas owner lalu moderator lalu member`() {
+        val json = JSONObject(
+            """
+            {"items":[
+              {"id":"A","snippet":{"displayMessage":"a"},"authorDetails":{
+                "displayName":"Pemilik","isChatOwner":true,"isChatModerator":true,"isChatSponsor":true
+              }},
+              {"id":"B","snippet":{"displayMessage":"b"},"authorDetails":{
+                "displayName":"Mod","isChatModerator":true,"isChatSponsor":true
+              }},
+              {"id":"C","snippet":{"displayMessage":"c"},"authorDetails":{
+                "displayName":"Member","isChatSponsor":true
+              }},
+              {"id":"D","snippet":{"displayMessage":"d"},"authorDetails":{"displayName":"Biasa"}}
+            ]}
+            """.trimIndent(),
+        )
+        val page = parseChatPage(json)
+        assertEquals(ChatRole.Owner, page.messages[0].role)
+        assertEquals(ChatRole.Moderator, page.messages[1].role)
+        assertEquals(ChatRole.Member, page.messages[2].role)
+        assertEquals(ChatRole.Viewer, page.messages[3].role)
+    }
+
+    @Test
+    fun `akun terverifikasi ditandai`() {
+        val json = JSONObject(
+            """
+            {"items":[{"id":"V","snippet":{"displayMessage":"halo"},
+              "authorDetails":{"displayName":"Terverifikasi","isVerified":true}}]}
+            """.trimIndent(),
+        )
+        val message = parseChatPage(json).messages.single()
+        assertEquals(true, message.verified)
+        assertEquals(ChatRole.Viewer, message.role)
     }
 
     @Test

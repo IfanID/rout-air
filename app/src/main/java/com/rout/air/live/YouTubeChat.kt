@@ -18,9 +18,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** Satu pesan chat yang sudah siap ditampilkan. */
-data class ChatMessage(val author: String, val text: String)
-
 /** Data chat + penonton yang dipakai overlay Live. */
 data class ChatState(
     val status: String = "",
@@ -100,11 +97,25 @@ internal fun parseChatPage(json: JSONObject): ChatPage {
         val item = items?.optJSONObject(i) ?: continue
         val text = item.optJSONObject("snippet")?.optString("displayMessage").orEmpty()
         if (text.isBlank()) continue
-        val author = item.optJSONObject("authorDetails")
+        val details = item.optJSONObject("authorDetails")
+        val author = details
             ?.optString("displayName")
             ?.takeIf { it.isNotBlank() }
             ?: "Penonton"
-        messages += ChatMessage(author, text)
+        // Urutan prioritas lencana: pemilik channel, moderator, lalu member.
+        val role = when {
+            details?.optBoolean("isChatOwner") == true -> ChatRole.Owner
+            details?.optBoolean("isChatModerator") == true -> ChatRole.Moderator
+            details?.optBoolean("isChatSponsor") == true -> ChatRole.Member
+            else -> ChatRole.Viewer
+        }
+        messages += ChatMessage(
+            id = item.optString("id"),
+            author = author,
+            text = text,
+            role = role,
+            verified = details?.optBoolean("isVerified") == true,
+        )
     }
     return ChatPage(
         messages = messages,

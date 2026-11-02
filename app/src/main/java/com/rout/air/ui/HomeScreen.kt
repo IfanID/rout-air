@@ -257,6 +257,7 @@ fun HomeScreen(
                 enabled = state !is RecordingState.Preparing,
                 preparing = state is RecordingState.Preparing,
                 paused = paused,
+                neutralWhenReady = true,
                 modifier = Modifier.weight(1f),
                 onClick = { if (isActive) onStop() else onStart() },
             )
