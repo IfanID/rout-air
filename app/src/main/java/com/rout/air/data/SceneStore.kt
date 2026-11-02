@@ -156,6 +156,68 @@ object SceneManager {
         store?.save(next)
     }
 
+    /**
+     * Menyesuaikan seluruh item ketika ukuran kanvas berubah.
+     *
+     * Tanpa ini, item yang tadinya di tengah kanvas portrait bisa berada di
+     * luar kanvas landscape sehingga hasilnya hitam. Posisi diskalakan
+     * proporsional; sumber Layar dengan template dihitung ulang kotaknya.
+     */
+    fun rescaleCanvas(fromWidth: Int, fromHeight: Int, toWidth: Int, toHeight: Int) {
+        if (fromWidth <= 0 || fromHeight <= 0 || toWidth <= 0 || toHeight <= 0) return
+        val current = collection ?: return
+        if (fromWidth == toWidth && fromHeight == toHeight) return
+        val factorX = toWidth.toFloat() / fromWidth
+        val factorY = toHeight.toFloat() / fromHeight
+
+        val next = current.copy(
+            scenes = current.scenes.map { scene ->
+                scene.copy(
+                    items = scene.items.map { item ->
+                        val source = current.sources.firstOrNull { it.id == item.sourceId }
+                        val display = source?.settings?.screenDisplay
+                        val scale = if (source?.type == com.rout.air.core.SourceType.Screen &&
+                            display != null &&
+                            display != com.rout.air.core.ScreenDisplay.Auto
+                        ) {
+                            val base = toWidth.toFloat() / toHeight.toFloat()
+                            val aspect = when (display) {
+                                com.rout.air.core.ScreenDisplay.Landscape ->
+                                    if (base >= 1f) base else 1f / base
+
+                                com.rout.air.core.ScreenDisplay.Portrait ->
+                                    if (base <= 1f) base else 1f / base
+
+                                com.rout.air.core.ScreenDisplay.Auto -> base
+                            }
+                            val boxWidth = minOf(toWidth.toFloat(), toHeight * aspect)
+                            val boxHeight = boxWidth / aspect
+                            boxWidth / toWidth to boxHeight / toHeight
+                        } else {
+                            item.transform.scaleX to item.transform.scaleY
+                        }
+                        item.copy(
+                            transform = item.transform.copy(
+                                x = item.transform.x * factorX,
+                                y = item.transform.y * factorY,
+                                scaleX = scale.first,
+                                scaleY = scale.second,
+                            ),
+                        )
+                    },
+                )
+            },
+        )
+        collection = next
+        _state.value = next
+        // Program ikut diperbarui agar pratinjau dan hasil rekaman sama.
+        if (programBeforeScreensaver == null) {
+            programCollection = next
+            _program.value = next
+        }
+        store?.save(next)
+    }
+
     /** Dipakai UI saat flow belum terisi (mis. sesi dipulihkan). */
     fun ensure(width: Int, height: Int): SceneCollection {
         collection?.let { return it }

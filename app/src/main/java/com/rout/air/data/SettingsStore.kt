@@ -72,6 +72,20 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    /** Ukuran kanvas terakhir yang dipakai menyusun scene. */
+    fun loadSceneCanvas(): Pair<Int, Int>? {
+        val width = prefs.getInt(KEY_SCENE_CANVAS_W, 0)
+        val height = prefs.getInt(KEY_SCENE_CANVAS_H, 0)
+        return if (width > 0 && height > 0) width to height else null
+    }
+
+    fun saveSceneCanvas(width: Int, height: Int) {
+        prefs.edit()
+            .putInt(KEY_SCENE_CANVAS_W, width)
+            .putInt(KEY_SCENE_CANVAS_H, height)
+            .apply()
+    }
+
     /** Id scene layar jeda yang dipakai tombol overlay. */
     fun loadScreensaverSceneId(): String =
         prefs.getString(KEY_JEDA_SCENE, "").orEmpty()
@@ -126,6 +140,8 @@ class SettingsStore(context: Context) {
         const val KEY_LIVE_TRACK = "live_track"
         const val KEY_LIVE_ACCOUNT = "live_account_linked"
         const val KEY_JEDA_SCENE = "screensaver_scene_id"
+        const val KEY_SCENE_CANVAS_W = "scene_canvas_width"
+        const val KEY_SCENE_CANVAS_H = "scene_canvas_height"
 
         const val KEY_OUTPUT_SCALE = "output_scale_percent"
         const val KEY_KEYFRAME = "keyframe_interval"

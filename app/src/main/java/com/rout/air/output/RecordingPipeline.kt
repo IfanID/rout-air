@@ -77,7 +77,7 @@ class RecordingPipeline(
     private val context: Context,
     private val resultCode: Int,
     private val projectionData: Intent,
-    private val config: CaptureConfig,
+    private var config: CaptureConfig,
     previewSurface: Surface?,
     previewWidth: Int,
     previewHeight: Int,
@@ -229,6 +229,8 @@ class RecordingPipeline(
 
     @Volatile
     private var lastFrameWallNs = 0L
+    private var lastRecoveryAtMs = 0L
+    private var lastScreenDrawLog: String? = null
 
     @Volatile
     private var lastEncodedWallNs = 0L
@@ -292,6 +294,13 @@ class RecordingPipeline(
                         "audio=$audioActive ${telemetryText()}",
                 )
                 DiagLog.flush(context)
+            }
+            // Frame berhenti > 3 detik padahal sesi aktif: biasanya tanda
+            // VirtualDisplay berhenti setelah orientasi berubah.
+            if (running && lastFrame > 0 && now - lastFrame > 3_000_000_000L &&
+                !recordingClock.isPaused
+            ) {
+                recoverCapture("frame berhenti")
             }
             // Layar mati/terkunci membuat frame tangkapan berhenti. Jangan
             // hentikan rekaman: frame terakhir diulang oleh pengisi frame dan
@@ -634,6 +643,23 @@ class RecordingPipeline(
         glCompositor.setCanvasSize(config.width, config.height)
         compositor = glCompositor
 
+        // Scene disusun untuk kanvas tertentu. Kalau orientasi/ukuran berubah
+        // sejak terakhir disusun, posisinya disesuaikan agar tidak berada di
+        // luar kanvas (yang membuat hasil rekaman hitam).
+        val settings = com.rout.air.data.SettingsStore(context)
+        settings.loadSceneCanvas()?.let { (lastWidth, lastHeight) ->
+            if (lastWidth != config.width || lastHeight != config.height) {
+                SceneManager.rescaleCanvas(
+                    lastWidth,
+                    lastHeight,
+                    config.width,
+                    config.height,
+                )
+                diag("kanvas: scene disesuaikan ${lastWidth}x$lastHeight -> ${config.width}x${config.height}")
+            }
+        }
+        settings.saveSceneCanvas(config.width, config.height)
+
         val texture = GlUtil.createExternalTexture()
         textureId = texture
         val frameTexture = SurfaceTexture(texture)
@@ -777,6 +803,26 @@ class RecordingPipeline(
         diag("rekam: audio=$audioActive tujuan=$outputUri")
         onStats(RecordingStats())
         publishRecordingState()
+    }
+
+    /**
+     * Mengubah ukuran kanvas tanpa memulai ulang sesi. Hanya dipakai saat
+     * tidak merekam/menyiarkan, supaya berkas MP4 tidak berubah ukuran.
+     */
+    fun updateCanvas(width: Int, height: Int) {
+        glHandler.post {
+            if (width <= 0 || height <= 0) return@post
+            if (config.width == width && config.height == height) return@post
+            if (recordingActive || liveActive) return@post
+            val oldWidth = config.width
+            val oldHeight = config.height
+            config = config.copy(width = width, height = height)
+            compositor?.setCanvasSize(width, height)
+            previewPainter?.setCanvasSize(width, height)
+            // Scene sudah disesuaikan pemanggil (RoutAirApp). Melakukannya di
+            // sini lagi membuat posisi item bolak-balik dan sesaat meleset.
+            diag("kanvas: diperbarui ${oldWidth}x$oldHeight -> ${width}x$height")
+        }
     }
 
     /** Memulai live tanpa rekaman, atau menambah live saat rekaman berjalan. */
@@ -1074,6 +1120,31 @@ class RecordingPipeline(
         sourceWidth = width
         sourceHeight = height
         diag("layar berubah: ${width}x$height (resize=$resized)")
+        // Resize yang dilaporkan berhasil kadang tidak benar-benar mengirim
+        // frame lagi; display dibuat ulang supaya tangkapan tidak hitam.
+        if (!resized) recoverCapture("resize gagal")
+    }
+
+    /**
+     * Membuat ulang VirtualDisplay pada SurfaceTexture yang sama.
+     *
+     * Dipakai saat tangkapan berhenti mengirim frame setelah orientasi
+     * berubah. MediaProjection yang sama masih boleh membuat VirtualDisplay
+     * baru, jadi izin pengguna tidak perlu diminta ulang.
+     */
+    private fun recoverCapture(reason: String) {
+        val capture = screenCapture ?: return
+        val surface = virtualDisplaySurface ?: return
+        if (sourceWidth <= 0 || sourceHeight <= 0) return
+        val nowMs = System.currentTimeMillis()
+        // Jangan mencoba terlalu sering: satu percobaan per 10 detik.
+        if (nowMs - lastRecoveryAtMs < 10_000L) return
+        lastRecoveryAtMs = nowMs
+        diag("kaptur: pulihkan display ($reason) ${sourceWidth}x$sourceHeight")
+        runCatching { capture.stop() }
+        val dpi = context.resources.displayMetrics.densityDpi
+        runCatching { capture.start(sourceWidth, sourceHeight, dpi, surface) }
+            .onFailure { diag("kaptur: gagal pulihkan (${it.message})") }
     }
 
     /**
@@ -1122,6 +1193,7 @@ class RecordingPipeline(
                     blend = item.blend,
                     opacity = item.opacity,
                     sourceId = null,
+                    screenDisplay = source.settings.screenDisplay,
                 )
 
                 SourceType.Image, SourceType.Text -> {
@@ -1276,14 +1348,42 @@ class RecordingPipeline(
         val cBottom = crop.bottom.coerceIn(0f, 0.49f)
 
         // Crop memendekkan tepi kotak (seperti OBS), bukan meregangkan isi.
-        val width = max(
+        var width = max(
             1f,
             naturalWidth * (1f - cLeft - cRight) * layer.transform.scaleX,
         )
-        val height = max(
+        var height = max(
             1f,
             naturalHeight * (1f - cTop - cBottom) * layer.transform.scaleY,
         )
+
+        // Sumber Layar dengan template: kotak dihitung ulang dari kanvas dan
+        // ukuran tangkapan, tidak memakai skala tersimpan. Dengan begitu
+        // nilai lama (dari orientasi sebelumnya) tidak membuat gambar keluar
+        // area kanvas.
+        val template = layer.screenDisplay
+        var templateRotate = false
+        if (layer.type == SourceType.Screen && template != null &&
+            template != com.rout.air.core.ScreenDisplay.Auto
+        ) {
+            val base = canvasWidth.toFloat() / canvasHeight.toFloat()
+            val aspect = when (template) {
+                com.rout.air.core.ScreenDisplay.Landscape ->
+                    if (base >= 1f) base else 1f / base
+
+                com.rout.air.core.ScreenDisplay.Portrait ->
+                    if (base <= 1f) base else 1f / base
+
+                com.rout.air.core.ScreenDisplay.Auto -> base
+            }
+            width = minOf(canvasWidth.toFloat(), canvasHeight * aspect)
+            height = width / aspect
+            templateRotate = com.rout.air.core.screenNeedsRotation(
+                template,
+                sourceWidth.toInt(),
+                sourceHeight.toInt(),
+            )
+        }
 
         val anchorX = when (layer.transform.align) {
             Align.Top, Align.Center, Align.Bottom -> width / 2f
@@ -1298,26 +1398,63 @@ class RecordingPipeline(
 
         var left = layer.transform.x - anchorX
         var top = layer.transform.y - anchorY
+
+        // Template layar selalu dipusatkan. Posisi tersimpan bisa berasal dari
+        // kanvas orientasi lain, jadi tidak dipakai agar pita tidak mepet ke
+        // satu sisi setelah orientasi berganti.
+        if (layer.type == SourceType.Screen && template != null &&
+            template != com.rout.air.core.ScreenDisplay.Auto
+        ) {
+            left = (canvasWidth - width) / 2f
+            top = (canvasHeight - height) / 2f
+        }
         var drawWidth = width
         var drawHeight = height
 
-        // Sumber layar mengikuti mode isi (Fit/Crop/Stretch) di dalam kotaknya,
-        // sama seperti perilaku M1 sebelum scene berlapis.
-        if (layer.type == SourceType.Screen && config.contentMode != ContentMode.Stretch) {
-            val rect = computeContentRect(
-                width.roundToInt(),
-                height.roundToInt(),
-                sourceWidth,
-                sourceHeight,
-                config.contentMode,
-            )
-            left += rect[0]
-            top += rect[1]
-            drawWidth = rect[2].toFloat()
-            drawHeight = rect[3].toFloat()
+        // Sumber layar: template Vertikal/Horizontal memaksa arah tampil.
+        // Konten yang diputar 90 derajat dimuat penuh ke kotak (fit, tanpa
+        // crop), lalu dipusatkan pada area hasil fit.
+        var extraRotation = 0f
+        if (layer.type == SourceType.Screen) {
+            val rotate = templateRotate
+            if (rotate) extraRotation = 90f
+            val mode = if (layer.screenDisplay != null) {
+                ContentMode.Fit
+            } else {
+                config.contentMode
+            }
+            if (mode != ContentMode.Stretch) {
+                val fitWidth = if (rotate) sourceHeight else sourceWidth
+                val fitHeight = if (rotate) sourceWidth else sourceHeight
+                val rect = computeContentRect(
+                    width.roundToInt(),
+                    height.roundToInt(),
+                    fitWidth,
+                    fitHeight,
+                    mode,
+                )
+                left += rect[0]
+                top += rect[1]
+                drawWidth = rect[2].toFloat()
+                drawHeight = rect[3].toFloat()
+            }
         }
 
         val bottom = canvasHeight - top - drawHeight
+
+        if (layer.type == SourceType.Screen) {
+            // Log posisi gambar layar saat berubah, untuk melacak kasus
+            // "tangkapan hitam" setelah orientasi/kanvas berganti.
+            val signature = "kotak=${width.roundToInt()}x${height.roundToInt()} " +
+                "posisi=${left.roundToInt()},${top.roundToInt()} " +
+                "gambar=${drawWidth.roundToInt()}x${drawHeight.roundToInt()} " +
+                "rotasi=${layer.transform.rotation.roundToInt()} " +
+                "putarTex=${extraRotation.roundToInt()}"
+            if (signature != lastScreenDrawLog) {
+                lastScreenDrawLog = signature
+                diag("layar: $signature")
+            }
+        }
 
         when (layer.type) {
             SourceType.Screen -> painter.drawExternal(
@@ -1336,6 +1473,7 @@ class RecordingPipeline(
                 flipV = layer.transform.flipV,
                 blend = layer.blend,
                 opacity = layer.opacity,
+                texRotate = extraRotation,
             )
 
             SourceType.Image, SourceType.Text -> painter.drawTexture2D(
@@ -1405,6 +1543,9 @@ class RecordingPipeline(
         }
         lastFrameWallNs = nowNs
         lastCaptureChangeNs = nowNs
+        if (capturedFrames % 300 == 0) {
+            diag("kaptur: frame $capturedFrames src=${sourceWidth}x$sourceHeight")
+        }
         if (capturedFrames == 0) {
             diag(
                 "frame pertama: src=${sourceWidth}x$sourceHeight " +
@@ -1950,6 +2091,7 @@ class RecordingPipeline(
         val blend: BlendMode = BlendMode.Normal,
         val opacity: Float = 1f,
         val sourceId: String? = null,
+        val screenDisplay: com.rout.air.core.ScreenDisplay? = null,
     )
 
     private data class CachedTexture(

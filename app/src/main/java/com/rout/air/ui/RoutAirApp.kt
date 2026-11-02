@@ -41,7 +41,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.rout.air.core.LiveService
 import com.rout.air.live.GoogleAuthStore
-import com.rout.air.live.YouTubeApi
+import com.rout.air.live.prepareYouTubeBroadcast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -156,8 +156,25 @@ fun RoutAirApp(
 
     // Scene layar jeda dibuat sebelum orientasi diketahui; posisinya
     // disesuaikan dengan kanvas yang benar-benar dipakai.
+    var lastCanvasSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(canvasConfig.width, canvasConfig.height) {
         SceneManager.ensureScreensaverLayout(canvasConfig.width, canvasConfig.height)
+        val previous = lastCanvasSize
+        val currentSize = canvasConfig.width to canvasConfig.height
+        if (previous != null && previous != currentSize) {
+            // Kanvas berganti orientasi: posisi item ikut diskalakan supaya
+            // tidak keluar area dan hasilnya tidak hitam.
+            SceneManager.rescaleCanvas(
+                previous.first,
+                previous.second,
+                currentSize.first,
+                currentSize.second,
+            )
+            // Sesi pratinjau yang sedang aktif ikut memakai kanvas baru.
+            CaptureEngine.updateCanvas(currentSize.first, currentSize.second)
+        }
+        lastCanvasSize = currentSize
+        store.saveSceneCanvas(currentSize.first, currentSize.second)
     }
 
     // Program = snapshot yang sedang mengudara. Perubahan pratinjau baru masuk
@@ -623,38 +640,25 @@ fun RoutAirApp(
                     setupBusy = true
                     setupError = null
                     scope.launch {
-                        val apiToken = withContext(Dispatchers.IO) {
-                            GoogleAuthStore(context).freshAccessToken()
-                        }
-                        if (apiToken.isNullOrBlank()) {
-                            setupError = "Sesi Google berakhir. Hubungkan akun lagi di Setelan > Stream."
-                            setupBusy = false
-                            return@launch
-                        }
-                        val api = YouTubeApi(apiToken)
-                        var streamTarget: com.rout.air.live.StreamTarget? = null
-                        val created = withContext(Dispatchers.IO) {
-                            val target = api.streamTarget() ?: return@withContext null
-                            streamTarget = target
-                            val broadcast = api.createBroadcast(title, description, privacy)
-                                ?: return@withContext null
-                            broadcast.takeIf { api.bindBroadcast(broadcast, target.streamId) }
-                        }
-                        val target = streamTarget
-                        if (created == null || target == null) {
-                            setupError = "Gagal membuat siaran. Periksa koneksi atau log."
-                            setupBusy = false
-                            return@launch
-                        }
-                        setupBusy = false
-                        setupOpen = false
-                        // Pastikan server/kunci terisi sebelum siaran dimulai.
-                        liveConfig = liveConfig.copy(
-                            serverUrl = target.server,
-                            streamKey = target.key,
-                            accountLinked = true,
+                        val result = prepareYouTubeBroadcast(
+                            context,
+                            title,
+                            description,
+                            privacy,
                         )
-                        startLive()
+                        setupBusy = false
+                        result.onSuccess { target ->
+                            setupOpen = false
+                            // Pastikan server/kunci terisi sebelum siaran dimulai.
+                            liveConfig = liveConfig.copy(
+                                serverUrl = target.server,
+                                streamKey = target.key,
+                                accountLinked = true,
+                            )
+                            startLive()
+                        }.onFailure { error ->
+                            setupError = error.message ?: "Gagal membuat siaran."
+                        }
                     }
                 },
             )
@@ -706,12 +710,11 @@ internal fun buildCanvasConfig(
  * tetap bisa memilih "seluruh layar" atau "satu aplikasi" (Android 14+).
  */
 private fun createCaptureIntent(manager: MediaProjectionManager): Intent {
-    // Paksa seluruh layar. Di Android 14+ dialog bawaan bisa memilih satu
-    // aplikasi, dan pilihan itu menghasilkan frame hitam saat aplikasi lain
-    // yang sedang tampil tidak ikut ditangkap.
+    // Android 14+: dialog sistem menampilkan "Seluruh layar" dan
+    // "Satu aplikasi", jadi pengguna bisa memilih cakupan tangkapan.
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
         manager.createScreenCaptureIntent(
-            MediaProjectionConfig.createConfigForDefaultDisplay(),
+            MediaProjectionConfig.createConfigForUserChoice(),
         )
     } else {
         manager.createScreenCaptureIntent()

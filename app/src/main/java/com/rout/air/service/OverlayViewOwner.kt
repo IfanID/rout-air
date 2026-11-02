@@ -15,12 +15,25 @@ class OverlayViewOwner : LifecycleOwner, SavedStateRegistryOwner {
     override val lifecycle: Lifecycle get() = registry
     override val savedStateRegistry: SavedStateRegistry get() = savedState.savedStateRegistry
 
+    @Volatile
+    private var attached = false
+
     fun attach() {
+        if (attached) return
+        attached = true
         savedState.performRestore(null)
         registry.currentState = Lifecycle.State.RESUMED
     }
 
+    /**
+     * Aman dipanggil walau [attach] belum pernah berjalan: LifecycleRegistry
+     * menolak pindah dari INITIALIZED langsung ke DESTROYED dan melempar
+     * IllegalStateException, yang membuat service crash saat dihentikan
+     * sebelum overlay sempat dibuat (mis. izin overlay dicabut).
+     */
     fun destroy() {
-        registry.currentState = Lifecycle.State.DESTROYED
+        if (!attached) return
+        attached = false
+        runCatching { registry.currentState = Lifecycle.State.DESTROYED }
     }
 }

@@ -196,6 +196,11 @@ object CaptureEngine {
         synchronized(lock) { pipeline }?.startLive(config)
     }
 
+    /** Menyesuaikan kanvas pratinjau tanpa memulai ulang sesi. */
+    fun updateCanvas(width: Int, height: Int) {
+        synchronized(lock) { pipeline }?.updateCanvas(width, height)
+    }
+
     fun stopLive() {
         synchronized(lock) { pipeline }?.stopLive()
     }

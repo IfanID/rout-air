@@ -55,6 +55,7 @@ internal object SceneJson {
                         s.settings.audioDeviceName?.let { put("audioDeviceName", it) }
                         put("audioDeviceType", s.settings.audioDeviceType)
                         put("audioScoEnabled", s.settings.audioScoEnabled)
+                        s.settings.screenDisplay?.let { put("screenDisplay", it.name) }
                     })
                 })
             }
@@ -124,6 +125,12 @@ internal object SceneJson {
                     audioDeviceName = s.optString("audioDeviceName").takeIf { it.isNotBlank() },
                     audioDeviceType = s.optInt("audioDeviceType", 0),
                     audioScoEnabled = s.optBoolean("audioScoEnabled", false),
+                    screenDisplay = s.optString("screenDisplay")
+                        .takeIf { it.isNotBlank() }
+                        ?.let { name ->
+                            com.rout.air.core.ScreenDisplay.entries
+                                .firstOrNull { it.name == name }
+                        },
                 ),
             )
         }

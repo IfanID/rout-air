@@ -42,6 +42,7 @@ import com.rout.air.core.CaptureConfig
 import com.rout.air.core.Crop
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
+import com.rout.air.core.ScreenDisplay
 import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceType
 import com.rout.air.engine.SourceBitmap
@@ -185,7 +186,26 @@ fun ScenePreview(
                                     blendMode = layer.blend,
                                 )
 
-                                SourceType.Screen -> drawScreenPlaceholder(width, height, opacity)
+                                SourceType.Screen -> {
+                                    // Pratinjau memakai kotak skematis: bentuknya
+                                    // mengikuti template Vertikal/Horizontal supaya
+                                    // perubahan arah tampil langsung terlihat.
+                                    val (placeW, placeH) = screenPlaceholderSize(
+                                        boxWidth = width,
+                                        boxHeight = height,
+                                        display = layer.screenDisplay,
+                                        canvasWidth = canvas.width,
+                                        canvasHeight = canvas.height,
+                                    )
+                                    withTransform({
+                                        translate(
+                                            left = (width - placeW) / 2f,
+                                            top = (height - placeH) / 2f,
+                                        )
+                                    }) {
+                                        drawScreenPlaceholder(placeW, placeH, opacity)
+                                    }
+                                }
 
                                 SourceType.Image, SourceType.Text -> layer.bitmap?.let { image ->
                                     val srcWidth = (image.width * (1f - crop.left - crop.right))
@@ -399,6 +419,7 @@ private data class PreviewLayer(
     val colorArgb: Long,
     val bitmap: ImageBitmap?,
     val blend: androidx.compose.ui.graphics.BlendMode,
+    val screenDisplay: ScreenDisplay? = null,
 )
 
 /** Terjemahan BlendMode item ke mode gambar Compose untuk pratinjau. */
@@ -431,6 +452,7 @@ private fun buildPreviewLayers(
                     colorArgb = 0,
                     blend = item.blend.toComposeBlendMode(),
                     bitmap = null,
+                    screenDisplay = source.settings.screenDisplay,
                 )
 
                 SourceType.Image, SourceType.Text -> {
@@ -459,6 +481,35 @@ private fun buildPreviewLayers(
                 SourceType.AudioInput, SourceType.AudioOutput -> null
             }
         }
+}
+
+/**
+ * Ukuran kotak skematis sumber Layar mengikuti template tampilan.
+ * Orientasi tangkapan dianggap sama dengan kanvas, lalu diputar bila perlu.
+ */
+private fun screenPlaceholderSize(
+    boxWidth: Float,
+    boxHeight: Float,
+    display: ScreenDisplay?,
+    canvasWidth: Int,
+    canvasHeight: Int,
+): Pair<Float, Float> {
+    if (display == null || display == ScreenDisplay.Auto || boxHeight <= 0f) {
+        return boxWidth to boxHeight
+    }
+    val base = canvasWidth.toFloat() / canvasHeight.toFloat()
+    if (base <= 0f) return boxWidth to boxHeight
+    val aspect = when (display) {
+        ScreenDisplay.Landscape -> if (base >= 1f) base else 1f / base
+        ScreenDisplay.Portrait -> if (base <= 1f) base else 1f / base
+        ScreenDisplay.Auto -> base
+    }
+    val boxAspect = boxWidth / boxHeight
+    return if (aspect > boxAspect) {
+        boxWidth to boxWidth / aspect
+    } else {
+        boxHeight * aspect to boxHeight
+    }
 }
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScreenPlaceholder(

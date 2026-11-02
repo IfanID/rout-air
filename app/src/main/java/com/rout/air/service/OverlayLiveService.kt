@@ -29,6 +29,22 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.rout.air.live.prepareYouTubeBroadcast
+import com.rout.air.ui.LiveSetupCard
 import com.rout.air.ui.OverlayAudioPanel
 import com.rout.air.ui.OverlayScreensaverPanel
 import com.rout.air.ui.theme.RoutAirTheme
@@ -73,7 +89,7 @@ class OverlayLiveService : Service() {
     private lateinit var viewerLabel: TextView
     private lateinit var signalLabel: TextView
     private lateinit var screensaverButton: ImageButton
-    private val liveConfig by lazy { com.rout.air.data.SettingsStore(this).loadLive() }
+    private var setupWindow: ComposeView? = null
     private lateinit var vuBox: FrameLayout
     private lateinit var jedaBox: FrameLayout
     private lateinit var audioCompose: ComposeView
@@ -140,6 +156,7 @@ class OverlayLiveService : Service() {
         com.rout.air.live.ChatMonitor.stop()
         com.rout.air.data.DiagLog.line("OverlayLiveService: onDestroy")
         running.value = false
+        hideLiveSetupOverlay()
         detachPreview()
         scope.cancel()
         runCatching { windowManager.removeView(root) }
@@ -414,13 +431,17 @@ class OverlayLiveService : Service() {
             setColorFilter(Color.WHITE)
             contentDescription = getString(R.string.overlay_live_start)
             setOnClickListener {
-                if (CaptureEngine.liveStats.value.active) {
-                    CaptureEngine.stopLive()
-                } else {
-                    // Dialog judul/deskripsi hanya ada di aplikasi utama, jadi
-                    // overlay membuka aplikasi lalu meminta dialog yang sama.
-                    com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
-                    openApp("live")
+                when {
+                    CaptureEngine.liveStats.value.active -> CaptureEngine.stopLive()
+                    // Di dalam RoutAir: dialog muncul di jendela aplikasi.
+                    MainActivity.visible -> {
+                        com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
+                        openApp("live")
+                    }
+                    // Belum login Google: tidak perlu judul/deskripsi.
+                    !com.rout.air.live.GoogleAuthStore(this@OverlayLiveService).loggedIn -> startLiveNow()
+                    // Di aplikasi lain: dialog melayang di atas layar.
+                    else -> showLiveSetupOverlay()
                 }
             }
         }
@@ -964,6 +985,103 @@ class OverlayLiveService : Service() {
 
     private fun toast(res: Int) {
         android.widget.Toast.makeText(this, res, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** Dialog siap-siaran melayang saat pengguna berada di luar RoutAir. */
+    private fun showLiveSetupOverlay() {
+        if (setupWindow != null) return
+        val view = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(overlayOwner)
+            setViewTreeSavedStateRegistryOwner(overlayOwner)
+            setContent {
+                RoutAirTheme {
+                    var busy by remember { mutableStateOf(false) }
+                    var error by remember { mutableStateOf<String?>(null) }
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                        ) {
+                            Box(modifier = Modifier.padding(16.dp)) {
+                                LiveSetupCard(
+                                    busy = busy,
+                                    error = error,
+                                    onCancel = { hideLiveSetupOverlay() },
+                                    onStart = { title, description, privacy ->
+                                        busy = true
+                                        error = null
+                                        scope.launch {
+                                            val result = prepareYouTubeBroadcast(
+                                                this@OverlayLiveService,
+                                                title,
+                                                description,
+                                                privacy,
+                                            )
+                                            busy = false
+                                            result.onSuccess { target ->
+                                                val store = com.rout.air.data.SettingsStore(
+                                                    this@OverlayLiveService,
+                                                )
+                                                store.saveLive(
+                                                    store.loadLive().copy(
+                                                        serverUrl = target.server,
+                                                        streamKey = target.key,
+                                                        accountLinked = true,
+                                                    ),
+                                                )
+                                                hideLiveSetupOverlay()
+                                                startLiveNow()
+                                            }.onFailure {
+                                                error = it.message ?: "Gagal membuat siaran."
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            dimAmount = 0.7f
+            gravity = Gravity.CENTER
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        val added = runCatching { windowManager.addView(view, params) }.isSuccess
+        if (!added) {
+            // Izin overlay dicabut: kembali ke jalur aplikasi.
+            com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
+            openApp("live")
+            return
+        }
+        setupWindow = view
+    }
+
+    private fun hideLiveSetupOverlay() {
+        setupWindow?.let { runCatching { windowManager.removeView(it) } }
+        setupWindow = null
+    }
+
+    /** Memulai siaran memakai setelan yang tersimpan. */
+    private fun startLiveNow() {
+        if (!CaptureEngine.sessionActive.value) {
+            // Sesi tangkapan belum aktif; izin harus diminta dari aplikasi.
+            openApp()
+            return
+        }
+        val config = com.rout.air.data.SettingsStore(this).loadLive()
+        if (config.isConfigured) CaptureEngine.startLive(config)
     }
 
     private fun openApp(tab: String? = null) {

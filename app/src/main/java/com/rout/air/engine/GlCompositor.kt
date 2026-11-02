@@ -70,6 +70,8 @@ class GlCompositor {
         ),
     )
 
+    private val uvRotation = FloatArray(16)
+    private val texCombined = FloatArray(16)
     private val ortho = FloatArray(16)
     private val model = FloatArray(16)
     private val mvp = FloatArray(16)
@@ -121,6 +123,8 @@ class GlCompositor {
         flipV: Boolean = false,
         blend: BlendMode = BlendMode.Normal,
         opacity: Float = 1f,
+        /** Putar tekstur saja (derajat), kuad tetap tegak. */
+        texRotate: Float = 0f,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(externalProgram)
@@ -128,7 +132,19 @@ class GlCompositor {
         GLES20.glUniform1f(externalAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(externalProgram)
         GLES20.glUniformMatrix4fv(externalMvp, 1, false, mvp, 0)
-        GLES20.glUniformMatrix4fv(externalTexMatrix, 1, false, texMatrix, 0)
+        val appliedTexMatrix = if (texRotate != 0f) {
+            // Rotasi di sekitar titik tengah tekstur (0.5, 0.5) supaya hasil
+            // putaran tetap berada di kuad yang sama.
+            Matrix.setIdentityM(uvRotation, 0)
+            Matrix.translateM(uvRotation, 0, 0.5f, 0.5f, 0f)
+            Matrix.rotateM(uvRotation, 0, -texRotate, 0f, 0f, 1f)
+            Matrix.translateM(uvRotation, 0, -0.5f, -0.5f, 0f)
+            Matrix.multiplyMM(texCombined, 0, uvRotation, 0, texMatrix, 0)
+            texCombined
+        } else {
+            texMatrix
+        }
+        GLES20.glUniformMatrix4fv(externalTexMatrix, 1, false, appliedTexMatrix, 0)
         // Cermin dikerjakan lewat UV (skala negatif + bias), jadi tidak
         // mengubah posisi/rotasi item.
         val scaleU = (1f - cropLeft - cropRight) * if (flipH) -1f else 1f
@@ -161,6 +177,8 @@ class GlCompositor {
         flipV: Boolean = false,
         blend: BlendMode = BlendMode.Normal,
         opacity: Float = 1f,
+        /** Putar tekstur saja (derajat), kuad tetap tegak. */
+        texRotate: Float = 0f,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(textureProgram)

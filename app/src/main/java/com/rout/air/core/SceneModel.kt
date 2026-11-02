@@ -22,6 +22,34 @@ enum class SourceType {
     AudioOutput,
 }
 
+/**
+ * Arah tampil sumber Layar.
+ *
+ * `Portrait`/`Landscape` memaksa konten tampil tegak/mendatar: bila orientasi
+ * tangkapan berbeda, gambar diputar 90 derajat lalu dimuat penuh tanpa
+ * terpotong. `Auto` mengikuti orientasi tangkapan apa adanya.
+ */
+enum class ScreenDisplay {
+    Auto,
+    Portrait,
+    Landscape,
+}
+
+/** True bila konten perlu diputar 90 derajat agar sesuai pilihan tampilan. */
+fun screenNeedsRotation(
+    display: ScreenDisplay?,
+    sourceWidth: Int,
+    sourceHeight: Int,
+): Boolean {
+    if (display == null || display == ScreenDisplay.Auto) return false
+    if (sourceWidth <= 0 || sourceHeight <= 0) return false
+    return when (display) {
+        ScreenDisplay.Portrait -> sourceWidth > sourceHeight
+        ScreenDisplay.Landscape -> sourceHeight > sourceWidth
+        ScreenDisplay.Auto -> false
+    }
+}
+
 /** Titik jangkar item terhadap posisi `Transform`. */
 enum class Align {
     TopLeft,
@@ -116,6 +144,8 @@ data class SourceSettings(
     val audioDeviceName: String? = null,
     val audioDeviceType: Int = 0,
     val audioScoEnabled: Boolean = false,
+    /** Arah tampil sumber Layar; null/`Auto` mengikuti tangkapan. */
+    val screenDisplay: ScreenDisplay? = null,
 )
 
 /** Sumber (source) yang bisa dipakai banyak item. */
@@ -162,7 +192,9 @@ data class SceneCollection(
                 name = "Adegan 1",
                 // Layar dikunci default supaya komposisi tidak bergeser saat
                 // mengatur item lain. Buka lewat ikon gembok bila perlu digeser.
-                items = listOf(SceneItem(sourceId = screen.id, z = 0, locked = true)),
+                // Tidak dikunci: posisi layar perlu bisa diatur, mis. saat
+                // kanvas horizontal menampilkan tangkapan portrait.
+                items = listOf(SceneItem(sourceId = screen.id, z = 0, locked = false)),
             )
             return SceneCollection(
                 activeSceneId = scene.id,

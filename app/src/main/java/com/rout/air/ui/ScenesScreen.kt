@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -1046,10 +1047,68 @@ private fun SourceEditor(
 
             SourceType.Screen -> {
                 Spacer(Modifier.height(8.dp))
+                Text("Template layar", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(
+                        com.rout.air.core.ScreenDisplay.Auto to "Otomatis",
+                        com.rout.air.core.ScreenDisplay.Portrait to "Vertikal",
+                        com.rout.air.core.ScreenDisplay.Landscape to "Horizontal",
+                    ).forEach { (display, label) ->
+                        FilterChip(
+                            selected = (source.settings.screenDisplay
+                                ?: com.rout.air.core.ScreenDisplay.Auto) == display,
+                            onClick = {
+                                // Kotak item ikut dibentuk ulang agar bingkai
+                                // pilihan di pratinjau juga ikut horizontal
+                                // atau vertikal, bukan hanya isinya.
+                                val base = canvas.width.toFloat() / canvas.height.toFloat()
+                                val aspect = when (display) {
+                                    com.rout.air.core.ScreenDisplay.Landscape ->
+                                        if (base >= 1f) base else 1f / base
+
+                                    com.rout.air.core.ScreenDisplay.Portrait ->
+                                        if (base <= 1f) base else 1f / base
+
+                                    com.rout.air.core.ScreenDisplay.Auto -> base
+                                }
+                                val boxWidth = min(canvas.width.toFloat(), canvas.height * aspect)
+                                val boxHeight = boxWidth / aspect
+                                val changed = collection
+                                    .updateSource(
+                                        source.copy(
+                                            settings = source.settings.copy(
+                                                screenDisplay = display,
+                                            ),
+                                        ),
+                                    )
+                                    .updateItem(
+                                        item.copy(
+                                            transform = Transform(
+                                                x = canvas.width / 2f,
+                                                y = canvas.height / 2f,
+                                                scaleX = boxWidth / canvas.width,
+                                                scaleY = boxHeight / canvas.height,
+                                                align = Align.Center,
+                                            ),
+                                        ),
+                                    )
+                                onCollectionChange(changed)
+                                // Template tampilan bukan perubahan komposisi:
+                                // langsung dipakai Program supaya pratinjau dan
+                                // hasil rekaman/live sama tanpa perlu Transisi.
+                                com.rout.air.data.SceneManager.commitToProgram()
+                            },
+                            label = { Text(label) },
+                        )
+                    }
+                }
                 Hint(
-                    "Tangkapan layar penuh. Ukuran mengikuti kanvas dan mode isi di Setelan. " +
-                        "Layar default berada di lapisan paling bawah; ubah urutan lewat " +
-                        "pegangan ☰ di daftar Sumber atau tombol Naikkan/Turunkan lapisan.",
+                    "Vertikal/Horizontal memaksa arah tampil: gambar diputar 90° bila " +
+                        "perlu dan selalu dimuat penuh tanpa terpotong. Otomatis " +
+                        "mengikuti orientasi tangkapan. Atur Posisi/Skala di bawah.",
                 )
             }
 

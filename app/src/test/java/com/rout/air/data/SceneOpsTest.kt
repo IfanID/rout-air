@@ -10,6 +10,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -195,10 +196,12 @@ class SceneOpsTest {
     }
 
     @Test
-    fun defaultScene_keepsScreenLocked() {
+    fun defaultScene_allowsMovingScreen() {
+        // Layar tidak dikunci supaya posisi bisa diatur saat kanvas berbeda
+        // orientasi dengan tangkapan.
         val collection = SceneCollection.default(1920, 1080)
 
-        assertTrue(collection.scenes.first().items.first().locked)
+        assertFalse(collection.scenes.first().items.first().locked)
     }
 
     @Test
