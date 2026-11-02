@@ -112,7 +112,7 @@ class AudioCaptureEngine(
                         sink = target,
                         sampleRate = sampleRate,
                         channels = channels,
-                        bitrate = bitrate,
+                        bitrate = (mix.trackBitrates[key] ?: bitrate).coerceIn(32_000, 320_000),
                     )
                 }
             } catch (error: Throwable) {

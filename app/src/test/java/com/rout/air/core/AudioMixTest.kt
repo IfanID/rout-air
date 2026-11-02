@@ -93,8 +93,18 @@ class AudioMixTest {
     }
 
     @Test
-    fun filterDefaultsAreStable() {
-        val gate = AudioFilter(id = "gate", type = AudioFilterType.NoiseGate)
+    fun trackBitratesFallBackToDefault() {
+        val mix = AudioMix()
+        assertEquals(AudioMix.DEFAULT_TRACK_BITRATE, mix.bitrateFor(1))
+
+        val custom = mix.withTrackBitrate(3, 192_000)
+        assertEquals(192_000, custom.bitrateFor(3))
+        assertEquals(AudioMix.DEFAULT_TRACK_BITRATE, custom.bitrateFor(2))
+        assertEquals(192_000, custom.snapshot().trackBitrates[3])
+    }
+
+    @Test
+    fun filterDefaultsAreStable() {        val gate = AudioFilter(id = "gate", type = AudioFilterType.NoiseGate)
         assertEquals(-26f, gate.param("openThresholdDb"), 0.001f)
         assertEquals(-32f, gate.param("closeThresholdDb"), 0.001f)
         assertTrue(gate.enabled)

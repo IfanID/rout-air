@@ -30,6 +30,9 @@ enum class ContentMode {
 enum class VideoBitrateMode {
     VBR,
     CBR,
+
+    /** Constant Quality: bitrate diabaikan, kualitas ditentukan [CaptureConfig.cqLevel]. */
+    CQ,
 }
 
 /** Profil H.264 yang bisa dipilih; Auto memakai High lalu fallback. */
@@ -64,10 +67,16 @@ data class CaptureConfig(
     val canvasOrientation: CanvasOrientation = CanvasOrientation.Auto,
     val contentMode: ContentMode = ContentMode.Fit,
     val saveLocation: SaveLocation = SaveLocation.MoviesRoutAir,
-    /** 0 = mengikuti kanvas; 75/50/25 = Rescale Output ala OBS. */
-    val outputScalePercent: Int = 0,
+    /** 0 = mengikuti kanvas; nilai lain = Rescale Output ala OBS. */
+    val outputWidth: Int = 0,
+    val outputHeight: Int = 0,
+    /** 0 = auto (kunci tidak dikirim ke encoder). */
     val keyframeIntervalSec: Int = 2,
     val bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    /** Kualitas CQ 0..51, makin kecil makin bagus (seperti CQP di OBS). */
+    val cqLevel: Int = 20,
+    /** 0 = ikut bitrate streaming; dipakai saat merekam tanpa live. */
+    val recordVideoBitrate: Int = 0,
     val videoProfile: VideoProfile = VideoProfile.Auto,
     val colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
     val colorRange: ColorRangeMode = ColorRangeMode.Limited,
@@ -79,19 +88,18 @@ data class CaptureConfig(
 ) {
     val aspectRatio: Float get() = width.toFloat() / height.toFloat()
 
+    /** Rescale hanya aktif bila lebar dan tinggi sama-sama diisi. */
+    private val customScale: Boolean get() = outputWidth > 0 && outputHeight > 0
+
     val encoderWidth: Int
-        get() = if (outputScalePercent in 1..99) {
-            evenSide(width.toLong() * outputScalePercent / 100L)
-        } else {
-            width
-        }
+        get() = if (customScale) evenSide(outputWidth.toLong()) else width
     val encoderHeight: Int
-        get() = if (outputScalePercent in 1..99) {
-            evenSide(height.toLong() * outputScalePercent / 100L)
-        } else {
-            height
-        }
+        get() = if (customScale) evenSide(outputHeight.toLong()) else height
     val rescaled: Boolean get() = encoderWidth != width || encoderHeight != height
+
+    /** Bitrate yang dipakai encoder: rekaman punya nilai sendiri bila diisi. */
+    fun encoderBitrate(recordingOnly: Boolean): Int =
+        if (recordingOnly && recordVideoBitrate > 0) recordVideoBitrate else videoBitrate
 
     private fun evenSide(value: Long): Int {
         val scaled = value.toInt().coerceAtLeast(2)

@@ -25,6 +25,7 @@ class VideoEncoder(
     bitrate: Int,
     keyframeIntervalSec: Int = 2,
     bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    cqLevel: Int = 20,
     profile: VideoProfile = VideoProfile.Auto,
     colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
     colorRange: ColorRangeMode = ColorRangeMode.Limited,
@@ -50,6 +51,7 @@ class VideoEncoder(
             bitrate = bitrate,
             keyframeIntervalSec = keyframeIntervalSec,
             bitrateMode = bitrateMode,
+            cqLevel = cqLevel,
             profile = profile,
             colorSpace = colorSpace,
             colorRange = colorRange,
@@ -86,6 +88,7 @@ class VideoEncoder(
         bitrate: Int,
         keyframeIntervalSec: Int,
         bitrateMode: VideoBitrateMode,
+        cqLevel: Int,
         profile: VideoProfile,
         colorSpace: ColorSpaceMode,
         colorRange: ColorRangeMode,
@@ -119,7 +122,10 @@ class VideoEncoder(
                     )
                     setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                     setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)
+                    // 0 = auto: biarkan encoder memilih interval keyframe.
+                    if (keyframeIntervalSec > 0) {
+                        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)
+                    }
                     setInteger(
                         MediaFormat.KEY_BITRATE_MODE,
                         when (bitrateMode) {
@@ -128,8 +134,14 @@ class VideoEncoder(
 
                             VideoBitrateMode.VBR ->
                                 MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+
+                            VideoBitrateMode.CQ ->
+                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ
                         },
                     )
+                    if (bitrateMode == VideoBitrateMode.CQ) {
+                        setInteger(MediaFormat.KEY_QUALITY, cqLevel.coerceIn(0, 51))
+                    }
                     setInteger(
                         "color-space",
                         when (colorSpace) {
@@ -152,12 +164,13 @@ class VideoEncoder(
                 try {
                     codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 } catch (error: Throwable) {
-                    // Sebagian encoder menolak CBR; fallback ke VBR.
-                    if (bitrateMode != VideoBitrateMode.CBR) throw error
+                    // Sebagian encoder menolak CBR/CQ; fallback ke VBR.
+                    if (bitrateMode == VideoBitrateMode.VBR) throw error
                     format.setInteger(
                         MediaFormat.KEY_BITRATE_MODE,
                         MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
                     )
+                    format.removeKey(MediaFormat.KEY_QUALITY)
                     codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 }
                 return codec

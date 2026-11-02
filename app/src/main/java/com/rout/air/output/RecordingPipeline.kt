@@ -851,7 +851,7 @@ class RecordingPipeline(
                     val mix = AudioMixer.snapshot()
                     val wantsAudio = audioEncoder != null && mix.masterEnabled &&
                         mix.channels.values.any { it.enabled }
-                    startEncoders(wantsAudio, mix)
+                    startEncoders(wantsAudio, mix, forLive = true)
                 }
                 sinks.add(sink)
                 sink.start()
@@ -889,7 +889,11 @@ class RecordingPipeline(
     }
 
     /** Membuat encoder video+audio pertama kali untuk output apa pun. */
-    private fun startEncoders(wantsAudio: Boolean, mixSnapshot: MixSnapshot) {
+    private fun startEncoders(
+        wantsAudio: Boolean,
+        mixSnapshot: MixSnapshot,
+        forLive: Boolean = false,
+    ) {
         val core = egl ?: error("Sesi tangkap layar belum siap")
 
         var audioStarted = false
@@ -907,9 +911,12 @@ class RecordingPipeline(
             width = config.encoderWidth,
             height = config.encoderHeight,
             fps = config.fps,
-            bitrate = config.videoBitrate,
+            // Rekaman boleh punya bitrate sendiri, tetapi tetap satu encoder
+            // saat live dan rekam berjalan bersamaan.
+            bitrate = config.encoderBitrate(recordingOnly = !forLive && !liveActive),
             keyframeIntervalSec = config.keyframeIntervalSec,
             bitrateMode = config.bitrateMode,
+            cqLevel = config.cqLevel,
             profile = config.videoProfile,
             colorSpace = config.colorSpace,
             colorRange = config.colorRange,

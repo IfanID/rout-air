@@ -41,6 +41,7 @@ class AudioMixStore(context: Context) {
             outputTracks = prefs.getInt(KEY_OUTPUT_TRACKS, 0x01).let {
                 if ((it and 0x3F) == 0) 0x01 else it and 0x3F
             },
+            trackBitrates = decodeTrackBitrates(prefs.getString(KEY_TRACK_BITRATES, null)),
             meterDecay = enumOf(
                 prefs.getString(KEY_METER_DECAY, MeterDecay.Medium.name),
                 MeterDecay.Medium,
@@ -66,6 +67,7 @@ class AudioMixStore(context: Context) {
         editor.putBoolean(KEY_KEEP_HIDDEN_LAST, mix.keepHiddenLast)
         editor.putBoolean(KEY_KEEP_INACTIVE_LAST, mix.keepInactiveLast)
         editor.putInt(KEY_OUTPUT_TRACKS, mix.safeOutputTracks())
+        editor.putString(KEY_TRACK_BITRATES, encodeTrackBitrates(mix.trackBitrates))
         editor.putString(KEY_METER_DECAY, mix.meterDecay.name)
         editor.putString(KEY_PEAK_TYPE, mix.peakMeterType.name)
         editor.putInt(KEY_MONITOR_DEVICE, mix.monitoringDeviceId)
@@ -140,6 +142,26 @@ class AudioMixStore(context: Context) {
     private fun decodeKeys(raw: String?): List<String> =
         raw?.split('\u0001')?.filter { it.isNotBlank() } ?: emptyList()
 
+    /** Bitrate per track disimpan sebagai JSON agar track baru tidak merusak data lama. */
+    private fun encodeTrackBitrates(bitrates: Map<Int, Int>): String {
+        val json = JSONObject()
+        bitrates.forEach { (track, bitrate) -> json.put(track.toString(), bitrate) }
+        return json.toString()
+    }
+
+    private fun decodeTrackBitrates(raw: String?): Map<Int, Int> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val json = JSONObject(raw)
+            buildMap {
+                for (track in 1..6) {
+                    val value = json.optInt(track.toString(), 0)
+                    if (value > 0) put(track, value)
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
     private fun key(id: AudioChannelId, field: String): String = "${id.key}_$field"
 
     private inline fun <reified T : Enum<T>> enumOf(value: String?, fallback: T): T =
@@ -199,6 +221,7 @@ class AudioMixStore(context: Context) {
         const val KEY_KEEP_HIDDEN_LAST = "keep_hidden_last"
         const val KEY_KEEP_INACTIVE_LAST = "keep_inactive_last"
         const val KEY_OUTPUT_TRACKS = "output_tracks"
+        const val KEY_TRACK_BITRATES = "track_bitrates"
         const val KEY_METER_DECAY = "meter_decay"
         const val KEY_PEAK_TYPE = "peak_type"
         const val KEY_MONITOR_DEVICE = "monitor_device"

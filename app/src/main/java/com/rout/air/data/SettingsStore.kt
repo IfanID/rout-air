@@ -18,36 +18,60 @@ import com.rout.air.core.VideoProfile
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun load(): CaptureConfig = CaptureConfig(
-        width = prefs.getInt(KEY_WIDTH, DEFAULT_WIDTH),
-        height = prefs.getInt(KEY_HEIGHT, DEFAULT_HEIGHT),
-        fps = prefs.getInt(KEY_FPS, DEFAULT_FPS),
-        videoBitrate = prefs.getInt(KEY_BITRATE, DEFAULT_BITRATE),
-        audioBitrate = prefs.getInt(KEY_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE),
-        canvasOrientation = runCatching {
-            CanvasOrientation.valueOf(
-                prefs.getString(KEY_ORIENTATION, CanvasOrientation.Auto.name)
-                    ?: CanvasOrientation.Auto.name,
-            )
-        }.getOrDefault(CanvasOrientation.Auto),
-        contentMode = runCatching {
-            ContentMode.valueOf(
-                prefs.getString(KEY_CONTENT_MODE, ContentMode.Fit.name) ?: ContentMode.Fit.name,
-            )
-        }.getOrDefault(ContentMode.Fit),
-        saveLocation = SaveLocation.fromName(prefs.getString(KEY_SAVE_LOCATION, null)),
-        outputScalePercent = prefs.getInt(KEY_OUTPUT_SCALE, 0),
-        keyframeIntervalSec = prefs.getInt(KEY_KEYFRAME, 2),
-        bitrateMode = enumValue(prefs.getString(KEY_RATE_CONTROL, null), VideoBitrateMode.VBR),
-        videoProfile = enumValue(prefs.getString(KEY_PROFILE, null), VideoProfile.Auto),
-        colorSpace = enumValue(prefs.getString(KEY_COLOR_SPACE, null), ColorSpaceMode.BT709),
-        colorRange = enumValue(prefs.getString(KEY_COLOR_RANGE, null), ColorRangeMode.Limited),
-        fileNameTemplate = prefs.getString(KEY_FILE_NAME, "RoutAir_{date}_{time}")
-            ?: "RoutAir_{date}_{time}",
-        noSpaceFileName = prefs.getBoolean(KEY_NO_SPACE, false),
-        staticThrottleEnabled = prefs.getBoolean(KEY_STATIC_THROTTLE, false),
-        thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
-    )
+    fun load(): CaptureConfig {
+        val width = prefs.getInt(KEY_WIDTH, DEFAULT_WIDTH)
+        val height = prefs.getInt(KEY_HEIGHT, DEFAULT_HEIGHT)
+        // Setelan lama menyimpan skala persen; konversi sekali ke resolusi nyata.
+        val savedWidth = prefs.getInt(KEY_OUTPUT_WIDTH, 0)
+        val savedHeight = prefs.getInt(KEY_OUTPUT_HEIGHT, 0)
+        val legacyPercent = prefs.getInt(KEY_OUTPUT_SCALE, 0)
+        val outputWidth: Int
+        val outputHeight: Int
+        if (savedWidth > 0 && savedHeight > 0) {
+            outputWidth = savedWidth
+            outputHeight = savedHeight
+        } else if (legacyPercent in 1..99) {
+            outputWidth = evenSide(width.toLong() * legacyPercent / 100L)
+            outputHeight = evenSide(height.toLong() * legacyPercent / 100L)
+        } else {
+            outputWidth = 0
+            outputHeight = 0
+        }
+
+        return CaptureConfig(
+            width = width,
+            height = height,
+            fps = prefs.getInt(KEY_FPS, DEFAULT_FPS),
+            videoBitrate = prefs.getInt(KEY_BITRATE, DEFAULT_BITRATE),
+            audioBitrate = prefs.getInt(KEY_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE),
+            canvasOrientation = runCatching {
+                CanvasOrientation.valueOf(
+                    prefs.getString(KEY_ORIENTATION, CanvasOrientation.Auto.name)
+                        ?: CanvasOrientation.Auto.name,
+                )
+            }.getOrDefault(CanvasOrientation.Auto),
+            contentMode = runCatching {
+                ContentMode.valueOf(
+                    prefs.getString(KEY_CONTENT_MODE, ContentMode.Fit.name) ?: ContentMode.Fit.name,
+                )
+            }.getOrDefault(ContentMode.Fit),
+            saveLocation = SaveLocation.fromName(prefs.getString(KEY_SAVE_LOCATION, null)),
+            outputWidth = outputWidth,
+            outputHeight = outputHeight,
+            keyframeIntervalSec = prefs.getInt(KEY_KEYFRAME, 2),
+            bitrateMode = enumValue(prefs.getString(KEY_RATE_CONTROL, null), VideoBitrateMode.VBR),
+            cqLevel = prefs.getInt(KEY_CQ_LEVEL, 20).coerceIn(0, 51),
+            recordVideoBitrate = prefs.getInt(KEY_RECORD_BITRATE, 0),
+            videoProfile = enumValue(prefs.getString(KEY_PROFILE, null), VideoProfile.Auto),
+            colorSpace = enumValue(prefs.getString(KEY_COLOR_SPACE, null), ColorSpaceMode.BT709),
+            colorRange = enumValue(prefs.getString(KEY_COLOR_RANGE, null), ColorRangeMode.Limited),
+            fileNameTemplate = prefs.getString(KEY_FILE_NAME, "RoutAir_{date}_{time}")
+                ?: "RoutAir_{date}_{time}",
+            noSpaceFileName = prefs.getBoolean(KEY_NO_SPACE, false),
+            staticThrottleEnabled = prefs.getBoolean(KEY_STATIC_THROTTLE, false),
+            thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
+        )
+    }
 
     fun save(config: CaptureConfig) {
         prefs.edit()
@@ -59,9 +83,12 @@ class SettingsStore(context: Context) {
             .putString(KEY_ORIENTATION, config.canvasOrientation.name)
             .putString(KEY_CONTENT_MODE, config.contentMode.name)
             .putString(KEY_SAVE_LOCATION, config.saveLocation.name)
-            .putInt(KEY_OUTPUT_SCALE, config.outputScalePercent)
+            .putInt(KEY_OUTPUT_WIDTH, config.outputWidth)
+            .putInt(KEY_OUTPUT_HEIGHT, config.outputHeight)
             .putInt(KEY_KEYFRAME, config.keyframeIntervalSec)
             .putString(KEY_RATE_CONTROL, config.bitrateMode.name)
+            .putInt(KEY_CQ_LEVEL, config.cqLevel)
+            .putInt(KEY_RECORD_BITRATE, config.recordVideoBitrate)
             .putString(KEY_PROFILE, config.videoProfile.name)
             .putString(KEY_COLOR_SPACE, config.colorSpace.name)
             .putString(KEY_COLOR_RANGE, config.colorRange.name)
@@ -144,8 +171,12 @@ class SettingsStore(context: Context) {
         const val KEY_SCENE_CANVAS_H = "scene_canvas_height"
 
         const val KEY_OUTPUT_SCALE = "output_scale_percent"
+        const val KEY_OUTPUT_WIDTH = "output_width"
+        const val KEY_OUTPUT_HEIGHT = "output_height"
         const val KEY_KEYFRAME = "keyframe_interval"
         const val KEY_RATE_CONTROL = "rate_control"
+        const val KEY_CQ_LEVEL = "cq_level"
+        const val KEY_RECORD_BITRATE = "record_video_bitrate"
         const val KEY_PROFILE = "video_profile"
         const val KEY_COLOR_SPACE = "color_space"
         const val KEY_COLOR_RANGE = "color_range"
@@ -156,6 +187,11 @@ class SettingsStore(context: Context) {
 
         inline fun <reified T : Enum<T>> enumValue(name: String?, fallback: T): T =
             runCatching { enumValueOf<T>(name ?: fallback.name) }.getOrDefault(fallback)
+
+        fun evenSide(value: Long): Int {
+            val scaled = value.toInt().coerceAtLeast(2)
+            return if (scaled % 2 == 0) scaled else scaled + 1
+        }
 
         const val DEFAULT_WIDTH = 1920
         const val DEFAULT_HEIGHT = 1080

@@ -23,6 +23,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +67,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 private enum class SettingsPage(val title: String) {
     Root("Setelan"),
@@ -268,20 +270,14 @@ private fun VideoSettings(
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_output_resolution))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(0, 75, 50, 25).forEach { percent ->
-            val selected = config.outputScalePercent == percent
-            FilterChip(
-                selected = selected,
-                onClick = {
-                    onConfigChange(config.copy(outputScalePercent = percent))
-                },
-                label = {
-                    Text(if (percent == 0) stringResource(R.string.settings_same_as_canvas) else "$percent%")
-                },
-            )
-        }
-    }
+    InfoRow(
+        "Resolusi encoder",
+        if (config.rescaled) {
+            "${config.encoderWidth}x${config.encoderHeight}"
+        } else {
+            stringResource(R.string.settings_same_as_canvas)
+        },
+    )
     Hint(stringResource(R.string.settings_output_resolution_hint))
 
     Spacer(Modifier.height(16.dp))
@@ -361,15 +357,10 @@ private fun OutputSettings(
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_bitrate_video))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(4, 6, 8, 10, 12).forEach { mbps ->
-            FilterChip(
-                selected = config.videoBitrate == mbps * 1_000_000,
-                onClick = { onConfigChange(config.copy(videoBitrate = mbps * 1_000_000)) },
-                label = { Text("$mbps Mbps") },
-            )
-        }
-    }
+    BitrateSlider(
+        bitrate = config.videoBitrate,
+        onChange = { onConfigChange(config.copy(videoBitrate = it)) },
+    )
 
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_bitrate_audio))
@@ -395,16 +386,38 @@ private fun OutputSettings(
             )
         }
     }
+    if (config.bitrateMode == VideoBitrateMode.CQ) {
+        Spacer(Modifier.height(8.dp))
+        SectionTitle(stringResource(R.string.settings_cq_level))
+        Slider(
+            value = config.cqLevel.toFloat(),
+            onValueChange = {
+                onConfigChange(config.copy(cqLevel = it.toInt().coerceIn(0, 51)))
+            },
+            valueRange = 0f..51f,
+            steps = 50,
+        )
+        InfoRow("Kualitas", "${config.cqLevel}")
+    }
     Hint(stringResource(R.string.settings_rate_control_hint))
+    Hint(stringResource(R.string.settings_rate_control_cq_hint))
 
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_keyframe_interval))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(1, 2, 4).forEach { seconds ->
+        listOf(0, 1, 2, 4).forEach { seconds ->
             FilterChip(
                 selected = config.keyframeIntervalSec == seconds,
                 onClick = { onConfigChange(config.copy(keyframeIntervalSec = seconds)) },
-                label = { Text("$seconds s") },
+                label = {
+                    Text(
+                        if (seconds == 0) {
+                            stringResource(R.string.settings_auto)
+                        } else {
+                            "$seconds s"
+                        },
+                    )
+                },
             )
         }
     }
@@ -424,20 +437,12 @@ private fun OutputSettings(
 
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_rescale_output))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(0, 75, 50, 25).forEach { percent ->
-            val selected = config.outputScalePercent == percent
-            FilterChip(
-                selected = selected,
-                onClick = {
-                    onConfigChange(config.copy(outputScalePercent = percent))
-                },
-                label = {
-                    Text(if (percent == 0) stringResource(R.string.settings_same_as_canvas) else "$percent%")
-                },
-            )
-        }
-    }
+    ResolutionPicker(config = config, onConfigChange = onConfigChange)
+    Hint(stringResource(R.string.settings_rescale_output_hint))
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle(stringResource(R.string.settings_media_codec_limit))
+    Hint(stringResource(R.string.settings_media_codec_limit_desc))
 
     when (tab) {
     OutputTab.Streaming -> {
@@ -484,20 +489,23 @@ private fun OutputSettings(
         )
 
         Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_recording_quality))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                stringResource(R.string.settings_quality_same) to 6_000_000,
-                stringResource(R.string.settings_quality_high) to 8_000_000,
-                stringResource(R.string.settings_quality_indistinguishable) to 12_000_000,
-            ).forEach { (label, bitrate) ->
-                FilterChip(
-                    selected = config.videoBitrate == bitrate,
-                    onClick = { onConfigChange(config.copy(videoBitrate = bitrate)) },
-                    label = { Text(label) },
-                )
-            }
+        SectionTitle(stringResource(R.string.settings_bitrate_rekaman))
+        SettingSwitchRow(
+            title = stringResource(R.string.settings_same_as_streaming),
+            subtitle = stringResource(R.string.settings_same_as_streaming_desc),
+            checked = config.recordVideoBitrate == 0,
+        ) { same ->
+            onConfigChange(
+                config.copy(recordVideoBitrate = if (same) 0 else config.videoBitrate),
+            )
         }
+        if (config.recordVideoBitrate > 0) {
+            BitrateSlider(
+                bitrate = config.recordVideoBitrate,
+                onChange = { onConfigChange(config.copy(recordVideoBitrate = it)) },
+            )
+        }
+        Hint(stringResource(R.string.settings_bitrate_rekaman_hint))
 
         Spacer(Modifier.height(16.dp))
         SectionTitle(stringResource(R.string.settings_format))
@@ -574,14 +582,158 @@ private fun OutputSettings(
             }
         }
         Hint(stringResource(R.string.settings_audio_tab_hint))
+
+        Spacer(Modifier.height(16.dp))
+        SectionTitle(stringResource(R.string.settings_audio_track_bitrate))
+        Hint(stringResource(R.string.settings_audio_track_bitrate_hint))
+        Spacer(Modifier.height(8.dp))
+        for (track in 1..6) {
+            if (mix.outputTracks and (1 shl (track - 1)) == 0) continue
+            Text(
+                stringResource(R.string.settings_audio_track_n, track),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                listOf(64, 96, 128, 160, 192, 256, 320).forEach { kbps ->
+                    val selected = mix.bitrateFor(track) == kbps * 1_000
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            AudioMixer.setTrackBitrate(track, kbps * 1_000)
+                        },
+                        label = { Text("$kbps") },
+                    )
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
     }
     }
 
 }
 
+/** Slider bitrate 1–50 Mbps dengan langkah 0,5 Mbps seperti spinbox OBS. */
 @Composable
-private fun saveLocationLabel(location: SaveLocation): String = when (location) {
-    SaveLocation.MoviesRoutAir -> stringResource(R.string.settings_lokasi_movies_routair)
+private fun BitrateSlider(bitrate: Int, onChange: (Int) -> Unit) {
+    Text(
+        String.format("%.1f Mbps", bitrate / 1_000_000f),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Slider(
+        value = (bitrate / 1_000_000f).coerceIn(1f, 50f),
+        onValueChange = { onChange((it * 1_000_000).roundToInt()) },
+        valueRange = 1f..50f,
+        steps = 97,
+    )
+}
+
+/**
+ * Rescale Output: preset resolusi atau ukuran bebas. Nilai 0/0 berarti
+ * encoder mengikuti ukuran kanvas.
+ */
+@Composable
+private fun ResolutionPicker(
+    config: CaptureConfig,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    val presets = listOf(0 to 0, 1920 to 1080, 1280 to 720, 854 to 480)
+    val isCustom = config.outputWidth > 0 &&
+        presets.none { it.first == config.outputWidth && it.second == config.outputHeight }
+
+    var widthText by remember(config.outputWidth) {
+        mutableStateOf(config.outputWidth.takeIf { it > 0 }?.toString().orEmpty())
+    }
+    var heightText by remember(config.outputHeight) {
+        mutableStateOf(config.outputHeight.takeIf { it > 0 }?.toString().orEmpty())
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        presets.forEach { (width, height) ->
+            FilterChip(
+                selected = config.outputWidth == width && config.outputHeight == height,
+                onClick = {
+                    onConfigChange(config.copy(outputWidth = width, outputHeight = height))
+                },
+                label = {
+                    Text(
+                        if (width == 0) {
+                            stringResource(R.string.settings_same_as_canvas)
+                        } else {
+                            "${height}p"
+                        },
+                    )
+                },
+            )
+        }
+        FilterChip(
+            selected = isCustom,
+            onClick = {
+                if (!isCustom) {
+                    widthText = config.encoderWidth.toString()
+                    heightText = config.encoderHeight.toString()
+                    onConfigChange(
+                        config.copy(
+                            outputWidth = config.encoderWidth,
+                            outputHeight = config.encoderHeight,
+                        ),
+                    )
+                }
+            },
+            label = { Text(stringResource(R.string.settings_custom)) },
+        )
+    }
+
+    if (isCustom) {
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = widthText,
+                onValueChange = {
+                    widthText = it.filter { ch -> ch.isDigit() }.take(5)
+                    applyCustomSize(config, widthText, heightText, onConfigChange)
+                },
+                label = { Text(stringResource(R.string.settings_lebar)) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = heightText,
+                onValueChange = {
+                    heightText = it.filter { ch -> ch.isDigit() }.take(5)
+                    applyCustomSize(config, widthText, heightText, onConfigChange)
+                },
+                label = { Text(stringResource(R.string.settings_tinggi)) },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+private fun applyCustomSize(
+    config: CaptureConfig,
+    widthText: String,
+    heightText: String,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    val width = widthText.toIntOrNull() ?: return
+    val height = heightText.toIntOrNull() ?: return
+    if (width < 16 || height < 16) return
+    onConfigChange(config.copy(outputWidth = width, outputHeight = height))
+}
+
+@Composable
+private fun saveLocationLabel(location: SaveLocation): String = when (location) {    SaveLocation.MoviesRoutAir -> stringResource(R.string.settings_lokasi_movies_routair)
     SaveLocation.Movies -> stringResource(R.string.settings_lokasi_movies)
     SaveLocation.DcimRoutAir -> stringResource(R.string.settings_lokasi_dcim)
     SaveLocation.DcimCamera -> stringResource(R.string.settings_lokasi_dcim_camera)

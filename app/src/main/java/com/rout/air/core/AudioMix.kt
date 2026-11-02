@@ -189,6 +189,8 @@ data class AudioMix(
     val keepHiddenLast: Boolean = true,
     val keepInactiveLast: Boolean = false,
     val outputTracks: Int = 0x01,
+    /** Bitrate AAC per track 1..6; track yang tidak ada memakai 128 kbps. */
+    val trackBitrates: Map<Int, Int> = emptyMap(),
     val meterDecay: MeterDecay = MeterDecay.Medium,
     val peakMeterType: PeakMeterType = PeakMeterType.Sample,
     val monitoringDeviceId: Int = 0,
@@ -214,6 +216,13 @@ data class AudioMix(
         if (it == 0) 0x01 else it
     }
 
+    /** Bitrate AAC untuk satu track, dengan nilai bawaan 128 kbps. */
+    fun bitrateFor(track: Int): Int = trackBitrates[track] ?: DEFAULT_TRACK_BITRATE
+
+    /** Simpan bitrate satu track tanpa mengubah track lain. */
+    fun withTrackBitrate(track: Int, bitrate: Int): AudioMix =
+        copy(trackBitrates = trackBitrates + (track to bitrate))
+
     /** Potret beku untuk thread audio; UI boleh berubah kapan saja. */
     fun snapshot(
         pushToMuteActive: Boolean = false,
@@ -222,6 +231,7 @@ data class AudioMix(
         masterEnabled = masterEnabled,
         channels = channels.associate { it.id to it.toMix() },
         outputTracks = safeOutputTracks(),
+        trackBitrates = trackBitrates,
         peakMeterType = peakMeterType,
         monitoringDeviceId = monitoringDeviceId,
         pushToMuteActive = pushToMuteActive,
@@ -229,6 +239,8 @@ data class AudioMix(
     )
 
     companion object {
+        const val DEFAULT_TRACK_BITRATE = 128_000
+
         fun defaultChannels(): List<AudioChannel> = listOf(
             AudioChannel(AudioChannelId.Internal, order = 0),
             AudioChannel(AudioChannelId.Microphone, order = 1),
@@ -290,6 +302,7 @@ data class MixSnapshot(
     val monitoringDeviceId: Int,
     val pushToMuteActive: Boolean,
     val pushToTalkActive: Boolean,
+    val trackBitrates: Map<Int, Int> = emptyMap(),
 ) {
     fun forChannel(id: AudioChannelId): ChannelMix = channels[id] ?: ChannelMix(
         enabled = false,

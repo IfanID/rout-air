@@ -244,6 +244,8 @@ object AudioMixer {
     fun setKeepHiddenLast(keep: Boolean) = mutate { it.copy(keepHiddenLast = keep) }
     fun setKeepInactiveLast(keep: Boolean) = mutate { it.copy(keepInactiveLast = keep) }
     fun setOutputTracks(tracks: Int) = mutate { it.copy(outputTracks = tracks and 0x3F) }
+    fun setTrackBitrate(track: Int, bitrate: Int) =
+        mutate { it.withTrackBitrate(track, bitrate.coerceIn(32_000, 320_000)) }
     fun setMeterDecay(decay: MeterDecay) = mutate { it.copy(meterDecay = decay) }
     fun setPeakMeterType(type: PeakMeterType) = mutate { it.copy(peakMeterType = type) }
     fun setMonitoringDevice(id: Int) = mutate { it.copy(monitoringDeviceId = id) }
