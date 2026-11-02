@@ -230,7 +230,7 @@ class RecordingPipeline(
     @Volatile
     private var lastFrameWallNs = 0L
     private var lastRecoveryAtMs = 0L
-    private var lastScreenDrawLog: String? = null
+
 
     @Volatile
     private var lastEncodedWallNs = 0L
@@ -819,8 +819,10 @@ class RecordingPipeline(
             config = config.copy(width = width, height = height)
             compositor?.setCanvasSize(width, height)
             previewPainter?.setCanvasSize(width, height)
-            // Scene sudah disesuaikan pemanggil (RoutAirApp). Melakukannya di
-            // sini lagi membuat posisi item bolak-balik dan sesaat meleset.
+            // Sesi aktif: pipeline yang menyesuaikan scene supaya pemanggil
+            // tidak melakukannya dua kali.
+            com.rout.air.data.SceneManager.rescaleCanvas(oldWidth, oldHeight, width, height)
+            com.rout.air.data.SettingsStore(context).saveSceneCanvas(width, height)
             diag("kanvas: diperbarui ${oldWidth}x$oldHeight -> ${width}x$height")
         }
     }
@@ -1399,14 +1401,13 @@ class RecordingPipeline(
         var left = layer.transform.x - anchorX
         var top = layer.transform.y - anchorY
 
-        // Template layar selalu dipusatkan. Posisi tersimpan bisa berasal dari
-        // kanvas orientasi lain, jadi tidak dipakai agar pita tidak mepet ke
-        // satu sisi setelah orientasi berganti.
+        // Template layar mengikuti posisi yang diatur pengguna, tetapi
+        // dijepit agar tidak keluar kanvas setelah orientasi berganti.
         if (layer.type == SourceType.Screen && template != null &&
             template != com.rout.air.core.ScreenDisplay.Auto
         ) {
-            left = (canvasWidth - width) / 2f
-            top = (canvasHeight - height) / 2f
+            left = left.coerceIn(0f, (canvasWidth - width).coerceAtLeast(0f))
+            top = top.coerceIn(0f, (canvasHeight - height).coerceAtLeast(0f))
         }
         var drawWidth = width
         var drawHeight = height
@@ -1441,20 +1442,6 @@ class RecordingPipeline(
         }
 
         val bottom = canvasHeight - top - drawHeight
-
-        if (layer.type == SourceType.Screen) {
-            // Log posisi gambar layar saat berubah, untuk melacak kasus
-            // "tangkapan hitam" setelah orientasi/kanvas berganti.
-            val signature = "kotak=${width.roundToInt()}x${height.roundToInt()} " +
-                "posisi=${left.roundToInt()},${top.roundToInt()} " +
-                "gambar=${drawWidth.roundToInt()}x${drawHeight.roundToInt()} " +
-                "rotasi=${layer.transform.rotation.roundToInt()} " +
-                "putarTex=${extraRotation.roundToInt()}"
-            if (signature != lastScreenDrawLog) {
-                lastScreenDrawLog = signature
-                diag("layar: $signature")
-            }
-        }
 
         when (layer.type) {
             SourceType.Screen -> painter.drawExternal(

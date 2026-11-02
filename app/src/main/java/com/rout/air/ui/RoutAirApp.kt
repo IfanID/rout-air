@@ -54,6 +54,7 @@ import com.rout.air.core.CaptureConfig
 import com.rout.air.core.ContentMode
 import com.rout.air.core.RecordingState
 import com.rout.air.core.SceneCollection
+import com.rout.air.core.SourceType
 import com.rout.air.data.AudioMixer
 import com.rout.air.data.SceneManager
 import com.rout.air.data.SettingsStore
@@ -162,15 +163,18 @@ fun RoutAirApp(
         val previous = lastCanvasSize
         val currentSize = canvasConfig.width to canvasConfig.height
         if (previous != null && previous != currentSize) {
-            // Kanvas berganti orientasi: posisi item ikut diskalakan supaya
-            // tidak keluar area dan hasilnya tidak hitam.
-            SceneManager.rescaleCanvas(
-                previous.first,
-                previous.second,
-                currentSize.first,
-                currentSize.second,
-            )
-            // Sesi pratinjau yang sedang aktif ikut memakai kanvas baru.
+            val sessionActive = CaptureEngine.sessionActive.value
+            if (!sessionActive) {
+                // Tanpa sesi: UI yang menyesuaikan scene.
+                SceneManager.rescaleCanvas(
+                    previous.first,
+                    previous.second,
+                    currentSize.first,
+                    currentSize.second,
+                )
+            }
+            // Sesi aktif: pipeline memperbarui kanvas sekaligus menyesuaikan
+            // scene, jadi jangan lakukan dua kali di sini.
             CaptureEngine.updateCanvas(currentSize.first, currentSize.second)
         }
         lastCanvasSize = currentSize
@@ -525,11 +529,32 @@ fun RoutAirApp(
 
         val pxToCanvas = canvasConfig.width / paneWidthPx
         val t = item.transform
+        var nextX = t.x + panX * pxToCanvas
+        var nextY = t.y + panY * pxToCanvas
+        val nextScaleX = (t.scaleX * zoom).coerceIn(0.05f, 8f)
+        val nextScaleY = (t.scaleY * zoom).coerceIn(0.05f, 8f)
+
+        // Sumber Layar bertemplate tidak boleh keluar kanvas: pita selebar
+        // kanvas hanya bisa digeser atas-bawah, pita setinggi kanvas hanya
+        // bisa digeser kiri-kanan.
+        val screenSource = current.source(item.sourceId)
+        val template = screenSource?.settings?.screenDisplay
+        if (screenSource?.type == SourceType.Screen && template != null &&
+            template != com.rout.air.core.ScreenDisplay.Auto
+        ) {
+            val boxWidth = canvasConfig.width * nextScaleX
+            val boxHeight = canvasConfig.height * nextScaleY
+            val halfWidth = minOf(boxWidth, canvasConfig.width.toFloat()) / 2f
+            val halfHeight = minOf(boxHeight, canvasConfig.height.toFloat()) / 2f
+            nextX = nextX.coerceIn(halfWidth, canvasConfig.width - halfWidth)
+            nextY = nextY.coerceIn(halfHeight, canvasConfig.height - halfHeight)
+        }
+
         val next = t.copy(
-            x = t.x + panX * pxToCanvas,
-            y = t.y + panY * pxToCanvas,
-            scaleX = (t.scaleX * zoom).coerceIn(0.05f, 8f),
-            scaleY = (t.scaleY * zoom).coerceIn(0.05f, 8f),
+            x = nextX,
+            y = nextY,
+            scaleX = nextScaleX,
+            scaleY = nextScaleY,
             rotation = ((t.rotation + rotation + 540f) % 360f) - 180f,
         )
         SceneManager.update(current.updateItem(item.copy(transform = next)))
