@@ -150,6 +150,10 @@ fun HomeScreen(
                 AndroidView(
                     factory = { ctx ->
                         SurfaceView(ctx).apply {
+                            // Secure: pratinjau terlihat di layar, tetapi tidak
+                            // ikut tertangkap MediaProjection (mencegah cermin
+                            // berulang saat sumber Layar direkam).
+                            setSecure(true)
                             holder.addCallback(object : SurfaceHolder.Callback {
                                 override fun surfaceCreated(holder: SurfaceHolder) {
                                     previewReady = true

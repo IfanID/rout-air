@@ -21,19 +21,31 @@ import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneItem
 import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceType
+import com.rout.air.core.VideoFilter
+import com.rout.air.core.chromaKey
+import com.rout.air.core.colorCorrection
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.ui.unit.dp
 import com.rout.air.data.duplicateItem
 import com.rout.air.data.moveLayer
 import com.rout.air.data.moveLayerToEdge
 import com.rout.air.data.removeItem
 import com.rout.air.data.removeSource
 import com.rout.air.data.updateItem
+import com.rout.air.data.updateSource
 import kotlin.math.min
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
 
 /** Halaman menu konteks: utama, submenu Transformasi, Urutan, dan Blend. */
-private enum class MenuPage { Main, Transform, Order, Blend }
+private enum class MenuPage { Main, Transform, Order, Blend, Filters }
 
 /**
  * Menempatkan menu konteks pada titik ketukan di dalam pratinjau. Dipakai
@@ -110,6 +122,18 @@ internal fun ItemContextMenu(
                     text = { Text(stringResource(R.string.scenes_blend_n, blendLabel(item.blend))) },
                     onClick = { page = MenuPage.Blend },
                 )
+                if (source != null && source.type != SourceType.AudioInput &&
+                    source.type != SourceType.AudioOutput
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Filter" + if (source.filters.isNotEmpty()) " (aktif)" else "",
+                            )
+                        },
+                        onClick = { page = MenuPage.Filters },
+                    )
+                }
                 if (source?.type != SourceType.Screen) {
                     // Layar tidak boleh diduplikat: satu sumber tangkap layar
                     // sudah cukup, duplikatnya hanya membuat tumpukan penuh.
@@ -263,6 +287,173 @@ internal fun ItemContextMenu(
                     text = { Text(stringResource(R.string.scenes_ke_paling_belakang)) },
                     onClick = { apply(collection.moveLayerToEdge(item.id, top = false)) },
                 )
+            }
+
+            MenuPage.Filters -> {
+                val currentSource = source
+                if (currentSource == null) {
+                    DropdownMenuItem(
+                        text = { Text("Sumber tidak ditemukan") },
+                        onClick = { page = MenuPage.Main },
+                    )
+                } else {
+                    val chroma = currentSource.filters.chromaKey()
+                    val color = currentSource.filters.colorCorrection()
+
+                    fun setFilters(next: List<VideoFilter>) {
+                        onCollectionChange(
+                            collection.updateSource(currentSource.copy(filters = next)),
+                        )
+                    }
+
+                    fun replace(transform: (VideoFilter) -> VideoFilter) {
+                        setFilters(currentSource.filters.map(transform))
+                    }
+
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.common_kembali_panah)) },
+                        onClick = { page = MenuPage.Main },
+                    )
+                    Column(
+                        modifier = Modifier
+                            .width(300.dp)
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                    ) {
+                        Text("Chroma Key", style = MaterialTheme.typography.titleSmall)
+                        FilterChip(
+                            selected = chroma != null,
+                            onClick = {
+                                if (chroma == null) {
+                                    setFilters(currentSource.filters + VideoFilter.ChromaKey())
+                                } else {
+                                    setFilters(currentSource.filters - chroma)
+                                }
+                            },
+                            label = { Text(if (chroma == null) "Nonaktif" else "Aktif") },
+                        )
+                        if (chroma != null) {
+                            Text(
+                                "Kemiripan ${"%.2f".format(java.util.Locale.US, chroma.similarity)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = chroma.similarity,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ChromaKey) {
+                                            filter.copy(similarity = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0f..1f,
+                            )
+                            Text(
+                                "Kelembutan ${"%.2f".format(java.util.Locale.US, chroma.smoothness)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = chroma.smoothness,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ChromaKey) {
+                                            filter.copy(smoothness = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0f..0.5f,
+                            )
+                            Text(
+                                "Kurangi pantulan ${"%.2f".format(java.util.Locale.US, chroma.spill)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = chroma.spill,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ChromaKey) {
+                                            filter.copy(spill = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0f..1f,
+                            )
+                        }
+
+                        Text("Koreksi warna", style = MaterialTheme.typography.titleSmall)
+                        FilterChip(
+                            selected = color != null,
+                            onClick = {
+                                if (color == null) {
+                                    setFilters(
+                                        currentSource.filters + VideoFilter.ColorCorrection(),
+                                    )
+                                } else {
+                                    setFilters(currentSource.filters - color)
+                                }
+                            },
+                            label = { Text(if (color == null) "Nonaktif" else "Aktif") },
+                        )
+                        if (color != null) {
+                            Text(
+                                "Kecerahan ${"%.2f".format(java.util.Locale.US, color.brightness)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = color.brightness,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ColorCorrection) {
+                                            filter.copy(brightness = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0.5f..2f,
+                            )
+                            Text(
+                                "Kontras ${"%.2f".format(java.util.Locale.US, color.contrast)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = color.contrast,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ColorCorrection) {
+                                            filter.copy(contrast = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0.5f..2f,
+                            )
+                            Text(
+                                "Saturasi ${"%.2f".format(java.util.Locale.US, color.saturation)}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Slider(
+                                value = color.saturation,
+                                onValueChange = { value ->
+                                    replace { filter ->
+                                        if (filter is VideoFilter.ColorCorrection) {
+                                            filter.copy(saturation = value)
+                                        } else {
+                                            filter
+                                        }
+                                    }
+                                },
+                                valueRange = 0f..2f,
+                            )
+                        }
+                    }
+                }
             }
 
             MenuPage.Blend -> {

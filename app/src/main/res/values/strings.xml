@@ -437,6 +437,7 @@
     <string name="floating_record">Rekam</string>
     <string name="floating_stop">Stop</string>
     <string name="overlay_live_start">Mulai siaran</string>
+    <string name="overlay_scenes">Adegan</string>
     <string name="overlay_screensaver">Layar jeda</string>
     <string name="overlay_screensaver_missing">Scene "Layar Jeda" tidak ditemukan. Buka halaman Adegan.</string>
     <string name="scenes_screensaver">Layar Jeda</string>

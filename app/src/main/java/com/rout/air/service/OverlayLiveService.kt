@@ -60,6 +60,7 @@ import com.rout.air.live.nameColor
 import com.rout.air.ui.ChatBubbleStack
 import com.rout.air.ui.LiveSetupCard
 import com.rout.air.ui.OverlayAudioPanel
+import com.rout.air.ui.OverlayScenePanel
 import com.rout.air.ui.OverlayScreensaverPanel
 import com.rout.air.ui.theme.RoutAirTheme
 import com.rout.air.MainActivity
@@ -109,6 +110,7 @@ class OverlayLiveService : Service() {
     private var setupWindow: ComposeView? = null
     private lateinit var vuBox: FrameLayout
     private lateinit var jedaBox: FrameLayout
+    private lateinit var sceneBox: FrameLayout
     private lateinit var audioCompose: ComposeView
     private val overlayOwner = OverlayViewOwner()
     private lateinit var resizeHandle: ImageView
@@ -516,6 +518,27 @@ class OverlayLiveService : Service() {
         }
         panel.addView(jedaBox, contentParams())
 
+        sceneBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            addView(
+                ComposeView(this@OverlayLiveService).apply {
+                    setContent {
+                        RoutAirTheme {
+                            OverlayScenePanel(
+                                onPick = { id -> SceneManager.switchProgramScene(id) },
+                            )
+                        }
+                    }
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        panel.addView(sceneBox, contentParams())
+
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -596,7 +619,12 @@ class OverlayLiveService : Service() {
                 showContent(ContentMode.Vu)
             },
         )
-        addEmptyCell()
+        // Slot 6: daftar scene untuk ganti program dari overlay.
+        addCell(
+            toolButton(R.drawable.ic_grid, getString(R.string.overlay_scenes)) {
+                showContent(ContentMode.Scenes)
+            },
+        )
         addEmptyCell()
         // Slot 8: panel layar jeda (daftar scene penutup yang tersedia).
         screensaverButton = toolButton(
@@ -1269,7 +1297,7 @@ class OverlayLiveService : Service() {
         }
     }
 
-    private enum class ContentMode { Preview, Messages, Vu, Screensaver }
+    private enum class ContentMode { Preview, Messages, Vu, Screensaver, Scenes }
 
     /** Ganti isi panel overlay: pratinjau, pesan, atau VU audio. */
     private fun showContent(mode: ContentMode) {
@@ -1277,6 +1305,7 @@ class OverlayLiveService : Service() {
         messageBox.visibility = if (mode == ContentMode.Messages) View.VISIBLE else View.GONE
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
         jedaBox.visibility = if (mode == ContentMode.Screensaver) View.VISIBLE else View.GONE
+        sceneBox.visibility = if (mode == ContentMode.Scenes) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
         // Saat panel obrolan dibuka, tampilkan pesan terbaru di bawah.
         if (mode == ContentMode.Messages) {

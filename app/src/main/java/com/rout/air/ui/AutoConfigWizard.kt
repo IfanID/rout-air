@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.rout.air.core.AutoConfigPlan
+import com.rout.air.data.DiagLog
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.LiveConfig
 import com.rout.air.core.VideoCodec
@@ -68,6 +69,8 @@ fun AutoConfigWizardDialog(
                 val candidates = AutoConfigPlan.ladder(
                     Runtime.getRuntime().availableProcessors(),
                     preference,
+                    config.width,
+                    config.height,
                 ).take(3)
                 val probes = mutableListOf<AutoConfigPlan.Probe>()
                 for ((index, candidate) in candidates.withIndex()) {
@@ -122,7 +125,12 @@ fun AutoConfigWizardDialog(
                     codec = codec,
                     hardwareEncoder = hardware,
                     uploadKbps = uploadKbps,
-                )
+                ).also { data ->
+                    DiagLog.line(
+                        "setup: ${data.width}x${data.height}@${data.fps} " +
+                            "${data.codec.label} ${data.bitrateKbps}kbps • ${data.reason}",
+                    )
+                }
                 progress = 1f
             } catch (error: Throwable) {
                 failure = error.message ?: "Diagnosa gagal"
@@ -245,12 +253,15 @@ fun AutoConfigWizardDialog(
             when {
                 result != null -> TextButton(onClick = {
                     val data = result ?: return@TextButton
+                    // Samakan rasio output dengan kanvas; 0 berarti ikut kanvas.
+                    val sameAsCanvas = data.width == config.width &&
+                        data.height == config.height
                     onApply(
                         config.copy(
                             fps = data.fps,
                             videoBitrate = data.bitrateKbps * 1_000,
-                            outputWidth = data.width,
-                            outputHeight = data.height,
+                            outputWidth = if (sameAsCanvas) 0 else data.width,
+                            outputHeight = if (sameAsCanvas) 0 else data.height,
                             videoCodec = data.codec,
                             keyframeIntervalSec = 2,
                         ),

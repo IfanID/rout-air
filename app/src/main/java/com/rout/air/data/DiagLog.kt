@@ -1,7 +1,9 @@
 package com.rout.air.data
 
+import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -23,6 +25,9 @@ object DiagLog {
     private val lock = Any()
     private var file: File? = null
 
+    /** Preamble sesi (perangkat, Android, CPU, RAM) yang ikut di setiap flush. */
+    private var header = ""
+
     /** Dipanggil saat aplikasi dibuka: kosongkan buffer dan timpa berkas. */
     fun startSession(context: Context) {
         synchronized(lock) {
@@ -30,12 +35,21 @@ object DiagLog {
             val dir = File(context.getExternalFilesDir(null), "log").apply { mkdirs() }
             file = File(dir, FILE_NAME)
             val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val memory = runCatching {
+                val manager = context.getSystemService(ActivityManager::class.java)
+                val info = ActivityManager.MemoryInfo()
+                manager?.getMemoryInfo(info)
+                (info.totalMem / (1024 * 1024))
+            }.getOrDefault(0L)
+            header = "RoutAir — log sesi\n" +
+                "Dibuka : $stamp\n" +
+                "Perangkat: ${Build.MANUFACTURER} ${Build.MODEL}\n" +
+                "Android : ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n" +
+                "CPU     : ${Runtime.getRuntime().availableProcessors()} inti\n" +
+                "RAM     : ${memory} MB\n" +
+                "=".repeat(48) + "\n\n"
             runCatching {
-                file?.writeText(
-                    "RoutAir — log sesi\n" +
-                        "Dibuka : $stamp\n" +
-                        "=".repeat(48) + "\n\n",
-                )
+                file?.writeText(header)
             }.onFailure { Log.w(TAG, "Gagal membuat log: ${it.message}") }
         }
     }
@@ -60,11 +74,7 @@ object DiagLog {
             } ?: return
             if (buffer.isEmpty()) return
             runCatching {
-                target.writeText(
-                    "RoutAir — log sesi\n" +
-                        "=".repeat(48) + "\n\n" +
-                        buffer,
-                )
+                target.writeText(header + buffer)
             }.onFailure { Log.w(TAG, "Gagal menulis log: ${it.message}") }
         }
     }

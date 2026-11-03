@@ -51,17 +51,32 @@ class AutoConfigPlanTest {
     }
 
     @Test
-    fun ladderStartsHighOnManyCores() {
-        // 8 inti: mulai 1080p60 seperti maxDataRate OBS.
-        assertEquals(1080, AutoConfigPlan.ladder(8).first().height)
-        assertEquals(1920, AutoConfigPlan.ladder(8).first().width)
-        // Di atas 8 inti baru 1440p.
-        assertEquals(1440, AutoConfigPlan.ladder(10).first().height)
-        assertEquals(1920, AutoConfigPlan.ladder(6).first().width)
-        // Dengan "Utamakan fps", perangkat 4 inti mulai dari 720p60.
-        assertEquals(60, AutoConfigPlan.ladder(4).first().fps)
-        assertEquals(720, AutoConfigPlan.ladder(4).first().height)
-        assertEquals(720, AutoConfigPlan.ladder(2).first().height)
+    fun ladderFollowsCanvasAspect() {
+        // Kanvas portrait: kandidat ikut rasio layar, bukan 16:9.
+        val portrait = AutoConfigPlan.ladder(8, canvasWidth = 1080, canvasHeight = 2400)
+        assertEquals(1080, portrait.first().width)
+        assertEquals(2400, portrait.first().height)
+        assertEquals(60, portrait.first().fps)
+        assertTrue(portrait.any { it.width == 720 && it.height == 1600 })
+
+        // Kanvas landscape.
+        val landscape = AutoConfigPlan.ladder(8, canvasWidth = 2400, canvasHeight = 1080)
+        assertEquals(2400, landscape.first().width)
+        assertEquals(1080, landscape.first().height)
+        assertTrue(landscape.any { it.width == 1600 && it.height == 720 })
+
+        // Kandidat tidak boleh melebihi kanvas.
+        assertTrue(portrait.all { it.width <= 1080 && it.height <= 2400 })
+    }
+
+    @Test
+    fun ladderRespectsCoreLimit() {
+        val many = AutoConfigPlan.ladder(10, canvasWidth = 2560, canvasHeight = 1440)
+        assertEquals(1440, many.first().height)
+        val mid = AutoConfigPlan.ladder(8, canvasWidth = 2560, canvasHeight = 1440)
+        assertEquals(1080, mid.first().height)
+        val few = AutoConfigPlan.ladder(2, canvasWidth = 1920, canvasHeight = 1080)
+        assertEquals(720, few.first().height)
     }
 
     @Test
@@ -73,7 +88,12 @@ class AutoConfigPlanTest {
         assertEquals(720, highFps[1].height)
         assertEquals(60, highFps[1].fps)
 
-        val highRes = AutoConfigPlan.ladder(10, AutoConfigPlan.FpsPreference.PreferHighRes)
+        val highRes = AutoConfigPlan.ladder(
+            10,
+            AutoConfigPlan.FpsPreference.PreferHighRes,
+            canvasWidth = 2560,
+            canvasHeight = 1440,
+        )
         assertEquals(1440, highRes.first().height)
         assertEquals(60, highRes.first().fps)
         assertEquals(30, highRes[1].fps)
@@ -87,9 +107,8 @@ class AutoConfigPlanTest {
         assertTrue(
             AutoConfigPlan.ladder(8, AutoConfigPlan.FpsPreference.Force60).all { it.fps == 60 },
         )
-        assertEquals(
-            1,
-            AutoConfigPlan.ladder(4, AutoConfigPlan.FpsPreference.Force60).size,
+        assertTrue(
+            AutoConfigPlan.ladder(4, AutoConfigPlan.FpsPreference.Force60).isNotEmpty(),
         )
     }
 

@@ -6,6 +6,7 @@ import com.rout.air.core.LiveConfig
 import com.rout.air.core.LiveStats
 import com.rout.air.core.LiveStatus
 import com.rout.air.core.VideoCodec
+import com.rout.air.data.DiagLog
 import com.rout.air.encode.MediaSink
 import java.util.ArrayDeque
 
@@ -151,6 +152,7 @@ class RtmpSink(
                     attempt = 0
                     connectedSinceMs = System.currentTimeMillis()
                     lastError = null
+                    DiagLog.line("live: terhubung ke ${config.serverUrl}")
                     updateStatus(LiveStatus.Live, force = true)
                     sendSequenceHeaders(created)
                     drainQueue(created)
@@ -257,6 +259,8 @@ class RtmpSink(
         publishStats(force)
     }
 
+    private var lastDiagAtMs = 0L
+
     private fun publishStats(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && now - lastStatsAtMs < 500) return
@@ -280,6 +284,15 @@ class RtmpSink(
         )
         runCatching { onStats(snapshot) }
             .onFailure { Log.w(TAG, "Statistik live gagal dikirim: ${it.message}") }
+        // Catat ke log tiap 5 detik agar troubleshooting bisa dari Diagnostik.
+        if (force || now - lastDiagAtMs >= 5_000) {
+            lastDiagAtMs = now
+            DiagLog.line(
+                "live: ${status.name} ${bitrate}kbps kirim=$tagsSent buang=$droppedTags " +
+                    "reconnect=$reconnects up=${uptime / 1000}s" +
+                    (lastError?.let { " err=$it" } ?: ""),
+            )
+        }
     }
 
     private fun sleepUnlessStopped(ms: Long) {

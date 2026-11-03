@@ -42,6 +42,38 @@ class GlCompositor {
     private var colorValue = 0
     private var colorAlpha = 0
 
+    private var externalFilter: FilterUniforms? = null
+    private var textureFilter: FilterUniforms? = null
+
+    /** Lokasi uniform filter untuk satu program shader. */
+    private class FilterUniforms(program: Int) {
+        val chroma = GLES20.glGetUniformLocation(program, "uChroma")
+        val keyColor = GLES20.glGetUniformLocation(program, "uKeyColor")
+        val similarity = GLES20.glGetUniformLocation(program, "uSimilarity")
+        val smoothness = GLES20.glGetUniformLocation(program, "uSmoothness")
+        val spill = GLES20.glGetUniformLocation(program, "uSpill")
+        val adjust = GLES20.glGetUniformLocation(program, "uAdjust")
+        val brightness = GLES20.glGetUniformLocation(program, "uBrightness")
+        val contrast = GLES20.glGetUniformLocation(program, "uContrast")
+        val saturation = GLES20.glGetUniformLocation(program, "uSaturation")
+        val gamma = GLES20.glGetUniformLocation(program, "uGamma")
+        val hue = GLES20.glGetUniformLocation(program, "uHue")
+
+        fun apply(state: FilterState) {
+            GLES20.glUniform1f(chroma, if (state.chroma) 1f else 0f)
+            GLES20.glUniform3f(keyColor, state.keyR, state.keyG, state.keyB)
+            GLES20.glUniform1f(similarity, state.similarity)
+            GLES20.glUniform1f(smoothness, state.smoothness)
+            GLES20.glUniform1f(spill, state.spill)
+            GLES20.glUniform1f(adjust, if (state.adjust) 1f else 0f)
+            GLES20.glUniform1f(brightness, state.brightness)
+            GLES20.glUniform1f(contrast, state.contrast)
+            GLES20.glUniform1f(saturation, state.saturation)
+            GLES20.glUniform1f(gamma, state.gamma)
+            GLES20.glUniform1f(hue, state.hueRadians)
+        }
+    }
+
     private val quad: FloatBuffer = floatBuffer(
         floatArrayOf(
             0f, 0f,
@@ -85,6 +117,7 @@ class GlCompositor {
         externalUvScale = GLES20.glGetUniformLocation(externalProgram, "uUvScale")
         externalUvBias = GLES20.glGetUniformLocation(externalProgram, "uUvBias")
         externalAlpha = GLES20.glGetUniformLocation(externalProgram, "uAlpha")
+        externalFilter = FilterUniforms(externalProgram)
 
         textureProgram = GlUtil.compileProgram(VERTEX_TEXTURE, FRAGMENT_TEXTURE)
         textureMvp = GLES20.glGetUniformLocation(textureProgram, "uMvp")
@@ -92,6 +125,7 @@ class GlCompositor {
         textureUvScale = GLES20.glGetUniformLocation(textureProgram, "uUvScale")
         textureUvBias = GLES20.glGetUniformLocation(textureProgram, "uUvBias")
         textureAlpha = GLES20.glGetUniformLocation(textureProgram, "uAlpha")
+        textureFilter = FilterUniforms(textureProgram)
 
         colorProgram = GlUtil.compileProgram(VERTEX_COLOR, FRAGMENT_COLOR)
         colorMvp = GLES20.glGetUniformLocation(colorProgram, "uMvp")
@@ -125,9 +159,11 @@ class GlCompositor {
         opacity: Float = 1f,
         /** Putar tekstur saja (derajat), kuad tetap tegak. */
         texRotate: Float = 0f,
+        filters: FilterState = FilterState.NONE,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(externalProgram)
+        externalFilter?.apply(filters)
         applyBlend(blend)
         GLES20.glUniform1f(externalAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(externalProgram)
@@ -179,9 +215,11 @@ class GlCompositor {
         opacity: Float = 1f,
         /** Putar tekstur saja (derajat), kuad tetap tegak. */
         texRotate: Float = 0f,
+        filters: FilterState = FilterState.NONE,
     ) {
         buildMvp(left, bottom, width, height, rotation)
         GLES20.glUseProgram(textureProgram)
+        textureFilter?.apply(filters)
         applyBlend(blend)
         GLES20.glUniform1f(textureAlpha, opacity.coerceIn(0f, 1f))
         bindQuad(textureProgram, quadUv2D)
@@ -316,9 +354,52 @@ class GlCompositor {
             precision mediump float;
             uniform samplerExternalOES uTexture;
             uniform float uAlpha;
+            uniform float uChroma;
+            uniform vec3 uKeyColor;
+            uniform float uSimilarity;
+            uniform float uSmoothness;
+            uniform float uSpill;
+            uniform float uAdjust;
+            uniform float uBrightness;
+            uniform float uContrast;
+            uniform float uSaturation;
+            uniform float uGamma;
+            uniform float uHue;
             varying vec2 vTexCoord;
+            vec4 routFilters(vec4 c) {
+                if (uChroma > 0.5) {
+                    float d = distance(c.rgb, uKeyColor);
+                    float a = smoothstep(uSimilarity, uSimilarity + uSmoothness + 0.001, d);
+                    c.rgb = clamp(c.rgb - uKeyColor * (uSpill * (1.0 - a)), 0.0, 1.0);
+                    c.a *= a;
+                }
+                if (uAdjust > 0.5) {
+                    vec3 rgb = pow(max(c.rgb, vec3(0.0)), vec3(uGamma));
+                    rgb = (rgb - vec3(0.5)) * uContrast + vec3(0.5);
+                    rgb = rgb * uBrightness;
+                    float luma = dot(rgb, vec3(0.213, 0.715, 0.072));
+                    rgb = mix(vec3(luma), rgb, uSaturation);
+                    float ca = cos(uHue);
+                    float sa = sin(uHue);
+                    float m00 = 0.213 + 0.787 * ca - 0.213 * sa;
+                    float m01 = 0.715 - 0.715 * ca - 0.715 * sa;
+                    float m02 = 0.072 - 0.072 * ca + 0.928 * sa;
+                    float m10 = 0.213 - 0.213 * ca + 0.143 * sa;
+                    float m11 = 0.715 + 0.285 * ca + 0.140 * sa;
+                    float m12 = 0.072 - 0.072 * ca - 0.283 * sa;
+                    float m20 = 0.213 - 0.213 * ca - 0.787 * sa;
+                    float m21 = 0.715 - 0.715 * ca + 0.715 * sa;
+                    float m22 = 0.072 + 0.928 * ca + 0.072 * sa;
+                    c.rgb = clamp(vec3(
+                        rgb.r * m00 + rgb.g * m01 + rgb.b * m02,
+                        rgb.r * m10 + rgb.g * m11 + rgb.b * m12,
+                        rgb.r * m20 + rgb.g * m21 + rgb.b * m22
+                    ), 0.0, 1.0);
+                }
+                return c;
+            }
             void main() {
-                vec4 c = texture2D(uTexture, vTexCoord);
+                vec4 c = routFilters(texture2D(uTexture, vTexCoord));
                 gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """
@@ -340,9 +421,52 @@ class GlCompositor {
             precision mediump float;
             uniform sampler2D uTexture;
             uniform float uAlpha;
+            uniform float uChroma;
+            uniform vec3 uKeyColor;
+            uniform float uSimilarity;
+            uniform float uSmoothness;
+            uniform float uSpill;
+            uniform float uAdjust;
+            uniform float uBrightness;
+            uniform float uContrast;
+            uniform float uSaturation;
+            uniform float uGamma;
+            uniform float uHue;
             varying vec2 vTexCoord;
+            vec4 routFilters(vec4 c) {
+                if (uChroma > 0.5) {
+                    float d = distance(c.rgb, uKeyColor);
+                    float a = smoothstep(uSimilarity, uSimilarity + uSmoothness + 0.001, d);
+                    c.rgb = clamp(c.rgb - uKeyColor * (uSpill * (1.0 - a)), 0.0, 1.0);
+                    c.a *= a;
+                }
+                if (uAdjust > 0.5) {
+                    vec3 rgb = pow(max(c.rgb, vec3(0.0)), vec3(uGamma));
+                    rgb = (rgb - vec3(0.5)) * uContrast + vec3(0.5);
+                    rgb = rgb * uBrightness;
+                    float luma = dot(rgb, vec3(0.213, 0.715, 0.072));
+                    rgb = mix(vec3(luma), rgb, uSaturation);
+                    float ca = cos(uHue);
+                    float sa = sin(uHue);
+                    float m00 = 0.213 + 0.787 * ca - 0.213 * sa;
+                    float m01 = 0.715 - 0.715 * ca - 0.715 * sa;
+                    float m02 = 0.072 - 0.072 * ca + 0.928 * sa;
+                    float m10 = 0.213 - 0.213 * ca + 0.143 * sa;
+                    float m11 = 0.715 + 0.285 * ca + 0.140 * sa;
+                    float m12 = 0.072 - 0.072 * ca - 0.283 * sa;
+                    float m20 = 0.213 - 0.213 * ca - 0.787 * sa;
+                    float m21 = 0.715 - 0.715 * ca + 0.715 * sa;
+                    float m22 = 0.072 + 0.928 * ca + 0.072 * sa;
+                    c.rgb = clamp(vec3(
+                        rgb.r * m00 + rgb.g * m01 + rgb.b * m02,
+                        rgb.r * m10 + rgb.g * m11 + rgb.b * m12,
+                        rgb.r * m20 + rgb.g * m21 + rgb.b * m22
+                    ), 0.0, 1.0);
+                }
+                return c;
+            }
             void main() {
-                vec4 c = texture2D(uTexture, vTexCoord);
+                vec4 c = routFilters(texture2D(uTexture, vTexCoord));
                 gl_FragColor = vec4(c.rgb, c.a * uAlpha);
             }
         """

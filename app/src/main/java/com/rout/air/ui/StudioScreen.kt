@@ -570,9 +570,17 @@ private fun PreviewPane(
                 ) {
                     AndroidView(
                         factory = { ctx ->
-                            SurfaceView(ctx).apply { holder.addCallback(holderCallback) }
+                            SurfaceView(ctx).apply {
+                                // Cegah pratinjau ikut terekam (cermin berulang).
+                                setSecure(true)
+                                holder.addCallback(holderCallback)
+                            }
                         },
                         modifier = Modifier.fillMaxSize(),
+                    )
+                    PreviewMirrorGuard(
+                        enabled = canvas?.hidePreviewWhileMirroring == true,
+                        modifier = Modifier.matchParentSize(),
                     )
 
                     // Outline sumber terpilih; digambar di atas SurfaceView memakai

@@ -10,6 +10,7 @@ import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceSettings
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
+import com.rout.air.core.VideoFilter
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,6 +57,30 @@ internal object SceneJson {
                         put("audioDeviceType", s.settings.audioDeviceType)
                         put("audioScoEnabled", s.settings.audioScoEnabled)
                         s.settings.screenDisplay?.let { put("screenDisplay", it.name) }
+                    })
+                    put("filters", JSONArray().apply {
+                        s.filters.forEach { filter ->
+                            put(JSONObject().apply {
+                                when (filter) {
+                                    is VideoFilter.ChromaKey -> {
+                                        put("type", "chroma")
+                                        put("color", filter.color)
+                                        put("similarity", filter.similarity.toDouble())
+                                        put("smoothness", filter.smoothness.toDouble())
+                                        put("spill", filter.spill.toDouble())
+                                    }
+
+                                    is VideoFilter.ColorCorrection -> {
+                                        put("type", "color")
+                                        put("brightness", filter.brightness.toDouble())
+                                        put("contrast", filter.contrast.toDouble())
+                                        put("saturation", filter.saturation.toDouble())
+                                        put("gamma", filter.gamma.toDouble())
+                                        put("hue", filter.hueDegrees.toDouble())
+                                    }
+                                }
+                            })
+                        }
                     })
                 })
             }
@@ -132,6 +157,27 @@ internal object SceneJson {
                                 .firstOrNull { it.name == name }
                         },
                 ),
+                filters = o.optJSONArray("filters").orEmpty().mapNotNull { raw ->
+                    val f = raw as? JSONObject ?: return@mapNotNull null
+                    when (f.optString("type")) {
+                        "chroma" -> VideoFilter.ChromaKey(
+                            color = f.optLong("color", 0xFF00FF00),
+                            similarity = f.optDouble("similarity", 0.35).toFloat(),
+                            smoothness = f.optDouble("smoothness", 0.08).toFloat(),
+                            spill = f.optDouble("spill", 0.10).toFloat(),
+                        )
+
+                        "color" -> VideoFilter.ColorCorrection(
+                            brightness = f.optDouble("brightness", 1.0).toFloat(),
+                            contrast = f.optDouble("contrast", 1.0).toFloat(),
+                            saturation = f.optDouble("saturation", 1.0).toFloat(),
+                            gamma = f.optDouble("gamma", 1.0).toFloat(),
+                            hueDegrees = f.optDouble("hue", 0.0).toFloat(),
+                        )
+
+                        else -> null
+                    }
+                },
             )
         }
 

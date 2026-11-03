@@ -154,6 +154,8 @@ data class SceneSource(
     val type: SourceType,
     val name: String,
     val settings: SourceSettings = SourceSettings(),
+    /** Filter GPU per sumber; berlaku di semua scene yang memakainya. */
+    val filters: List<VideoFilter> = emptyList(),
 )
 
 /** Satu adegan berisi daftar item. */

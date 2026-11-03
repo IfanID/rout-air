@@ -284,6 +284,30 @@ object SceneManager {
     }
 
     /**
+     * Ganti scene program langsung dari panel overlay, tanpa Transisi.
+     * Layar jeda ikut diakhiri karena operator memilih scene lain.
+     */
+    fun switchProgramScene(sceneId: String): Boolean {
+        val base = programCollection ?: current()
+        val target = base.scenes.firstOrNull { it.id == sceneId } ?: return false
+        programBeforeScreensaver = null
+        val next = base.copy(activeSceneId = target.id)
+        programCollection = next
+        _program.value = next
+        // Pratinjau edit ikut pindah scene supaya tombol Transisi tidak
+        // menyala padahal hanya beda scene aktif.
+        collection?.let { edit ->
+            val editNext = edit.copy(activeSceneId = target.id)
+            collection = editNext
+            _state.value = editNext
+            editListeners.forEach { it(editNext) }
+        }
+        listeners.forEach { it(next) }
+        DiagLog.line("scene: program diganti ke \"${target.name}\" dari overlay")
+        return true
+    }
+
+    /**
      * Mengembalikan program seperti sebelum layar jeda. Dipakai juga saat
      * sesi berhenti supaya status tidak tertinggal dan memblokir Transisi.
      */

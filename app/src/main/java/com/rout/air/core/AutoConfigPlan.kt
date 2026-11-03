@@ -49,52 +49,54 @@ object AutoConfigPlan {
         val reason: String,
     )
 
+    private fun even(value: Int): Int = (value / 2) * 2
+
     /**
-     * Semua kandidat yang masih masuk akal untuk jumlah inti ini, tanpa
-     * memperhatikan preferensi. Batas atas mengikuti `maxDataRate` OBS:
-     * 1440p hanya untuk perangkat di atas 8 inti logis.
+     * Kandidat diturunkan dari ukuran kanvas, bukan rasio 16:9 tetap.
+     * Patokannya sisi pendek (1440/1080/720/480) supaya portrait dan
+     * landscape sama-sama masuk akal.
      */
-    private fun allCandidates(cores: Int): List<Candidate> = when {
-        cores > 8 -> listOf(
-            Candidate(2560, 1440, 60),
-            Candidate(2560, 1440, 30),
-            Candidate(1920, 1080, 60),
-            Candidate(1920, 1080, 30),
-            Candidate(1280, 720, 60),
-            Candidate(1280, 720, 30),
-            Candidate(854, 480, 30),
-        )
+    private fun candidatesForCanvas(
+        cores: Int,
+        canvasWidth: Int,
+        canvasHeight: Int,
+    ): List<Candidate> {
+        val safeWidth = canvasWidth.coerceAtLeast(2)
+        val safeHeight = canvasHeight.coerceAtLeast(2)
+        val portrait = safeHeight >= safeWidth
+        val shortSide = minOf(safeWidth, safeHeight)
+        val longSide = maxOf(safeWidth, safeHeight)
+        val maxShort = when {
+            cores > 8 -> 1440
+            cores >= 4 -> 1080
+            else -> 720
+        }
+        val targets = listOf(1440, 1080, 720, 480)
+            .filter { it <= shortSide && it <= maxShort }
+            .ifEmpty { listOf(shortSide) }
 
-        cores >= 6 -> listOf(
-            Candidate(1920, 1080, 60),
-            Candidate(1920, 1080, 30),
-            Candidate(1280, 720, 60),
-            Candidate(1280, 720, 30),
-            Candidate(854, 480, 30),
-        )
-
-        cores >= 4 -> listOf(
-            Candidate(1920, 1080, 30),
-            Candidate(1280, 720, 60),
-            Candidate(1280, 720, 30),
-            Candidate(854, 480, 30),
-        )
-
-        else -> listOf(
-            Candidate(1280, 720, 30),
-            Candidate(854, 480, 30),
-        )
+        val result = mutableListOf<Candidate>()
+        targets.forEach { short ->
+            val long = even((short.toLong() * longSide / shortSide).toInt())
+            val width = if (portrait) even(short) else long
+            val height = if (portrait) long else even(short)
+            result += Candidate(width, height, 60)
+            result += Candidate(width, height, 30)
+        }
+        return result
     }
 
     /**
-     * Tangga kandidat sesuai preferensi fps. Uji berhenti pada kandidat
-     * pertama yang lulus, jadi urutan di sini menentukan hasilnya.
+     * Tangga kandidat sesuai preferensi fps dan rasio kanvas. Uji berhenti
+     * pada kandidat pertama yang lulus, jadi urutan di sini menentukan hasil.
      */
     fun ladder(
         cores: Int,
         preference: FpsPreference = FpsPreference.PreferHighFps,
+        canvasWidth: Int = 1920,
+        canvasHeight: Int = 1080,
     ): List<Candidate> {
-        val base = allCandidates(cores)
+        val base = candidatesForCanvas(cores, canvasWidth, canvasHeight)
         return when (preference) {
             FpsPreference.Force30 -> base.filter { it.fps == 30 }
             FpsPreference.Force60 -> base.filter { it.fps == 60 }

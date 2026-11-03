@@ -302,6 +302,7 @@ object ChatMonitor {
 
     fun start(context: Context) {
         if (job != null) return
+        DiagLog.line("chat: monitor dimulai")
         val app = context.applicationContext
         val freshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = freshScope
@@ -309,6 +310,7 @@ object ChatMonitor {
     }
 
     fun stop() {
+        DiagLog.line("chat: monitor dihentikan")
         job?.cancel()
         job = null
         scope?.cancel()

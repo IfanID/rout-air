@@ -113,6 +113,7 @@ class RecordingPipeline(
     // Deteksi layar statis lewat sampling piksel (bukan kedatangan frame).
     private val pixelSample = ByteBuffer.allocateDirect(9 * 64 * 4)
         .order(ByteOrder.nativeOrder())
+    private var lastScreenRectLogNs = 0L
     private var lastPixelSampleNs = 0L
     private var lastPixelBytes: ByteArray? = null
     private var lastVisualChangeNs = 0L
@@ -174,9 +175,27 @@ class RecordingPipeline(
     private val textureCache = mutableMapOf<String, CachedTexture>()
     private val retiredTextures = mutableListOf<Int>()
 
+    // Transisi: fade ke hitam, ganti layer di tengah, lalu fade masuk.
+    private var pendingProgramCollection: SceneCollection? = null
+    private var transitionStartNs = 0L
+    private var transitionActive = false
+
     /** Perubahan program (hasil Transisi); dijalankan di thread GL. */
-    private val sceneListener: (SceneCollection) -> Unit = {
-        glHandler.post { rebuildLayers() }
+    private val sceneListener: (SceneCollection) -> Unit = { next ->
+        glHandler.post {
+            // Tanpa rekam/live tidak ada frame encoder untuk animasi fade,
+            // jadi layer program langsung diganti.
+            if (!recordingActive && !liveActive) {
+                rebuildLayers()
+                return@post
+            }
+            pendingProgramCollection = next
+            if (!transitionActive) {
+                transitionActive = true
+                transitionStartNs = System.nanoTime()
+                diag("transisi: mulai")
+            }
+        }
     }
 
     /** Perubahan hasil edit: hanya memperbarui gambar pratinjau. */
@@ -661,6 +680,15 @@ class RecordingPipeline(
     private fun setupSession() {
         DiagLog.reset()
         diag("sesi: video=${config.width}x${config.height} fps=${config.fps} mode=${config.contentMode}")
+        diag(
+            "setelan: encoder=${config.encoderWidth}x${config.encoderHeight} " +
+                "bitrate=${config.videoBitrate / 1000}kbps " +
+                "rate=${config.bitrateMode} cq=${config.cqLevel} " +
+                "codec=${config.videoCodec.label} profil=${config.videoProfile} " +
+                "keyframe=${config.keyframeIntervalSec}s " +
+                "warna=${config.colorSpace}/${config.colorRange} " +
+                "kanvas=${config.canvasOrientation}",
+        )
 
         val manager = context.getSystemService(MediaProjectionManager::class.java)
             ?: error("MediaProjectionManager tidak tersedia")
@@ -766,6 +794,10 @@ class RecordingPipeline(
         }
 
         AudioMixer.clearRuntime()
+        diag(
+            "audio: ${config.sampleRate}Hz ${config.channelCount}ch " +
+                "${config.audioBitrate / 1000}kbps",
+        )
         audioEncoder = try {
             AudioCaptureEngine(
                 context = context,
@@ -784,6 +816,7 @@ class RecordingPipeline(
                 },
             ).also { it.start() }
         } catch (error: Throwable) {
+            diag("audio: gagal disiapkan (${error.message})")
             Log.w(TAG, "Mesin audio gagal disiapkan: ${error.message}")
             AudioMixer.setRuntime(AudioRuntime())
             null
@@ -1248,6 +1281,10 @@ class RecordingPipeline(
         for (item in scene.items.sortedBy { it.z }) {
             if (!item.visible) continue
             val source = collection.source(item.sourceId) ?: continue
+            diag(
+                "layer: ${source.type} \"${source.name}\" z=${item.z} " +
+                    "filter=${source.filters.size} opacity=${item.opacity}",
+            )
 
             when (source.type) {
                 SourceType.Screen -> layers += RenderLayer(
@@ -1262,6 +1299,7 @@ class RecordingPipeline(
                     opacity = item.opacity,
                     sourceId = null,
                     screenDisplay = source.settings.screenDisplay,
+                    filters = com.rout.air.engine.FilterState.from(source.filters),
                 )
 
                 SourceType.Image, SourceType.Text -> {
@@ -1277,6 +1315,7 @@ class RecordingPipeline(
                         blend = item.blend,
                         opacity = item.opacity,
                         sourceId = source.id,
+                        filters = com.rout.air.engine.FilterState.from(source.filters),
                     )
                 }
 
@@ -1485,11 +1524,9 @@ class RecordingPipeline(
         if (layer.type == SourceType.Screen) {
             val rotate = templateRotate
             if (rotate) extraRotation = 90f
-            val mode = if (layer.screenDisplay != null) {
-                ContentMode.Fit
-            } else {
-                config.contentMode
-            }
+            // Layar selalu memenuhi kotaknya. Kalau rasio kanvas sama dengan
+            // layar, Stretch identik dengan Fit; kalau berbeda, tetap penuh.
+            val mode = ContentMode.Stretch
             if (mode != ContentMode.Stretch) {
                 val fitWidth = if (rotate) sourceHeight else sourceWidth
                 val fitHeight = if (rotate) sourceWidth else sourceHeight
@@ -1505,6 +1542,19 @@ class RecordingPipeline(
                 drawWidth = rect[2].toFloat()
                 drawHeight = rect[3].toFloat()
             }
+        }
+
+        if (layer.type == SourceType.Screen &&
+            System.nanoTime() - lastScreenRectLogNs > 1_000_000_000L
+        ) {
+            lastScreenRectLogNs = System.nanoTime()
+            diag(
+                "layar: canvas=${config.width}x${config.height} " +
+                    "src=${sourceWidth}x${sourceHeight} " +
+                    "box=${width.roundToInt()}x${height.roundToInt()} " +
+                    "draw=${drawWidth.roundToInt()}x${drawHeight.roundToInt()} " +
+                    "left=${left.roundToInt()} top=${top.roundToInt()}",
+            )
         }
 
         val bottom = canvasHeight - top - drawHeight
@@ -1527,6 +1577,7 @@ class RecordingPipeline(
                 blend = layer.blend,
                 opacity = layer.opacity,
                 texRotate = extraRotation,
+                filters = layer.filters,
             )
 
             SourceType.Image, SourceType.Text -> painter.drawTexture2D(
@@ -1544,6 +1595,7 @@ class RecordingPipeline(
                 flipV = layer.transform.flipV,
                 blend = layer.blend,
                 opacity = layer.opacity,
+                filters = layer.filters,
             )
 
             SourceType.Color -> painter.drawColor(
@@ -1796,7 +1848,40 @@ class RecordingPipeline(
         GLES20.glViewport(0, 0, config.encoderWidth, config.encoderHeight)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        drawLayers(compositor ?: return, texMatrix, renderLayers, config.width, config.height)
+
+        // Fade ke hitam: layer lama dipakai sampai titik tengah, lalu diganti.
+        val transitionAlpha = if (transitionActive) {
+            val elapsed = System.nanoTime() - transitionStartNs
+            if (elapsed >= TRANSITION_NS / 2 && pendingProgramCollection != null) {
+                renderLayers = buildLayers(checkNotNull(pendingProgramCollection), "program")
+                pendingProgramCollection = null
+            }
+            if (elapsed >= TRANSITION_NS) {
+                transitionActive = false
+                diag("transisi: selesai")
+                0f
+            } else {
+                (1f - kotlin.math.abs(2f * elapsed / TRANSITION_NS - 1f)).coerceIn(0f, 1f)
+            }
+        } else {
+            0f
+        }
+
+        val painter = compositor ?: return
+        drawLayers(painter, texMatrix, renderLayers, config.width, config.height)
+        if (transitionAlpha > 0f) {
+            painter.drawColor(
+                red = 0f,
+                green = 0f,
+                blue = 0f,
+                alpha = transitionAlpha,
+                left = 0f,
+                bottom = 0f,
+                width = config.width.toFloat(),
+                height = config.height.toFloat(),
+                rotation = 0f,
+            )
+        }
         samplePixelChange(System.nanoTime())
 
         core.setPresentationTime(surface, presentationNs)
@@ -2165,6 +2250,7 @@ class RecordingPipeline(
         val opacity: Float = 1f,
         val sourceId: String? = null,
         val screenDisplay: com.rout.air.core.ScreenDisplay? = null,
+        val filters: com.rout.air.engine.FilterState = com.rout.air.engine.FilterState.NONE,
     )
 
     private data class CachedTexture(
@@ -2179,6 +2265,9 @@ class RecordingPipeline(
         const val STALL_TIMEOUT_NS = 5_000_000_000L
         const val PREVIEW_STALL_NS = 3_000_000_000L
         const val WATCHDOG_INTERVAL_MS = 1_000L
+
+        /** Durasi total transisi fade ke hitam. */
+        const val TRANSITION_NS = 500_000_000L
 
         /** Letterbox kanvas ke dalam surface (pratinjau). */
         fun computeViewport(
