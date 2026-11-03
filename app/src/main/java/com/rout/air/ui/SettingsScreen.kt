@@ -2,7 +2,12 @@ package com.rout.air.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -15,12 +20,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -28,6 +35,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.rout.air.core.AudioChannel
@@ -52,14 +62,21 @@ import com.rout.air.core.MeterDecay
 import com.rout.air.core.PeakMeterType
 import com.rout.air.core.SaveLocation
 import com.rout.air.core.VideoBitrateMode
+import com.rout.air.core.VideoCodec
 import com.rout.air.core.VideoProfile
+import com.rout.air.encode.EncoderBenchmark
+import com.rout.air.encode.EncoderProbe
+import com.rout.air.encode.GameLoadBenchmark
 import com.rout.air.data.AudioMixer
+import com.rout.air.data.DiagLog
+import com.rout.air.data.SettingsStore
 import com.rout.air.live.RtmpTester
 import com.rout.air.live.RtmpTestResult
-import com.rout.air.live.DeviceLogin
 import com.rout.air.live.GoogleAuth
 import com.rout.air.live.GoogleAuthStore
-import com.rout.air.live.TokenPoll
+import net.openid.appauth.AuthorizationException
+import net.openid.appauth.AuthorizationResponse
+import net.openid.appauth.AuthorizationService
 import com.rout.air.live.YouTubeApi
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
@@ -96,13 +113,16 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Root) }
+    // Satu posisi gulir untuk seluruh halaman; tab Output memakainya untuk
+    // kembali ke atas saat berpindah tab.
+    val scrollState = rememberScrollState()
 
     BackHandler(enabled = page != SettingsPage.Root) { page = SettingsPage.Root }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
         if (page == SettingsPage.Root) {
@@ -145,6 +165,7 @@ fun SettingsScreen(
                     config = config,
                     mix = mix,
                     live = liveConfig,
+                    scrollState = scrollState,
                     onConfigChange = onConfigChange,
                     onLiveConfigChange = onLiveConfigChange,
                 )
@@ -157,7 +178,12 @@ fun SettingsScreen(
                     onMasterEnabledChange = onMasterEnabledChange,
                     onConfigChange = onConfigChange,
                 )
-                SettingsPage.Advanced -> AdvancedSettings(config, canvasConfig, onConfigChange)
+                SettingsPage.Advanced -> AdvancedSettings(
+                    config = config,
+                    canvasConfig = canvasConfig,
+                    live = liveConfig,
+                    onConfigChange = onConfigChange,
+                )
                 SettingsPage.Root -> Unit
             }
         }
@@ -321,18 +347,31 @@ private fun VideoSettings(
 private enum class OutputTab(val label: String) {
     Streaming("Streaming"),
     Recording("Recording"),
-    Audio("Audio"),
+    Audio("Audio Output"),
 }
 
+/** Bitrate yang diatur blok setelan video pada tab yang sedang dibuka. */
+private enum class BitrateTarget { Streaming, Recording }
+
+/**
+ * Halaman Output dipisah per tab. Tiap tab dibuka dengan ringkasan dan
+ * bagian khususnya sendiri, baru blok setelan video bersama, sehingga
+ * perbedaan antartab langsung terlihat tanpa perlu menggulir.
+ */
 @Composable
 private fun OutputSettings(
     config: CaptureConfig,
     mix: AudioMix,
     live: LiveConfig,
+    scrollState: ScrollState,
     onConfigChange: (CaptureConfig) -> Unit,
     onLiveConfigChange: (LiveConfig) -> Unit,
 ) {
     var tab by remember { mutableStateOf(OutputTab.Streaming) }
+    // Kembali ke atas saat tab diganti supaya isi tab baru tidak tertutup
+    // posisi gulir dari tab sebelumnya.
+    LaunchedEffect(tab) { scrollState.scrollTo(0) }
+
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutputTab.entries.forEach { item ->
             FilterChip(
@@ -342,25 +381,167 @@ private fun OutputSettings(
             )
         }
     }
-    Hint(stringResource(R.string.settings_output_shared_hint))
 
-    Spacer(Modifier.height(16.dp))
-    SectionTitle(stringResource(R.string.settings_encoder))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(
-            selected = true,
-            onClick = {},
-            label = { Text(stringResource(R.string.settings_h_264_mediacodec)) },
+    when (tab) {
+        OutputTab.Streaming -> StreamingTab(
+            config = config,
+            live = live,
+            onConfigChange = onConfigChange,
+            onLiveConfigChange = onLiveConfigChange,
+        )
+
+        OutputTab.Recording -> RecordingTab(
+            config = config,
+            mix = mix,
+            onConfigChange = onConfigChange,
+        )
+
+        OutputTab.Audio -> AudioOutputTab(
+            config = config,
+            mix = mix,
+            onConfigChange = onConfigChange,
         )
     }
-    Hint(stringResource(R.string.settings_hevc_av1_menyusul_saat_ini_encoder_peran))
+}
+
+@Composable
+private fun StreamingTab(
+    config: CaptureConfig,
+    live: LiveConfig,
+    onConfigChange: (CaptureConfig) -> Unit,
+    onLiveConfigChange: (LiveConfig) -> Unit,
+) {
+    Spacer(Modifier.height(12.dp))
+    OutputSummary(
+        "Streaming • ${config.videoCodec.label} • ${bitrateText(config.videoBitrate)} • " +
+            "${config.bitrateMode.name} • track ${live.audioTrack}",
+    )
 
     Spacer(Modifier.height(16.dp))
-    SectionTitle(stringResource(R.string.settings_bitrate_video))
-    BitrateSlider(
-        bitrate = config.videoBitrate,
-        onChange = { onConfigChange(config.copy(videoBitrate = it)) },
+    SectionTitle(stringResource(R.string.settings_stream_audio_track))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (track in 1..6) {
+            FilterChip(
+                selected = live.audioTrack == track,
+                onClick = { onLiveConfigChange(live.copy(audioTrack = track)) },
+                label = { Text("$track") },
+            )
+        }
+    }
+    Hint(stringResource(R.string.settings_stream_audio_track_hint))
+
+    VideoEncodeSection(config = config, onConfigChange = onConfigChange)
+}
+
+@Composable
+private fun RecordingTab(
+    config: CaptureConfig,
+    mix: AudioMix,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    val bitrate = config.recordVideoBitrate.takeIf { it > 0 } ?: config.videoBitrate
+    Spacer(Modifier.height(12.dp))
+    OutputSummary(
+        "Rekaman • MP4 • ${bitrateText(bitrate)} • ${saveLocationLabel(config.saveLocation)}",
     )
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_format))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = true, onClick = {}, label = { Text("MP4") })
+    }
+    Hint(stringResource(R.string.settings_format_hint))
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle(stringResource(R.string.settings_file_name))
+    OutlinedTextField(
+        value = config.fileNameTemplate,
+        onValueChange = { onConfigChange(config.copy(fileNameTemplate = it)) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Hint(stringResource(R.string.settings_file_name_hint))
+    SettingSwitchRow(
+        title = stringResource(R.string.settings_no_space_filename),
+        subtitle = stringResource(R.string.settings_no_space_filename_desc),
+        checked = config.noSpaceFileName,
+    ) { onConfigChange(config.copy(noSpaceFileName = it)) }
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_lokasi_penyimpanan))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SaveLocation.entries.forEach { location ->
+            FilterChip(
+                selected = config.saveLocation == location,
+                onClick = { onConfigChange(config.copy(saveLocation = location)) },
+                label = { Text(saveLocationLabel(location)) },
+            )
+        }
+    }
+    Hint(stringResource(R.string.settings_lokasi_hint))
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_recording_audio_track))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (track in 1..6) {
+            val bit = 1 shl (track - 1)
+            val selected = mix.outputTracks and bit != 0
+            FilterChip(
+                selected = selected,
+                onClick = {
+                    val next = if (selected) {
+                        mix.outputTracks and bit.inv()
+                    } else {
+                        mix.outputTracks or bit
+                    }
+                    AudioMixer.setOutputTracks(
+                        if (next and 0x3F == 0) mix.outputTracks else next,
+                    )
+                },
+                label = { Text("$track") },
+            )
+        }
+    }
+    Hint(
+        "Track 1 adalah campuran utama. Track tambahan menulis trek AAC terpisah " +
+            "di MP4; tidak semua player memutar track selain track pertama.",
+    )
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_qs_tile))
+    Hint(stringResource(R.string.settings_qs_tile_desc))
+
+    Spacer(Modifier.height(12.dp))
+    Hint(stringResource(R.string.settings_split_recording_dan_replay_buffer_menyus))
+
+    VideoEncodeSection(
+        config = config,
+        onConfigChange = onConfigChange,
+        target = BitrateTarget.Recording,
+    )
+}
+
+/**
+ * Tab audio hanya memuat setelan audio output. Perangkat dan mixer ada di
+ * Setelan → Audio supaya tidak ada dua tempat untuk hal yang sama.
+ */
+@Composable
+private fun AudioOutputTab(
+    config: CaptureConfig,
+    mix: AudioMix,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    Spacer(Modifier.height(12.dp))
+    OutputSummary("Audio Output • AAC-LC • ${config.audioBitrate / 1_000} kbps")
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_audio_encoder))
+    InfoRow(stringResource(R.string.settings_encoder), "AAC-LC")
 
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_bitrate_audio))
@@ -373,7 +554,115 @@ private fun OutputSettings(
             )
         }
     }
-    Hint("Bitrate audio berlaku pada sesi tangkap berikutnya.")
+    Hint(stringResource(R.string.settings_audio_bitrate_hint))
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle(stringResource(R.string.settings_audio_track))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (track in 1..6) {
+            val bit = 1 shl (track - 1)
+            val selected = mix.outputTracks and bit != 0
+            FilterChip(
+                selected = selected,
+                onClick = {
+                    val next = if (selected) {
+                        mix.outputTracks and bit.inv()
+                    } else {
+                        mix.outputTracks or bit
+                    }
+                    AudioMixer.setOutputTracks(
+                        if (next and 0x3F == 0) mix.outputTracks else next,
+                    )
+                },
+                label = { Text("$track") },
+            )
+        }
+    }
+    Hint(stringResource(R.string.settings_audio_tab_hint))
+    Hint(stringResource(R.string.settings_audio_output_hint))
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_audio_track_bitrate))
+    Hint(stringResource(R.string.settings_audio_track_bitrate_hint))
+    Spacer(Modifier.height(8.dp))
+    for (track in 1..6) {
+        if (mix.outputTracks and (1 shl (track - 1)) == 0) continue
+        Text(
+            stringResource(R.string.settings_audio_track_n, track),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            listOf(64, 96, 128, 160, 192, 256, 320).forEach { kbps ->
+                val selected = mix.bitrateFor(track) == kbps * 1_000
+                FilterChip(
+                    selected = selected,
+                    onClick = {
+                        AudioMixer.setTrackBitrate(track, kbps * 1_000)
+                    },
+                    label = { Text("$kbps") },
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * Setelan video dipakai bersama live dan rekam karena hanya ada satu
+ * encoder. Ditampilkan di tab Streaming dan Recording, tidak di tab audio.
+ *
+ * [target] menentukan bitrate mana yang diatur di blok ini, supaya tiap tab
+ * hanya punya satu kontrol bitrate dan tidak ada dua slider kembar.
+ */
+@Composable
+private fun VideoEncodeSection(
+    config: CaptureConfig,
+    onConfigChange: (CaptureConfig) -> Unit,
+    target: BitrateTarget = BitrateTarget.Streaming,
+) {
+    Spacer(Modifier.height(20.dp))
+    SectionTitle(stringResource(R.string.settings_video_encoder))
+    Hint(stringResource(R.string.settings_output_shared_hint))
+    CodecPicker(config = config, onConfigChange = onConfigChange)
+
+    Spacer(Modifier.height(16.dp))
+    when (target) {
+        BitrateTarget.Streaming -> {
+            SectionTitle(stringResource(R.string.settings_bitrate_video))
+            BitrateSlider(
+                bitrate = config.videoBitrate,
+                onChange = { onConfigChange(config.copy(videoBitrate = it)) },
+            )
+        }
+
+        BitrateTarget.Recording -> {
+            SectionTitle(stringResource(R.string.settings_bitrate_rekaman))
+            SettingSwitchRow(
+                title = stringResource(R.string.settings_same_as_streaming),
+                subtitle = stringResource(R.string.settings_same_as_streaming_desc),
+                checked = config.recordVideoBitrate == 0,
+            ) { same ->
+                onConfigChange(
+                    config.copy(recordVideoBitrate = if (same) 0 else config.videoBitrate),
+                )
+            }
+            if (config.recordVideoBitrate > 0) {
+                BitrateSlider(
+                    bitrate = config.recordVideoBitrate,
+                    onChange = { onConfigChange(config.copy(recordVideoBitrate = it)) },
+                )
+            } else {
+                // Nilai hanya ditampilkan karena mengikuti setelan streaming.
+                InfoRow("Bitrate", bitrateText(config.videoBitrate))
+            }
+            Hint(stringResource(R.string.settings_bitrate_rekaman_hint))
+        }
+    }
 
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_rate_control))
@@ -389,13 +678,13 @@ private fun OutputSettings(
     if (config.bitrateMode == VideoBitrateMode.CQ) {
         Spacer(Modifier.height(8.dp))
         SectionTitle(stringResource(R.string.settings_cq_level))
+        // Tanpa steps: tanda tick rapat akan menutupi track.
         Slider(
             value = config.cqLevel.toFloat(),
             onValueChange = {
-                onConfigChange(config.copy(cqLevel = it.toInt().coerceIn(0, 51)))
+                onConfigChange(config.copy(cqLevel = it.roundToInt().coerceIn(0, 51)))
             },
             valueRange = 0f..51f,
-            steps = 50,
         )
         InfoRow("Kualitas", "${config.cqLevel}")
     }
@@ -443,178 +732,87 @@ private fun OutputSettings(
     Spacer(Modifier.height(12.dp))
     SectionTitle(stringResource(R.string.settings_media_codec_limit))
     Hint(stringResource(R.string.settings_media_codec_limit_desc))
+}
 
-    when (tab) {
-    OutputTab.Streaming -> {
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_stream_audio_track))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (track in 1..6) {
-                FilterChip(
-                    selected = live.audioTrack == track,
-                    onClick = { onLiveConfigChange(live.copy(audioTrack = track)) },
-                    label = { Text("$track") },
-                )
-            }
-        }
-        Hint(stringResource(R.string.settings_stream_audio_track_hint))
-    }
+/** Penanda tab sekaligus nilai yang paling sering dicek. */
+@Composable
+private fun OutputSummary(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
-    OutputTab.Recording -> {
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_recording_audio_track))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (track in 1..6) {
-                val bit = 1 shl (track - 1)
-                val selected = mix.outputTracks and bit != 0
-                FilterChip(
-                    selected = selected,
-                    onClick = {
-                        val next = if (selected) {
-                            mix.outputTracks and bit.inv()
-                        } else {
-                            mix.outputTracks or bit
-                        }
-                        AudioMixer.setOutputTracks(
-                            if (next and 0x3F == 0) mix.outputTracks else next,
-                        )
-                    },
-                    label = { Text("$track") },
-                )
-            }
-        }
-        Hint(
-            "Track 1 adalah campuran utama. Track tambahan menulis trek AAC terpisah " +
-                "di MP4; tidak semua player memutar track selain track pertama.",
-        )
+private fun bitrateText(bitrate: Int): String =
+    String.format("%.1f Mbps", bitrate / 1_000_000f)
 
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_bitrate_rekaman))
-        SettingSwitchRow(
-            title = stringResource(R.string.settings_same_as_streaming),
-            subtitle = stringResource(R.string.settings_same_as_streaming_desc),
-            checked = config.recordVideoBitrate == 0,
-        ) { same ->
-            onConfigChange(
-                config.copy(recordVideoBitrate = if (same) 0 else config.videoBitrate),
+/**
+ * Pilihan codec dengan status nyata dari MediaCodec. Codec yang tidak
+ * tersedia tetap tampil (nonaktif) supaya alasannya bisa dibaca, bukan
+ * disembunyikan.
+ */
+@Composable
+private fun CodecPicker(
+    config: CaptureConfig,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    val caps = remember { EncoderProbe.all() }
+    // Pemindaian gagal bukan alasan menonaktifkan semua codec.
+    val known = caps.isNotEmpty()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        VideoCodec.entries.forEach { codec ->
+            val available = EncoderProbe.select(caps, codec)
+            FilterChip(
+                selected = config.videoCodec == codec,
+                enabled = !known || available != null,
+                onClick = { onConfigChange(config.copy(videoCodec = codec)) },
+                label = { Text(codec.label) },
             )
         }
-        if (config.recordVideoBitrate > 0) {
-            BitrateSlider(
-                bitrate = config.recordVideoBitrate,
-                onChange = { onConfigChange(config.copy(recordVideoBitrate = it)) },
-            )
-        }
-        Hint(stringResource(R.string.settings_bitrate_rekaman_hint))
-
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_format))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = true, onClick = {}, label = { Text("MP4") })
-        }
-        Hint(stringResource(R.string.settings_format_hint))
-
-        Spacer(Modifier.height(12.dp))
-        SectionTitle(stringResource(R.string.settings_file_name))
-        OutlinedTextField(
-            value = config.fileNameTemplate,
-            onValueChange = { onConfigChange(config.copy(fileNameTemplate = it)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Hint(stringResource(R.string.settings_file_name_hint))
-        SettingSwitchRow(
-            title = stringResource(R.string.settings_no_space_filename),
-            subtitle = stringResource(R.string.settings_no_space_filename_desc),
-            checked = config.noSpaceFileName,
-        ) { onConfigChange(config.copy(noSpaceFileName = it)) }
-
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_lokasi_penyimpanan))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SaveLocation.entries.forEach { location ->
-                FilterChip(
-                    selected = config.saveLocation == location,
-                    onClick = { onConfigChange(config.copy(saveLocation = location)) },
-                    label = { Text(saveLocationLabel(location)) },
-                )
-            }
-        }
-        Hint(stringResource(R.string.settings_lokasi_hint))
-
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_qs_tile))
-        Hint(stringResource(R.string.settings_qs_tile_desc))
-
-        Spacer(Modifier.height(12.dp))
-        Hint(stringResource(R.string.settings_split_recording_dan_replay_buffer_menyus))
     }
 
-    OutputTab.Audio -> {
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_audio_encoder))
-        InfoRow(stringResource(R.string.settings_encoder), "AAC-LC")
-        Spacer(Modifier.height(12.dp))
-        SectionTitle(stringResource(R.string.settings_audio_track))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (track in 1..6) {
-                val bit = 1 shl (track - 1)
-                val selected = mix.outputTracks and bit != 0
-                FilterChip(
-                    selected = selected,
-                    onClick = {
-                        val next = if (selected) {
-                            mix.outputTracks and bit.inv()
-                        } else {
-                            mix.outputTracks or bit
-                        }
-                        AudioMixer.setOutputTracks(
-                            if (next and 0x3F == 0) mix.outputTracks else next,
-                        )
-                    },
-                    label = { Text("$track") },
-                )
-            }
-        }
-        Hint(stringResource(R.string.settings_audio_tab_hint))
+    Spacer(Modifier.height(4.dp))
+    if (known) {
+        VideoCodec.entries.forEach { codec ->
+            val available = EncoderProbe.select(caps, codec)
+            val status = when {
+                available != null ->
+                    "${available.name} • ${if (available.hardware) "hardware" else "software"}"
 
-        Spacer(Modifier.height(16.dp))
-        SectionTitle(stringResource(R.string.settings_audio_track_bitrate))
-        Hint(stringResource(R.string.settings_audio_track_bitrate_hint))
-        Spacer(Modifier.height(8.dp))
-        for (track in 1..6) {
-            if (mix.outputTracks and (1 shl (track - 1)) == 0) continue
+                codec == VideoCodec.AV1 && caps.any { it.codec == VideoCodec.AV1 && !it.hardware } ->
+                    stringResource(R.string.settings_codec_av1_software_only)
+
+                codec == VideoCodec.AV1 ->
+                    stringResource(R.string.settings_codec_av1_hardware_only)
+
+                else -> stringResource(R.string.settings_codec_not_available)
+            }
             Text(
-                stringResource(R.string.settings_audio_track_n, track),
-                style = MaterialTheme.typography.bodyMedium,
+                "${codec.label}: $status",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                listOf(64, 96, 128, 160, 192, 256, 320).forEach { kbps ->
-                    val selected = mix.bitrateFor(track) == kbps * 1_000
-                    FilterChip(
-                        selected = selected,
-                        onClick = {
-                            AudioMixer.setTrackBitrate(track, kbps * 1_000)
-                        },
-                        label = { Text("$kbps") },
-                    )
-                }
-            }
-            Spacer(Modifier.height(4.dp))
         }
-    }
+        Hint(stringResource(R.string.settings_codec_probe_hint))
     }
 
+    if (config.videoCodec == VideoCodec.AV1 && Build.VERSION.SDK_INT < 34) {
+        Hint(stringResource(R.string.settings_codec_av1_mp4_android14))
+    }
+    if (config.videoCodec.enhanced) {
+        Hint(stringResource(R.string.settings_codec_enhanced_rtmp_hint))
+    }
+    if (config.videoCodec == VideoCodec.AV1) {
+        Hint(stringResource(R.string.settings_codec_av1_hint))
+    }
 }
 
 /** Slider bitrate 1–50 Mbps dengan langkah 0,5 Mbps seperti spinbox OBS. */
@@ -626,9 +824,11 @@ private fun BitrateSlider(bitrate: Int, onChange: (Int) -> Unit) {
     )
     Slider(
         value = (bitrate / 1_000_000f).coerceIn(1f, 50f),
-        onValueChange = { onChange((it * 1_000_000).roundToInt()) },
+        // Dibulatkan 0,5 Mbps tanpa steps agar track tidak penuh titik.
+        onValueChange = {
+            onChange(((it * 2f).roundToInt() / 2f * 1_000_000).toInt())
+        },
         valueRange = 1f..50f,
-        steps = 97,
     )
 }
 
@@ -1009,14 +1209,62 @@ private fun YoutubeAccountSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val store = remember { GoogleAuthStore(context) }
-    var clientId by remember { mutableStateOf(store.clientId) }
-    var clientSecret by remember { mutableStateOf(store.clientSecret) }
-    // Token lama tanpa scope tulis dianggap belum login.
     var email by remember { mutableStateOf(if (store.loggedIn) store.accountEmail else "") }
-    var waiting by remember { mutableStateOf<DeviceLogin?>(null) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf(false) }
+
+    val authService = remember { AuthorizationService(context) }
+    DisposableEffect(Unit) { onDispose { authService.dispose() } }
+
+    // Setelah token didapat: ambil email dan server/kunci stream, seperti
+    // tombol Connect Account di OBS.
+    suspend fun finishLogin(accessToken: String) {
+        val mail = withContext(Dispatchers.IO) { GoogleAuth.accountEmail(accessToken) }
+        store.accountEmail = mail
+        email = mail
+        val target = withContext(Dispatchers.IO) {
+            runCatching { YouTubeApi(accessToken).streamTarget() }.getOrNull()
+        }
+        if (target == null) {
+            status = context.getString(R.string.settings_google_no_key)
+        } else {
+            onLiveConfigChange(
+                live.copy(
+                    serverUrl = target.server,
+                    streamKey = target.key,
+                    accountLinked = true,
+                ),
+            )
+        }
+    }
+
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        val response = data?.let { AuthorizationResponse.fromIntent(it) }
+        if (response == null) {
+            val error = data?.let { AuthorizationException.fromIntent(it) }
+            status = GoogleAuth.errorMessage(error?.error)
+            busy = false
+            return@rememberLauncherForActivityResult
+        }
+        authService.performTokenRequest(
+            response.createTokenExchangeRequest(),
+        ) { tokenResponse, error ->
+            if (tokenResponse?.accessToken == null) {
+                status = GoogleAuth.errorMessage(error?.error)
+                busy = false
+            } else {
+                val tokens = GoogleAuth.toTokens(tokenResponse)
+                store.saveTokens(tokens)
+                scope.launch {
+                    finishLogin(tokens.accessToken)
+                    busy = false
+                }
+            }
+        }
+    }
 
     if (email.isNotBlank()) {
         Row(
@@ -1051,156 +1299,34 @@ private fun YoutubeAccountSection(
                 Text(stringResource(R.string.settings_google_disconnect))
             }
         }
+    } else if (!GoogleAuth.configured) {
+        // Build tanpa client OAuth: jangan tampilkan tombol yang pasti gagal.
+        Hint(stringResource(R.string.settings_google_not_configured))
     } else {
-        TextButton(
-            enabled = !busy && waiting == null,
+        Button(
+            enabled = !busy,
             onClick = {
-                busy = true
                 status = ""
-                scope.launch {
-                    var failure: String? = null
-                    val device = withContext(Dispatchers.IO) {
-                        runCatching {
-                            GoogleAuth.requestDeviceCode(store.clientId, store.clientSecret)
-                        }.onFailure { failure = it.message }.getOrNull()
-                    }
-                    if (device == null) {
-                        status = context.getString(
-                            R.string.settings_google_failed,
-                            failure ?: "-",
-                        )
-                        busy = false
-                        return@launch
-                    }
-                    waiting = device
-                    // Langsung buka browser supaya terasa seperti login OBS.
-                    runCatching {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(device.verificationUrl))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    }
-                    var intervalMs = device.intervalSec * 1000L
-                    var done = false
-                    var token: String? = null
-                    while (!done && System.currentTimeMillis() < device.expiresAtMs) {
-                        delay(intervalMs)
-                        val result = withContext(Dispatchers.IO) {
-                            runCatching {
-                                GoogleAuth.pollToken(
-                                    store.clientId,
-                                    store.clientSecret,
-                                    device.deviceCode,
-                                )
-                            }.getOrElse {
-                                TokenPoll.Failure(it.message ?: "Gagal menghubungi Google")
-                            }
-                        }
-                        when (result) {
-                            is TokenPoll.Success -> {
-                                store.saveTokens(result.tokens)
-                                token = result.tokens.accessToken
-                                done = true
-                            }
-                            TokenPoll.SlowDown -> intervalMs += 5_000L
-                            is TokenPoll.Failure -> {
-                                status = result.message
-                                done = true
-                            }
-                            TokenPoll.Pending -> Unit
-                        }
-                    }
-                    waiting = null
-                    val access = token
-                    if (access == null) {
-                        if (status.isBlank()) {
-                            status = context.getString(R.string.settings_google_expired)
-                        }
-                        busy = false
-                        return@launch
-                    }
-                    val mail = withContext(Dispatchers.IO) {
-                        GoogleAuth.accountEmail(access)
-                    }
-                    store.accountEmail = mail
-                    email = mail
-                    // Ambil server + kunci stream, sama seperti Connect Account OBS.
-                    val target = withContext(Dispatchers.IO) {
-                        runCatching { YouTubeApi(access).streamTarget() }.getOrNull()
-                    }
-                    if (target == null) {
-                        status = context.getString(R.string.settings_google_no_key)
-                    } else {
-                        onLiveConfigChange(
-                            live.copy(
-                                serverUrl = target.server,
-                                streamKey = target.key,
-                                accountLinked = true,
-                            ),
-                        )
-                    }
+                busy = true
+                runCatching {
+                    launcher.launch(
+                        authService.getAuthorizationRequestIntent(
+                            GoogleAuth.authorizationRequest(),
+                        ),
+                    )
+                }.onFailure {
+                    status = it.message ?: "Tidak bisa membuka browser"
                     busy = false
                 }
             },
         ) {
-            Text(stringResource(R.string.settings_google_connect))
-        }
-    }
-
-    waiting?.let { device ->
-        Spacer(Modifier.height(10.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    stringResource(R.string.settings_google_code_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = device.userCode,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Row {
-                    TextButton(
-                        onClick = {
-                            val manager = context.getSystemService(
-                                android.content.Context.CLIPBOARD_SERVICE,
-                            ) as android.content.ClipboardManager
-                            manager.setPrimaryClip(
-                                android.content.ClipData.newPlainText(
-                                    "kode",
-                                    device.userCode,
-                                ),
-                            )
-                            android.widget.Toast.makeText(
-                                context,
-                                R.string.settings_google_copied,
-                                android.widget.Toast.LENGTH_SHORT,
-                            ).show()
-                        },
-                    ) {
-                        Text(stringResource(R.string.settings_google_copy))
-                    }
-                    TextButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(device.verificationUrl))
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        },
-                    ) {
-                        Text(stringResource(R.string.settings_google_open))
-                    }
-                }
-                Text(
-                    stringResource(R.string.settings_google_waiting),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                if (busy) {
+                    stringResource(R.string.settings_google_waiting_browser)
+                } else {
+                    stringResource(R.string.settings_google_connect)
+                },
+            )
         }
     }
 
@@ -1213,39 +1339,6 @@ private fun YoutubeAccountSection(
         )
     }
 
-    Spacer(Modifier.height(4.dp))
-    TextButton(onClick = { editing = !editing }) {
-        Text(
-            stringResource(
-                if (editing) R.string.settings_google_edit_done
-                else R.string.settings_google_edit,
-            ),
-        )
-    }
-    if (editing) {
-        OutlinedTextField(
-            value = clientId,
-            onValueChange = {
-                clientId = it
-                store.clientId = it
-            },
-            label = { Text(stringResource(R.string.settings_google_client_id)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = clientSecret,
-            onValueChange = {
-                clientSecret = it
-                store.clientSecret = it
-            },
-            label = { Text(stringResource(R.string.settings_google_client_secret)) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
     if (email.isBlank()) Hint(stringResource(R.string.settings_google_hint))
 }
 
@@ -1474,15 +1567,45 @@ private fun SettingSwitchRow(
 private fun AdvancedSettings(
     config: CaptureConfig,
     canvasConfig: CaptureConfig,
+    live: LiveConfig,
     onConfigChange: (CaptureConfig) -> Unit,
 ) {
     SectionTitle(stringResource(R.string.settings_informasi))
+    val caps = remember { EncoderProbe.all() }
+    val encoder = EncoderProbe.select(caps, canvasConfig.videoCodec)
     InfoRow("Versi", "1.0 (M4)")
     InfoRow("Kanvas", "${canvasConfig.width}x${canvasConfig.height}")
     InfoRow("Renderer", "OpenGL ES 3.0")
-    InfoRow("Encoder", "MediaCodec H.264 + AAC")
-    InfoRow("Audio", "Mixer OBS: internal + mikrofon")
+    InfoRow("Codec", canvasConfig.videoCodec.label)
+    InfoRow(
+        "Encoder",
+        encoder?.let {
+            "${it.name} • ${if (it.hardware) "hardware" else "software"}"
+        } ?: "tidak tersedia",
+    )
+    InfoRow("Audio", "AAC-LC + mixer OBS")
     InfoRow("Rate control", canvasConfig.bitrateMode.name)
+
+    Text(
+        "Encoder MediaCodec terdeteksi:",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (caps.isEmpty()) {
+        Text(
+            "• pemindaian gagal atau tidak ada encoder",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        caps.forEach { cap ->
+            Text(
+                "• ${cap.codec.label}: ${cap.describe()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
     InfoRow("Profile", canvasConfig.videoProfile.name)
     InfoRow("Color", "${canvasConfig.colorSpace.name} • ${canvasConfig.colorRange.name}")
     InfoRow("Network", "RTMP/RTMPS • reconnect maks 8×")
@@ -1502,8 +1625,483 @@ private fun AdvancedSettings(
     Hint(stringResource(R.string.settings_performance_hint))
 
     Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_encoder_test))
+    Hint(stringResource(R.string.settings_encoder_test_hint))
+
+    val scope = rememberCoroutineScope()
+    var testing by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf(emptyList<EncoderBenchmark.Result>()) }
+    var runningCodec by remember { mutableStateOf<VideoCodec?>(null) }
+    var secondsLeft by remember { mutableStateOf(5) }
+    var codecFraction by remember { mutableStateOf(0f) }
+    var codecIndex by remember { mutableStateOf(0) }
+    var benchError by remember { mutableStateOf<String?>(null) }
+    val testCodecs = listOf(VideoCodec.AVC, VideoCodec.HEVC)
+
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = {
+            testing = true
+            results = emptyList()
+            benchError = null
+            runningCodec = null
+            secondsLeft = 5
+            codecFraction = 0f
+            codecIndex = 0
+            // Jalan di thread lain; layar tetap bisa digulir selama uji.
+            scope.launch {
+                try {
+                    EncoderBenchmark.measure(
+                        width = canvasConfig.encoderWidth,
+                        height = canvasConfig.encoderHeight,
+                        fps = canvasConfig.fps,
+                        codecs = testCodecs,
+                        onProgress = { index, codec, left, fraction ->
+                            codecIndex = index
+                            runningCodec = codec
+                            secondsLeft = left
+                            codecFraction = fraction
+                        },
+                        // Hasil satu codec langsung tampil tanpa menunggu yang lain.
+                        onResult = { results = results + it },
+                    )
+                } catch (error: Throwable) {
+                    benchError = error.message ?: "Uji gagal"
+                } finally {
+                    // Tombol harus selalu aktif lagi, termasuk setelah gagal.
+                    testing = false
+                }
+            }
+        },
+        enabled = !testing,
+    ) {
+        Text(
+            stringResource(
+                if (testing) {
+                    R.string.settings_encoder_test_running
+                } else {
+                    R.string.settings_encoder_test_start
+                },
+            ),
+        )
+    }
+
+    if (testing) {
+        val overall = ((codecIndex + codecFraction) / testCodecs.size).coerceIn(0f, 1f)
+        // Animasi membuat bar bergerak halus meski progres dikirim tiap 100 ms.
+        val animated by animateFloatAsState(targetValue = overall, label = "uji-encoder")
+        Spacer(Modifier.height(8.dp))
+        LinearProgressIndicator(
+            progress = { animated },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "${runningCodec?.label ?: "menyiapkan"} • sisa $secondsLeft detik",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    benchError?.let { message ->
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Uji gagal: $message",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    results.forEach { result ->
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (result.error != null) {
+                "${result.codec.label}: gagal — ${result.error}"
+            } else {
+                String.format(
+                    java.util.Locale.US,
+                    "%s: %.1f fps • %d frame • %s",
+                    result.codec.label,
+                    result.fps,
+                    result.frames,
+                    result.encoder,
+                )
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (result.error != null) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+    AutoConfigSection(
+        config = config,
+        live = live,
+        onConfigChange = onConfigChange,
+    )
+
+    Spacer(Modifier.height(20.dp))
+    GameLoadBenchmarkSection()
+
+    Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_diagnostik))
     Hint(stringResource(R.string.settings_setiap_rekaman_menulis_log_ke_download_r))
+
+    val context = LocalContext.current
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = {
+            exportMessage = DiagLog.exportToDownloads(context)
+                ?.let { "Log diekspor ke $it" }
+                ?: "Gagal mengekspor log"
+        },
+    ) {
+        Text("Ekspor log ke Download")
+    }
+    exportMessage?.let { Hint(it) }
+}
+
+/**
+ * Kartu setup otomatis: menampilkan hasil terakhir dan membuka wizard.
+ * Penempatannya di atas benchmark sesuai permintaan.
+ */
+@Composable
+private fun AutoConfigSection(
+    config: CaptureConfig,
+    live: LiveConfig,
+    onConfigChange: (CaptureConfig) -> Unit,
+) {
+    val context = LocalContext.current
+    val store = remember { SettingsStore(context) }
+    var open by remember { mutableStateOf(false) }
+    var last by remember { mutableStateOf(store.lastAutoConfig()) }
+
+    SectionTitle(stringResource(R.string.settings_autoconfig_title))
+    Hint(stringResource(R.string.settings_autoconfig_hint))
+    last?.let { Hint("Terakhir: $it") }
+    Spacer(Modifier.height(8.dp))
+    Button(onClick = { open = true }) {
+        Text(stringResource(R.string.settings_autoconfig_start))
+    }
+
+    if (open) {
+        AutoConfigWizardDialog(
+            config = config,
+            live = live,
+            onApply = { updated ->
+                onConfigChange(updated)
+                val text = "${updated.outputWidth}x${updated.outputHeight} " +
+                    "@${updated.fps} fps • ${updated.videoCodec.label} • " +
+                    "${updated.videoBitrate / 1_000_000} Mbps"
+                store.setLastAutoConfig(text)
+                store.setWizardDone()
+                last = text
+            },
+            onDismiss = {
+                open = false
+                store.setWizardDone()
+            },
+        )
+    }
+}
+
+/**
+ * Benchmark beban game: adegan GL berat + thread pengisi CPU, direkam lewat
+ * encoder yang sama dengan rekaman asli. Tidak butuh game maupun izin
+ * tangkap layar.
+ */
+@Composable
+private fun GameLoadBenchmarkSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var preset by remember { mutableStateOf(GameLoadBenchmark.Preset.High) }
+    var codec by remember { mutableStateOf(VideoCodec.AVC) }
+    var resolution by remember { mutableStateOf(BenchResolution.P1080) }
+    var targetFps by remember { mutableStateOf(60) }
+    var manualBitrate by remember { mutableStateOf(false) }
+    var manualMbps by remember { mutableStateOf(12f) }
+    var minutes by remember { mutableStateOf(3) }
+    var traffic by remember { mutableStateOf(70f) }
+    var saveVideo by remember { mutableStateOf(true) }
+    var keepAwake by remember { mutableStateOf(true) }
+    var running by remember { mutableStateOf(false) }
+    var secondsLeft by remember { mutableStateOf(0) }
+    var fraction by remember { mutableStateOf(0f) }
+    var fpsNow by remember { mutableStateOf(0) }
+    var result by remember { mutableStateOf<GameLoadBenchmark.Result?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+
+    // Layar tidak boleh mati saat benchmark; kalau mati, render berhenti
+    // dan angka fps jadi turun tanpa alasan yang jelas.
+    val view = LocalView.current
+    DisposableEffect(running, keepAwake) {
+        view.keepScreenOn = running && keepAwake
+        onDispose { view.keepScreenOn = false }
+    }
+
+    SectionTitle(stringResource(R.string.settings_bench_title))
+    Hint(stringResource(R.string.settings_bench_hint))
+    Hint(stringResource(R.string.settings_bench_overlay_hint))
+
+    Spacer(Modifier.height(8.dp))
+    Text("Beban grafis", style = MaterialTheme.typography.bodyMedium)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GameLoadBenchmark.Preset.entries.forEach { item ->
+            FilterChip(
+                selected = preset == item,
+                onClick = { preset = item },
+                label = { Text(item.label) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Codec", style = MaterialTheme.typography.bodyMedium)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(VideoCodec.AVC, VideoCodec.HEVC).forEach { item ->
+            FilterChip(
+                selected = codec == item,
+                onClick = { codec = item },
+                label = { Text(item.label) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Resolusi", style = MaterialTheme.typography.bodyMedium)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        BenchResolution.entries.forEach { item ->
+            FilterChip(
+                selected = resolution == item,
+                onClick = { resolution = item },
+                label = { Text(item.label) },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Frame rate", style = MaterialTheme.typography.bodyMedium)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(30, 60, 90, 120).forEach { item ->
+            FilterChip(
+                selected = targetFps == item,
+                onClick = { targetFps = item },
+                label = { Text("$item fps") },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Bitrate", style = MaterialTheme.typography.bodyMedium)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = !manualBitrate,
+            onClick = { manualBitrate = false },
+            label = { Text("Otomatis") },
+        )
+        FilterChip(
+            selected = manualBitrate,
+            onClick = { manualBitrate = true },
+            label = { Text("Manual") },
+        )
+    }
+    val autoBitrate = GameLoadBenchmark.bitrateFor(
+        resolution.width,
+        resolution.height,
+        targetFps,
+    )
+    val effectiveBitrate = if (manualBitrate) {
+        GameLoadBenchmark.manualBitrate(manualMbps)
+    } else {
+        autoBitrate
+    }
+    if (manualBitrate) {
+        Text(String.format(java.util.Locale.US, "%.1f Mbps", manualMbps))
+        // Tanpa steps: tanda tick rapat membuat track terlihat seperti balok.
+        Slider(
+            value = manualMbps,
+            onValueChange = { manualMbps = (it * 2f).roundToInt() / 2f },
+            valueRange = 2f..100f,
+        )
+    } else {
+        Hint(
+            "Otomatis: " + String.format(
+                java.util.Locale.US,
+                "%.1f Mbps",
+                effectiveBitrate / 1_000_000f,
+            ) + " untuk resolusi dan fps ini.",
+        )
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Durasi", style = MaterialTheme.typography.bodyMedium)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(1, 3, 5).forEach { item ->
+            FilterChip(
+                selected = minutes == item,
+                onClick = { minutes = item },
+                label = { Text("$item menit") },
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Traffic ${traffic.toInt()}% (kepadatan objek seperti setelan NTE)",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Slider(
+        value = traffic,
+        // Dibulatkan 5% agar angka mudah dibaca, tanpa tick yang menutupi track.
+        onValueChange = { traffic = (it / 5f).roundToInt() * 5f },
+        valueRange = 0f..100f,
+    )
+
+    SettingSwitchRow(
+        title = stringResource(R.string.settings_bench_keep_awake),
+        subtitle = stringResource(R.string.settings_bench_keep_awake_desc),
+        checked = keepAwake,
+    ) { keepAwake = it }
+
+    SettingSwitchRow(
+        title = "Simpan rekaman MP4",
+        subtitle = "Ikut membebani penyimpanan; bisa ditonton untuk cek kualitas.",
+        checked = saveVideo,
+    ) { saveVideo = it }
+    if (saveVideo) {
+        val estimateMb = effectiveBitrate / 8L * (minutes * 60) / 1_000_000.0
+        Hint(
+            "Perkiraan file: " +
+                String.format(java.util.Locale.US, "%.0f MB", estimateMb) +
+                " • " +
+                String.format(java.util.Locale.US, "%.1f Mbps", effectiveBitrate / 1_000_000f),
+        )
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = {
+            running = true
+            result = null
+            failure = null
+            secondsLeft = minutes * 60
+            fraction = 0f
+            fpsNow = 0
+            scope.launch {
+                try {
+                    result = GameLoadBenchmark.run(
+                        context = context,
+                        width = resolution.width,
+                        height = resolution.height,
+                        targetFps = targetFps,
+                        bitrate = effectiveBitrate,
+                        codec = codec,
+                        preset = preset,
+                        durationSec = minutes * 60,
+                        trafficPercent = traffic.toInt(),
+                        saveVideo = saveVideo,
+                        keepAwake = keepAwake,
+                        onProgress = { left, done, fps ->
+                            secondsLeft = left
+                            fraction = done
+                            fpsNow = fps
+                        },
+                    )
+                } catch (error: Throwable) {
+                    failure = error.message ?: "Benchmark gagal"
+                } finally {
+                    running = false
+                }
+            }
+        },
+        enabled = !running,
+    ) {
+        Text(
+            if (running) {
+                "Merekam… ${secondsLeft / 60}:${(secondsLeft % 60).toString().padStart(2, '0')}"
+            } else {
+                "Mulai benchmark (${minutes} menit)"
+            },
+        )
+    }
+
+    if (running) {
+        val animated by animateFloatAsState(targetValue = fraction, label = "beban-game")
+        Spacer(Modifier.height(8.dp))
+        LinearProgressIndicator(
+            progress = { animated },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Hint(
+            "fps detik terakhir: $fpsNow • ${resolution.width}x${resolution.height} @ $targetFps • " +
+                "${GameLoadBenchmark.effectiveObjects(preset, traffic.toInt())} objek",
+        )
+    }
+
+    failure?.let {
+        Spacer(Modifier.height(4.dp))
+        Text("Benchmark gagal: $it", color = MaterialTheme.colorScheme.error)
+    }
+
+    result?.let { data ->
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "${data.codec.label} • ${data.preset.label} • ${data.width}x${data.height}@${data.targetFps}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        InfoRow("fps rata-rata", String.format(java.util.Locale.US, "%.1f", data.avgFps))
+        InfoRow("fps terburuk", String.format(java.util.Locale.US, "%.1f", data.worstFps))
+        InfoRow("frame / telat", "${data.frames} / ${data.lateFrames}")
+        InfoRow("bitrate", "${data.bitrateKbps} kbps")
+        InfoRow("termal tertinggi", data.thermalMax)
+        data.uri?.let { InfoRow("video", it) }
+        Text(
+            verdict(data),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (data.avgFps >= data.targetFps * 0.95) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.error
+            },
+        )
+    }
+}
+
+/** Kesimpulan singkat dari angka benchmark. */
+private fun verdict(result: GameLoadBenchmark.Result): String = when {
+    result.error != null -> "Gagal: ${result.error}"
+    result.avgFps >= result.targetFps * 0.95 -> "60 fps tercapai"
+    result.worstFps < result.targetFps * 0.6 -> "Tidak stabil; turunkan preset atau traffic"
+    else -> "Mendekati target; coba preset lebih rendah"
+}
+
+/** Template resolusi benchmark; semua sisi genap. */
+private enum class BenchResolution(val label: String, val width: Int, val height: Int) {
+    P720("720p", 1280, 720),
+    P1080("1080p", 1920, 1080),
+    P1440("1440p", 2560, 1440),
+    P4K("4K", 3840, 2160),
 }
 
 @Composable

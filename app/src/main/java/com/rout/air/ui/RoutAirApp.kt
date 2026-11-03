@@ -103,6 +103,8 @@ fun RoutAirApp(
     val audioMix by AudioMixer.mix.collectAsState()
 
     var config by remember { mutableStateOf(store.load()) }
+    // Setup otomatis muncul sendiri sekali saat aplikasi pertama dipakai.
+    var showAutoConfig by remember { mutableStateOf(!store.isWizardDone()) }
     var liveConfig by remember { mutableStateOf(store.loadLive()) }
     var tab by rememberSaveable {
         mutableStateOf(
@@ -657,6 +659,25 @@ fun RoutAirApp(
                     onLiveConfigChange = { liveConfig = it },
                 )
             }
+        }
+
+        if (showAutoConfig) {
+            AutoConfigWizardDialog(
+                config = canvasConfig,
+                live = liveConfig,
+                onApply = { updated ->
+                    config = updated
+                    store.setWizardDone()
+                    store.setLastAutoConfig(
+                        "${updated.outputWidth}x${updated.outputHeight} @${updated.fps} fps • " +
+                            "${updated.videoCodec.label} • ${updated.videoBitrate / 1_000_000} Mbps",
+                    )
+                },
+                onDismiss = {
+                    showAutoConfig = false
+                    store.setWizardDone()
+                },
+            )
         }
 
         if (setupOpen) {

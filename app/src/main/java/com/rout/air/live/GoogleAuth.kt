@@ -1,6 +1,11 @@
 package com.rout.air.live
 
-import android.content.Context
+import android.net.Uri
+import com.rout.air.BuildConfig
+import net.openid.appauth.AuthorizationRequest
+import net.openid.appauth.AuthorizationServiceConfiguration
+import net.openid.appauth.ResponseTypeValues
+import net.openid.appauth.TokenResponse
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -17,100 +22,79 @@ data class GoogleTokens(
         accessToken.isNotBlank() && nowMs < expiresAtMs - 60_000L
 }
 
-/** Kode device flow yang ditampilkan ke pengguna. */
-data class DeviceLogin(
-    val deviceCode: String,
-    val userCode: String,
-    val verificationUrl: String,
-    val intervalSec: Int,
-    val expiresAtMs: Long,
-)
-
-/** Hasil satu kali polling token. */
-sealed interface TokenPoll {
-    /** Pengguna belum menyetujui di browser. */
-    data object Pending : TokenPoll
-
-    /** Google minta jeda polling diperpanjang. */
-    data object SlowDown : TokenPoll
-
-    data class Success(val tokens: GoogleTokens) : TokenPoll
-
-    data class Failure(val message: String) : TokenPoll
-}
-
 /**
- * Login Google memakai OAuth 2.0 Device Flow.
+ * Login Google memakai OAuth 2.0 untuk aplikasi Android (Authorization Code
+ * + PKCE) melalui Custom Tabs.
  *
- * Dipilih karena tidak butuh redirect URI, tidak butuh SHA-1, dan tidak
- * terikat Play Services: kode ditampilkan di layar, pengguna mengetiknya
- * di google.com/device.
+ * Tipe client Android tidak punya client secret; keamanan dijaga oleh
+ * package name, SHA-1 sertifikat, dan PKCE. Redirect URI memakai skema
+ * terbalik dari client ID, sama seperti AppAuth.
  */
 object GoogleAuth {
-    /**
-     * Scope "youtube" (bukan force-ssl) karena device flow menolak
-     * force-ssl dengan error invalid_scope. Scope ini sudah cukup untuk
-     * membuat siaran, mengikat stream, dan membaca chat.
-     */
+
+    /** Scope "youtube" cukup untuk membuat siaran, mengikat stream, dan chat. */
     const val SCOPE = "https://www.googleapis.com/auth/youtube openid email"
 
-    private const val DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+    private const val AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
     private const val TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-    fun requestDeviceCode(clientId: String, clientSecret: String): DeviceLogin {
-        val body = mutableMapOf(
-            "client_id" to clientId,
-            "scope" to SCOPE,
-        )
-        if (clientSecret.isNotBlank()) body["client_secret"] = clientSecret
-        val response = postForm(DEVICE_CODE_URL, body)
-        return DeviceLogin(
-            deviceCode = response.getString("device_code"),
-            userCode = response.getString("user_code"),
-            verificationUrl = response.optString(
-                "verification_url",
-                "https://www.google.com/device",
-            ),
-            intervalSec = response.optInt("interval", 5).coerceAtLeast(5),
-            expiresAtMs = System.currentTimeMillis() +
-                response.optInt("expires_in", 1800) * 1000L,
-        )
-    }
+    /** Client ID Android sesuai build type; kosong bila build tanpa kredensial. */
+    val clientId: String get() = BuildConfig.GOOGLE_ANDROID_CLIENT_ID
 
-    fun pollToken(clientId: String, clientSecret: String, deviceCode: String): TokenPoll {
-        val body = mutableMapOf(
-            "client_id" to clientId,
-            "device_code" to deviceCode,
-            "grant_type" to "urn:ietf:params:oauth:grant-type:device_code",
-        )
-        if (clientSecret.isNotBlank()) body["client_secret"] = clientSecret
-        val result = postFormOrError(TOKEN_URL, body)
-        result.error?.let { error ->
-            return when (error) {
-                "authorization_pending" -> TokenPoll.Pending
-                "slow_down" -> TokenPoll.SlowDown
-                "access_denied" -> TokenPoll.Failure(
-                    "Akun ini belum terdaftar sebagai penguji. Tambahkan email Anda di " +
-                        "Google Cloud Console > Audience > Test users, lalu coba lagi.",
-                )
-                "expired_token" -> TokenPoll.Failure("Kode kedaluwarsa, ulangi login")
-                else -> TokenPoll.Failure(error)
-            }
+    val configured: Boolean get() = clientId.isNotBlank()
+
+    /** Skema redirect: client ID dibalik tanpa akhiran .apps.googleusercontent.com. */
+    fun redirectScheme(clientId: String = this.clientId): String =
+        if (clientId.isBlank()) {
+            "com.rout.air"
+        } else {
+            "com.googleusercontent.apps." + clientId.removeSuffix(".apps.googleusercontent.com")
         }
-        return TokenPoll.Success(parseTokens(result.body ?: JSONObject()))
+
+    fun redirectUri(): Uri = Uri.parse("${redirectScheme()}:/oauth2redirect")
+
+    fun authorizationRequest(): AuthorizationRequest =
+        AuthorizationRequest.Builder(
+            AuthorizationServiceConfiguration(
+                Uri.parse(AUTH_URL),
+                Uri.parse(TOKEN_URL),
+                null,
+            ),
+            clientId,
+            ResponseTypeValues.CODE,
+            redirectUri(),
+        )
+            .setScope(SCOPE)
+            // prompt didukung langsung oleh builder; access_type tetap
+            // lewat parameter tambahan karena tidak ada method khusus.
+            .setPrompt("consent")
+            .setAdditionalParameters(mapOf("access_type" to "offline"))
+            .build()
+
+    /** Mengubah respons token AppAuth menjadi model penyimpanan aplikasi. */
+    fun toTokens(response: TokenResponse): GoogleTokens {
+        val now = System.currentTimeMillis()
+        val expiration = response.accessTokenExpirationTime ?: 0L
+        return GoogleTokens(
+            accessToken = response.accessToken.orEmpty(),
+            refreshToken = response.refreshToken.orEmpty(),
+            // AppAuth memberi waktu kedaluwarsa absolut; samakan satuannya.
+            expiresAtMs = if (expiration > now) expiration else now + 3_600_000L,
+        )
     }
 
-    /** Menukar refresh token menjadi access token baru. */
-    fun refresh(clientId: String, clientSecret: String, refreshToken: String): GoogleTokens? {
-        val body = mutableMapOf(
-            "client_id" to clientId,
-            "refresh_token" to refreshToken,
-            "grant_type" to "refresh_token",
+    /** Menukar refresh token menjadi access token baru (tanpa secret). */
+    fun refresh(clientId: String, refreshToken: String): GoogleTokens? {
+        if (clientId.isBlank() || refreshToken.isBlank()) return null
+        val result = postFormOrError(
+            TOKEN_URL,
+            mapOf(
+                "client_id" to clientId,
+                "refresh_token" to refreshToken,
+                "grant_type" to "refresh_token",
+            ),
         )
-        if (clientSecret.isNotBlank()) body["client_secret"] = clientSecret
-        val result = postFormOrError(TOKEN_URL, body)
-        if (result.error != null || result.body == null) return null
-        val json = result.body
+        val json = result.body ?: return null
         return GoogleTokens(
             accessToken = json.optString("access_token"),
             refreshToken = json.optString("refresh_token", refreshToken),
@@ -136,19 +120,21 @@ object GoogleAuth {
         }
     }
 
-    private fun parseTokens(json: JSONObject): GoogleTokens = GoogleTokens(
-        accessToken = json.optString("access_token"),
-        refreshToken = json.optString("refresh_token"),
-        expiresAtMs = System.currentTimeMillis() + json.optInt("expires_in", 3600) * 1000L,
-    )
+    /** Pesan kesalahan OAuth yang ramah, mis. akun belum jadi test user. */
+    fun errorMessage(code: String?): String = when (code) {
+        "access_denied" ->
+            "Akses ditolak. Tambahkan email Anda di Google Cloud Console > " +
+                "Audience > Test users, lalu coba lagi."
+
+        "invalid_client" ->
+            "Client ID tidak cocok dengan sertifikat APK ini. Periksa SHA-1 di Google Cloud."
+
+        "invalid_grant" -> "Sesi login kedaluwarsa. Coba hubungkan ulang."
+        null, "" -> "Login dibatalkan"
+        else -> "Login gagal: $code"
+    }
 
     private class FormResult(val body: JSONObject?, val error: String?)
-
-    private fun postForm(url: String, form: Map<String, String>): JSONObject {
-        val result = postFormOrError(url, form)
-        return result.body
-            ?: throw IllegalStateException(result.error ?: "Respons kosong dari Google")
-    }
 
     private fun postFormOrError(url: String, form: Map<String, String>): FormResult {
         val payload = form.entries.joinToString("&") { (key, value) ->
@@ -182,18 +168,13 @@ object GoogleAuth {
     }
 }
 
-/** Menyimpan Client ID, Client Secret, dan token hasil login. */
-class GoogleAuthStore(context: Context) {
+/**
+ * Menyimpan token hasil login. Client ID tidak lagi disimpan di sini karena
+ * nilainya sudah ditanam per build type lewat BuildConfig.
+ */
+class GoogleAuthStore(context: android.content.Context) {
     private val prefs = context.applicationContext
-        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    var clientId: String
-        get() = prefs.getString(KEY_CLIENT_ID, "").orEmpty().ifBlank { DEFAULT_CLIENT_ID }
-        set(value) = prefs.edit().putString(KEY_CLIENT_ID, value.trim()).apply()
-
-    var clientSecret: String
-        get() = prefs.getString(KEY_CLIENT_SECRET, "").orEmpty().ifBlank { DEFAULT_CLIENT_SECRET }
-        set(value) = prefs.edit().putString(KEY_CLIENT_SECRET, value.trim()).apply()
+        .getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
 
     var accountEmail: String
         get() = prefs.getString(KEY_EMAIL, "").orEmpty()
@@ -212,9 +193,14 @@ class GoogleAuthStore(context: Context) {
     }
 
     fun saveTokens(tokens: GoogleTokens) {
+        // Respons token tidak selalu berisi refresh token baru; pertahankan
+        // yang lama supaya sesi tidak terputus.
+        val refresh = tokens.refreshToken.ifBlank {
+            prefs.getString(KEY_REFRESH, "").orEmpty()
+        }
         prefs.edit()
             .putString(KEY_ACCESS, tokens.accessToken)
-            .putString(KEY_REFRESH, tokens.refreshToken)
+            .putString(KEY_REFRESH, refresh)
             .putLong(KEY_EXPIRES, tokens.expiresAtMs)
             .putInt(KEY_SCOPE_VERSION, SCOPE_VERSION)
             .apply()
@@ -236,9 +222,7 @@ class GoogleAuthStore(context: Context) {
     fun freshAccessToken(): String? {
         val tokens = loadTokens() ?: return null
         if (tokens.fresh()) return tokens.accessToken
-        val id = clientId
-        if (id.isBlank()) return null
-        val renewed = GoogleAuth.refresh(id, clientSecret, tokens.refreshToken)
+        val renewed = GoogleAuth.refresh(GoogleAuth.clientId, tokens.refreshToken)
             ?: return tokens.accessToken.takeIf { it.isNotBlank() }
         saveTokens(renewed)
         return renewed.accessToken
@@ -246,17 +230,6 @@ class GoogleAuthStore(context: Context) {
 
     private companion object {
         const val PREFS = "routair_google"
-
-        /**
-         * Client OAuth bawaan aplikasi. Nilainya diisi lewat local.properties
-         * (routair.googleClientId / googleClientSecret) supaya tidak ikut
-         * tersimpan di repositori.
-         */
-        val DEFAULT_CLIENT_ID: String = com.rout.air.BuildConfig.GOOGLE_CLIENT_ID
-        val DEFAULT_CLIENT_SECRET: String = com.rout.air.BuildConfig.GOOGLE_CLIENT_SECRET
-
-        const val KEY_CLIENT_ID = "client_id"
-        const val KEY_CLIENT_SECRET = "client_secret"
         const val KEY_ACCESS = "access_token"
         const val KEY_REFRESH = "refresh_token"
         const val KEY_EXPIRES = "expires_at"
@@ -264,6 +237,6 @@ class GoogleAuthStore(context: Context) {
         const val KEY_SCOPE_VERSION = "scope_version"
 
         /** Naikkan bila [GoogleAuth.SCOPE] berubah agar pengguna login ulang. */
-        const val SCOPE_VERSION = 3
+        const val SCOPE_VERSION = 4
     }
 }

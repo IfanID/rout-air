@@ -57,6 +57,11 @@ class RtmpConnection(
     private val endpoint: RtmpEndpoint,
     private val username: String = "",
     private val password: String = "",
+    /**
+     * FourCC yang wajib didukung server (hvc1/av01). Null berarti AVC legacy,
+     * yang tidak perlu dicek karena semua server RTMP memahaminya.
+     */
+    private val requiredFourCc: String? = null,
     private val onClosed: (String) -> Unit,
 ) {
     private var socket: Socket? = null
@@ -80,6 +85,16 @@ class RtmpConnection(
 
     @Volatile
     private var failure: String? = null
+
+    /** Diisi bila kegagalan bersifat permanen (mis. codec tidak didukung). */
+    @Volatile
+    var fatalReason: String? = null
+        private set
+
+    /** FourCC video yang diiklankan server lewat videoFourCcInfoMap. */
+    @Volatile
+    var serverVideoFourCcs: Set<String>? = null
+        private set
 
     val isConnected: Boolean get() = !closed && streamId > 0
 
@@ -116,6 +131,20 @@ class RtmpConnection(
             }
             if (failure != null) return false
 
+            // Cek codec sebelum publish supaya stream tidak terlanjur dikirim
+            // ke server yang tidak memahaminya.
+            requiredFourCc?.let { fourCc ->
+                val advertised = serverVideoFourCcs
+                if (advertised == null) {
+                    com.rout.air.data.DiagLog.line(
+                        "rtmp: server tidak mengiklankan codec; $fourCc diteruskan",
+                    )
+                } else if (fourCc !in advertised) {
+                    fatalReason = "Server tidak menerima $fourCc lewat RTMP"
+                    return fail(fatalReason!!)
+                }
+            }
+
             sendCommand(2.0, listOf("releaseStream", 2.0, null, endpoint.streamName))
             sendCommand(3.0, listOf("FCPublish", 3.0, null, endpoint.streamName))
             sendCommand(4.0, listOf("createStream", 4.0, null))
@@ -143,6 +172,11 @@ class RtmpConnection(
 
     fun sendAudio(timestampMs: Int, payload: ByteArray) {
         writer?.write(RtmpType.AUDIO, streamId, timestampMs, payload)
+    }
+
+    /** onMetaData/script data, mis. saat mengirim fourCC codec. */
+    fun sendData(timestampMs: Int, payload: ByteArray) {
+        writer?.write(RtmpType.DATA_AMF0, streamId, timestampMs, payload)
     }
 
     fun close() {
@@ -231,11 +265,17 @@ class RtmpConnection(
             }
 
             name == "_result" && transaction == 1.0 -> {
-                // Beberapa server mengirim status gagal di dalam info.
+                // Properti E-RTMP bisa ada di objek props (2) atau info (3).
                 val info = values.getOrNull(3) as? Map<*, *>
+                val prop = values.getOrNull(2) as? Map<*, *>
                 val code = info?.get("code") as? String
                 if (code != null && code.contains("Failed", ignoreCase = true)) {
                     failure = code
+                }
+                val fourCcs = (info?.get("videoFourCcInfoMap") ?: prop?.get("videoFourCcInfoMap"))
+                    as? Map<*, *>
+                fourCcs?.let { map ->
+                    serverVideoFourCcs = map.keys.mapNotNull { it as? String }.toSet()
                 }
                 connectLatch.countDown()
             }

@@ -323,8 +323,8 @@ object ChatMonitor {
         var nextViewerAt = 0L
         var failures = 0
         while (currentCoroutineContext().isActive) {
-            if (store.clientId.isBlank()) {
-                publish(ChatState(status = "Client ID Google belum diisi"))
+            if (!GoogleAuth.configured) {
+                publish(ChatState(status = "Login Google tidak aktif di build ini"))
                 delay(30_000)
                 continue
             }

@@ -1,5 +1,6 @@
 package com.rout.air.live
 
+import com.rout.air.core.VideoCodec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -9,6 +10,8 @@ class FlvCodecTest {
 
     private val sps = byteArrayOf(0x67, 0x42, 0xC0.toByte(), 0x1F, 0x11, 0x22)
     private val pps = byteArrayOf(0x68, 0xCE.toByte(), 0x33, 0x44)
+    private val hvc1 = byteArrayOf('h'.code.toByte(), 'v'.code.toByte(), 'c'.code.toByte(), '1'.code.toByte())
+    private val av01 = byteArrayOf('a'.code.toByte(), 'v'.code.toByte(), '0'.code.toByte(), '1'.code.toByte())
 
     @Test
     fun splitAnnexB_handlesBothStartCodes() {
@@ -33,8 +36,9 @@ class FlvCodecTest {
     }
 
     @Test
-    fun videoSequenceHeader_containsProfileAndParameterSets() {
-        val header = FlvCodec.videoSequenceHeader(sps, pps)
+    fun avcSequenceHeader_containsProfileAndParameterSets() {
+        val avcC = FlvCodec.avcDecoderConfigurationRecord(sps, pps)
+        val header = FlvCodec.videoSequenceHeader(VideoCodec.AVC, avcC)
         assertEquals(0x17, header[0].toInt())
         assertEquals(0x00, header[1].toInt())
         // configurationVersion, profile, compat, level
@@ -46,12 +50,68 @@ class FlvCodecTest {
     }
 
     @Test
-    fun videoFrame_setsKeyframeFlag() {
-        val key = FlvCodec.videoFrame(byteArrayOf(0, 0, 0, 1, 0x65), keyframe = true)
-        val delta = FlvCodec.videoFrame(byteArrayOf(0, 0, 0, 1, 0x41), keyframe = false)
+    fun avcFrame_keepsLegacyHeader() {
+        val key = FlvCodec.videoFrame(
+            VideoCodec.AVC,
+            byteArrayOf(0, 0, 0, 1, 0x65),
+            keyframe = true,
+        )
+        val delta = FlvCodec.videoFrame(
+            VideoCodec.AVC,
+            byteArrayOf(0, 0, 0, 1, 0x41),
+            keyframe = false,
+        )
         assertEquals(0x17, key[0].toInt())
         assertEquals(0x27, delta[0].toInt())
         assertEquals(0x01, key[1].toInt())
+    }
+
+    @Test
+    fun hevcSequenceHeader_usesEnhancedHeaderAndFourCc() {
+        val config = byteArrayOf(0x01, 0x02, 0x03)
+        val header = FlvCodec.videoSequenceHeader(VideoCodec.HEVC, config)
+        assertEquals(0x90, header[0].toInt() and 0xFF)
+        assertArrayEquals(hvc1, header.copyOfRange(1, 5))
+        assertArrayEquals(config, header.copyOfRange(5, header.size))
+    }
+
+    @Test
+    fun av1SequenceHeader_usesEnhancedHeaderAndFourCc() {
+        val config = byteArrayOf(0x81.toByte(), 0x00, 0x0C)
+        val header = FlvCodec.videoSequenceHeader(VideoCodec.AV1, config)
+        assertEquals(0x90, header[0].toInt() and 0xFF)
+        assertArrayEquals(av01, header.copyOfRange(1, 5))
+        assertArrayEquals(config, header.copyOfRange(5, header.size))
+    }
+
+    @Test
+    fun hevcFrame_usesCodedFramesXAndLengthPrefixedNalus() {
+        val key = FlvCodec.videoFrame(
+            VideoCodec.HEVC,
+            byteArrayOf(0, 0, 0, 1, 0x26, 0x01, 0, 0, 0, 1, 0x02, 0x02),
+            keyframe = true,
+        )
+        assertEquals(0x93, key[0].toInt() and 0xFF)
+        assertArrayEquals(hvc1, key.copyOfRange(1, 5))
+        assertArrayEquals(
+            byteArrayOf(0, 0, 0, 2, 0x26, 0x01, 0, 0, 0, 2, 0x02, 0x02),
+            key.copyOfRange(5, key.size),
+        )
+
+        val delta = FlvCodec.videoFrame(VideoCodec.HEVC, byteArrayOf(0, 0, 0, 1, 0x02), keyframe = false)
+        assertEquals(0xA3, delta[0].toInt() and 0xFF)
+    }
+
+    @Test
+    fun av1Frame_sendsObusWithoutLengthPrefix() {
+        val obu = byteArrayOf(0x0A, 0x0B, 0x0C)
+        val key = FlvCodec.videoFrame(VideoCodec.AV1, obu, keyframe = true)
+        assertEquals(0x91, key[0].toInt() and 0xFF)
+        assertArrayEquals(av01, key.copyOfRange(1, 5))
+        assertArrayEquals(obu, key.copyOfRange(5, key.size))
+
+        val delta = FlvCodec.videoFrame(VideoCodec.AV1, obu, keyframe = false)
+        assertEquals(0xA1, delta[0].toInt() and 0xFF)
     }
 
     @Test

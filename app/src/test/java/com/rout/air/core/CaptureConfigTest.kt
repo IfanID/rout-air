@@ -9,8 +9,15 @@ import org.junit.Test
 class CaptureConfigTest {
 
     @Test
-    fun defaultFollowsCanvas() {
-        val config = CaptureConfig(width = 1080, height = 1920)
+    fun defaultsMatchObs() {
+        val config = CaptureConfig()
+        assertEquals(VideoBitrateMode.CBR, config.bitrateMode)
+        assertEquals(VideoCodec.AVC, config.videoCodec)
+        assertEquals(2, config.keyframeIntervalSec)
+    }
+
+    @Test
+    fun defaultFollowsCanvas() {        val config = CaptureConfig(width = 1080, height = 1920)
         assertEquals(1080, config.encoderWidth)
         assertEquals(1920, config.encoderHeight)
         assertFalse(config.rescaled)

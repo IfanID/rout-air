@@ -12,6 +12,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.TrafficStats
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.os.Build
 import android.os.Debug
 import android.os.Environment
 import android.os.Handler
@@ -40,10 +41,12 @@ import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
+import com.rout.air.core.VideoCodec
 import com.rout.air.data.AudioMixer
 import com.rout.air.data.DiagLog
 import com.rout.air.data.SceneManager
 import com.rout.air.encode.AudioCaptureEngine
+import com.rout.air.encode.EncoderProbe
 import com.rout.air.encode.Mp4Writer
 import com.rout.air.encode.OutputTarget
 import com.rout.air.encode.TeeSink
@@ -759,6 +762,16 @@ class RecordingPipeline(
         check(egl != null) { "Sesi tangkap layar belum siap" }
         check(projection != null) { "Izin tangkap layar tidak valid" }
 
+        // MediaMuxer baru bisa menulis AV1 mulai Android 14.
+        val plannedCodec = if (encodersRunning) {
+            videoEncoder?.activeCodec
+        } else {
+            EncoderProbe.select(config.videoCodec)?.codec
+        }
+        if (plannedCodec == VideoCodec.AV1 && Build.VERSION.SDK_INT < 34) {
+            error("MP4 AV1 butuh Android 14 ke atas")
+        }
+
         diag("rekam: mulai")
         val freeBytes = runCatching {
             StatFs(Environment.getExternalStorageDirectory().path).availableBytes
@@ -841,8 +854,6 @@ class RecordingPipeline(
                 return@post
             }
             try {
-                val sink = RtmpSink(liveConfig, onLiveStats)
-                liveSink = sink
                 if (!recordingClock.isStarted) {
                     recordingClock.start(System.nanoTime())
                     resetTelemetryBaseline()
@@ -853,6 +864,14 @@ class RecordingPipeline(
                         mix.channels.values.any { it.enabled }
                     startEncoders(wantsAudio, mix, forLive = true)
                 }
+                // Sink dibuat setelah encoder supaya cek codec server memakai
+                // codec yang benar-benar aktif, bukan yang diminta.
+                val sink = RtmpSink(
+                    config = liveConfig,
+                    videoCodec = videoEncoder?.activeCodec ?: this.config.videoCodec,
+                    onStats = onLiveStats,
+                )
+                liveSink = sink
                 sinks.add(sink)
                 sink.start()
                 liveActive = true
@@ -920,7 +939,12 @@ class RecordingPipeline(
             profile = config.videoProfile,
             colorSpace = config.colorSpace,
             colorRange = config.colorRange,
+            requestedCodec = config.videoCodec,
+            encoderName = EncoderProbe.select(config.videoCodec)?.name,
             sink = sinks,
+            onFallback = { actual, message ->
+                diag("encoder: $message (dipakai ${actual.label})")
+            },
             onEncoderError = { error ->
                 diag("encoder error: ${error.message}")
                 glHandler.post {

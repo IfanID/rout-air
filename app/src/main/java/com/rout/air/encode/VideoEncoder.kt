@@ -10,13 +10,19 @@ import android.view.Surface
 import com.rout.air.core.ColorRangeMode
 import com.rout.air.core.ColorSpaceMode
 import com.rout.air.core.VideoBitrateMode
+import com.rout.air.core.VideoCodec
 import com.rout.air.core.VideoProfile
+import com.rout.air.data.DiagLog
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Encoder H.264 dengan input berupa Surface, dipakai langsung sebagai target
+ * Encoder video dengan input berupa Surface, dipakai langsung sebagai target
  * render GL. Output dikirim ke [Mp4Writer] lewat callback MediaCodec.
+ *
+ * Codec tidak lagi dikunci ke H.264. Bila encoder yang diminta gagal
+ * disiapkan, [fallbackChain] dicoba berurutan dan codec yang benar-benar
+ * dipakai bisa dibaca lewat [activeCodec].
  */
 class VideoEncoder(
     width: Int,
@@ -24,13 +30,16 @@ class VideoEncoder(
     fps: Int,
     bitrate: Int,
     keyframeIntervalSec: Int = 2,
-    bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    bitrateMode: VideoBitrateMode = VideoBitrateMode.CBR,
     cqLevel: Int = 20,
     profile: VideoProfile = VideoProfile.Auto,
     colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
     colorRange: ColorRangeMode = ColorRangeMode.Limited,
+    val requestedCodec: VideoCodec = VideoCodec.AVC,
+    private val encoderName: String? = null,
     private val sink: MediaSink,
     private val onEncoderError: (Throwable) -> Unit = {},
+    private val onFallback: (VideoCodec, String) -> Unit = { _, _ -> },
     private val onFrameEncoded: () -> Unit = {},
 ) {
     private val thread = HandlerThread("rout-video-encoder").apply { start() }
@@ -41,10 +50,14 @@ class VideoEncoder(
     private var inputSurfaceRef: Surface? = null
     private var trackIndex = -1
 
+    /** Codec yang benar-benar dipakai encoder ini. */
+    var activeCodec: VideoCodec = requestedCodec
+        private set
+
     val inputSurface: Surface get() = checkNotNull(inputSurfaceRef)
 
     init {
-        codec = createCodec(
+        val created = createCodec(
             width = width,
             height = height,
             fps = fps,
@@ -56,8 +69,21 @@ class VideoEncoder(
             colorSpace = colorSpace,
             colorRange = colorRange,
         )
+        codec = created.codec
+        activeCodec = created.codecKind
         inputSurfaceRef = codec.createInputSurface()
         codec.start()
+        DiagLog.line(
+            "video: codec=${activeCodec.label} enc=${created.name} " +
+                "ukuran=${width}x$height@${fps} " +
+                "rate diminta=$bitrateMode dipakai=${created.rateControl}",
+        )
+        if (created.codecKind != requestedCodec) {
+            onFallback(
+                created.codecKind,
+                "Encoder ${requestedCodec.label} gagal, memakai ${created.codecKind.label}",
+            )
+        }
     }
 
     fun finish(timeoutMs: Long = 4_000) {
@@ -81,6 +107,13 @@ class VideoEncoder(
         thread.quitSafely()
     }
 
+    private class Created(
+        val codec: MediaCodec,
+        val codecKind: VideoCodec,
+        val name: String,
+        val rateControl: VideoBitrateMode,
+    )
+
     private fun createCodec(
         width: Int,
         height: Int,
@@ -92,97 +125,162 @@ class VideoEncoder(
         profile: VideoProfile,
         colorSpace: ColorSpaceMode,
         colorRange: ColorRangeMode,
-    ): MediaCodec {
-        // High lebih efisien, tetapi tidak semua encoder perangkat menerimanya.
-        val high = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
-        val baseline = MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
-        val profiles = when (profile) {
-            VideoProfile.Auto -> listOf(high, baseline, -1)
-            VideoProfile.High -> listOf(high, baseline, -1)
-            VideoProfile.Baseline -> listOf(baseline, -1)
+    ): Created {
+        var lastError: Throwable? = null
+
+        // AV1 hanya dipakai bila ada encoder hardware.
+        val chain = EncoderProbe.fallbackChain(requestedCodec).filter { candidate ->
+            candidate != VideoCodec.AV1 || EncoderProbe.select(candidate) != null
         }
 
-        var lastError: Throwable? = null
-        for (profile in profiles) {
-            val codec = try {
-                MediaCodec.createEncoderByType(MIME)
-            } catch (error: Throwable) {
-                lastError = error
-                break
-            }
-
-            try {
-                // Callback harus dipasang sebelum configure agar codec masuk mode async.
-                codec.setCallback(newCallback(), handler)
-
-                val format = MediaFormat.createVideoFormat(MIME, width, height).apply {
-                    setInteger(
-                        MediaFormat.KEY_COLOR_FORMAT,
-                        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
-                    )
-                    setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                    // 0 = auto: biarkan encoder memilih interval keyframe.
-                    if (keyframeIntervalSec > 0) {
-                        setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)
-                    }
-                    setInteger(
-                        MediaFormat.KEY_BITRATE_MODE,
-                        when (bitrateMode) {
-                            VideoBitrateMode.CBR ->
-                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
-
-                            VideoBitrateMode.VBR ->
-                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
-
-                            VideoBitrateMode.CQ ->
-                                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ
-                        },
-                    )
-                    if (bitrateMode == VideoBitrateMode.CQ) {
-                        setInteger(MediaFormat.KEY_QUALITY, cqLevel.coerceIn(0, 51))
-                    }
-                    setInteger(
-                        "color-space",
-                        when (colorSpace) {
-                            ColorSpaceMode.BT709 -> 1
-                            ColorSpaceMode.BT601 -> 2
-                        },
-                    )
-                    setInteger(
-                        MediaFormat.KEY_COLOR_RANGE,
-                        when (colorRange) {
-                            ColorRangeMode.Limited -> MediaFormat.COLOR_RANGE_LIMITED
-                            ColorRangeMode.Full -> MediaFormat.COLOR_RANGE_FULL
-                        },
-                    )
-                    if (profile >= 0) {
-                        setInteger(MediaFormat.KEY_PROFILE, profile)
-                    }
-                }
-
+        for (candidate in chain) {
+            for (profileValue in profilesFor(candidate, profile)) {
+                var instance: MediaCodec? = null
                 try {
-                    codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                } catch (error: Throwable) {
-                    // Sebagian encoder menolak CBR/CQ; fallback ke VBR.
-                    if (bitrateMode == VideoBitrateMode.VBR) throw error
-                    format.setInteger(
-                        MediaFormat.KEY_BITRATE_MODE,
-                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                    instance = open(candidate)
+                    val chosenRate = rateControlFor(instance, candidate, bitrateMode)
+                    val format = MediaFormat.createVideoFormat(candidate.mime, width, height).apply {
+                        setInteger(
+                            MediaFormat.KEY_COLOR_FORMAT,
+                            MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
+                        )
+                        setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                        setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                        // 0 = auto: biarkan encoder memilih interval keyframe.
+                        if (keyframeIntervalSec > 0) {
+                            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)
+                        }
+                        setInteger(MediaFormat.KEY_BITRATE_MODE, chosenRate.mediaCodecValue)
+                        if (chosenRate == VideoBitrateMode.CQ) {
+                            setInteger(MediaFormat.KEY_QUALITY, cqLevel.coerceIn(0, 51))
+                        }
+                        applyColor(this, candidate, colorSpace, colorRange)
+                        // AV1 tidak punya KEY_PROFILE yang sama dengan H.264/HEVC.
+                        if (profileValue >= 0) {
+                            setInteger(MediaFormat.KEY_PROFILE, profileValue)
+                        }
+                    }
+
+                    // Callback harus dipasang sebelum configure agar codec
+                    // masuk mode async.
+                    instance.setCallback(newCallback(), handler)
+                    var actualRate = chosenRate
+                    try {
+                        instance.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    } catch (error: Throwable) {
+                        // Sebagian encoder menolak CBR/CQ; fallback ke VBR.
+                        if (chosenRate == VideoBitrateMode.VBR) throw error
+                        format.setInteger(
+                            MediaFormat.KEY_BITRATE_MODE,
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                        )
+                        format.removeKey(MediaFormat.KEY_QUALITY)
+                        instance.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                        actualRate = VideoBitrateMode.VBR
+                    }
+                    return Created(
+                        codec = instance,
+                        codecKind = candidate,
+                        name = runCatching { instance.name }.getOrDefault(encoderName ?: "-"),
+                        rateControl = actualRate,
                     )
-                    format.removeKey(MediaFormat.KEY_QUALITY)
-                    codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                } catch (error: Throwable) {
+                    lastError = error
+                    runCatching { instance?.release() }
                 }
-                return codec
-            } catch (error: Throwable) {
-                lastError = error
-                codec.release()
             }
         }
 
         throw IllegalStateException(
-            "Encoder H.264 tidak bisa disiapkan: ${lastError?.message}",
+            "Encoder ${requestedCodec.label} tidak bisa disiapkan: ${lastError?.message}",
             lastError,
+        )
+    }
+
+    private fun open(codecKind: VideoCodec): MediaCodec {
+        val preferred = if (codecKind == requestedCodec) encoderName else null
+        if (preferred != null) {
+            runCatching { MediaCodec.createByCodecName(preferred) }
+                .onSuccess { return it }
+        }
+        return MediaCodec.createEncoderByType(codecKind.mime)
+    }
+
+    /**
+     * Memilih rate control yang benar-benar didukung encoder. Nilai ini
+     * dikirim ke MediaFormat, jadi bukan sekadar label di layar.
+     */
+    private fun rateControlFor(
+        codec: MediaCodec,
+        codecKind: VideoCodec,
+        requested: VideoBitrateMode,
+    ): VideoBitrateMode {
+        val capabilities = runCatching {
+            codec.codecInfo.getCapabilitiesForType(codecKind.mime).encoderCapabilities
+        }.getOrNull()
+
+        fun supported(mode: Int): Boolean =
+            runCatching { capabilities?.isBitrateModeSupported(mode) }.getOrNull() ?: true
+
+        val cbr = supported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+        val cq = supported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ)
+        return when (requested) {
+            VideoBitrateMode.CQ -> when {
+                cq -> VideoBitrateMode.CQ
+                cbr -> VideoBitrateMode.CBR
+                else -> VideoBitrateMode.VBR
+            }
+
+            VideoBitrateMode.CBR -> if (cbr) VideoBitrateMode.CBR else VideoBitrateMode.VBR
+            VideoBitrateMode.VBR -> VideoBitrateMode.VBR
+        }
+    }
+
+    private fun profilesFor(codecKind: VideoCodec, profile: VideoProfile): List<Int> =
+        when (codecKind) {
+            VideoCodec.AVC -> {
+                val high = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+                val baseline = MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
+                when (profile) {
+                    VideoProfile.Auto, VideoProfile.High -> listOf(high, baseline, -1)
+                    VideoProfile.Baseline -> listOf(baseline, -1)
+                }
+            }
+
+            VideoCodec.HEVC -> listOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain, -1)
+            VideoCodec.AV1 -> listOf(-1)
+        }
+
+    private fun applyColor(
+        format: MediaFormat,
+        codecKind: VideoCodec,
+        colorSpace: ColorSpaceMode,
+        colorRange: ColorRangeMode,
+    ) {
+        // Kunci "color-space" lama hanya dipahami encoder AVC vendor.
+        if (codecKind == VideoCodec.AVC) {
+            format.setInteger(
+                "color-space",
+                when (colorSpace) {
+                    ColorSpaceMode.BT709 -> 1
+                    ColorSpaceMode.BT601 -> 2
+                },
+            )
+        } else {
+            format.setInteger(
+                MediaFormat.KEY_COLOR_STANDARD,
+                when (colorSpace) {
+                    ColorSpaceMode.BT709 -> MediaFormat.COLOR_STANDARD_BT709
+                    ColorSpaceMode.BT601 -> MediaFormat.COLOR_STANDARD_BT601_NTSC
+                },
+            )
+        }
+        format.setInteger(
+            MediaFormat.KEY_COLOR_RANGE,
+            when (colorRange) {
+                ColorRangeMode.Limited -> MediaFormat.COLOR_RANGE_LIMITED
+                ColorRangeMode.Full -> MediaFormat.COLOR_RANGE_FULL
+            },
         )
     }
 
@@ -235,8 +333,14 @@ class VideoEncoder(
         }
     }
 
+    private val VideoBitrateMode.mediaCodecValue: Int
+        get() = when (this) {
+            VideoBitrateMode.CBR -> MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+            VideoBitrateMode.VBR -> MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+            VideoBitrateMode.CQ -> MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ
+        }
+
     private companion object {
         const val TAG = "RoutAirVideo"
-        const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
     }
 }

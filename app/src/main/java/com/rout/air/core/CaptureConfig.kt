@@ -35,7 +35,7 @@ enum class VideoBitrateMode {
     CQ,
 }
 
-/** Profil H.264 yang bisa dipilih; Auto memakai High lalu fallback. */
+/** Profil yang bisa dipilih; Auto memakai profil terbaik lalu fallback. */
 enum class VideoProfile {
     Auto,
     High,
@@ -72,11 +72,13 @@ data class CaptureConfig(
     val outputHeight: Int = 0,
     /** 0 = auto (kunci tidak dikirim ke encoder). */
     val keyframeIntervalSec: Int = 2,
-    val bitrateMode: VideoBitrateMode = VideoBitrateMode.VBR,
+    val bitrateMode: VideoBitrateMode = VideoBitrateMode.CBR,
     /** Kualitas CQ 0..51, makin kecil makin bagus (seperti CQP di OBS). */
     val cqLevel: Int = 20,
     /** 0 = ikut bitrate streaming; dipakai saat merekam tanpa live. */
     val recordVideoBitrate: Int = 0,
+    /** Codec yang diminta; encoder bisa turun ke AVC bila tidak tersedia. */
+    val videoCodec: VideoCodec = VideoCodec.AVC,
     val videoProfile: VideoProfile = VideoProfile.Auto,
     val colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
     val colorRange: ColorRangeMode = ColorRangeMode.Limited,

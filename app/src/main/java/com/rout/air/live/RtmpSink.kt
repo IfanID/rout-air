@@ -5,6 +5,7 @@ import android.util.Log
 import com.rout.air.core.LiveConfig
 import com.rout.air.core.LiveStats
 import com.rout.air.core.LiveStatus
+import com.rout.air.core.VideoCodec
 import com.rout.air.encode.MediaSink
 import java.util.ArrayDeque
 
@@ -17,6 +18,7 @@ import java.util.ArrayDeque
  */
 class RtmpSink(
     private val config: LiveConfig,
+    private val videoCodec: VideoCodec = VideoCodec.AVC,
     private val onStats: (LiveStats) -> Unit,
 ) : MediaSink {
 
@@ -133,6 +135,7 @@ class RtmpSink(
                     endpoint = endpoint,
                     username = config.username,
                     password = config.password,
+                    requiredFourCc = if (videoCodec.enhanced) videoCodec.fourCc else null,
                 ) { reason ->
                     lastError = reason
                     if (connection === created) connection = null
@@ -151,6 +154,11 @@ class RtmpSink(
                     updateStatus(LiveStatus.Live, force = true)
                     sendSequenceHeaders(created)
                     drainQueue(created)
+                } else if (active.fatalReason != null) {
+                    // Codec ditolak server: percobaan ulang tidak akan menolong.
+                    lastError = active.fatalReason
+                    updateStatus(LiveStatus.Error, force = true)
+                    break
                 } else {
                     lastError = "Gagal terhubung ke server"
                     attempt++
@@ -185,6 +193,10 @@ class RtmpSink(
     }
 
     private fun sendSequenceHeaders(connection: RtmpConnection) {
+        // Metadata mendahului sequence header supaya server tahu codec-nya.
+        flv.metadataTag()?.let {
+            sendDirect(connection, RtmpType.DATA_AMF0, it)
+        }
         flv.videoSequenceTag()?.let {
             sendDirect(connection, RtmpType.VIDEO, it)
         }
@@ -203,6 +215,7 @@ class RtmpSink(
         when (type) {
             RtmpType.VIDEO -> connection.sendVideo(tag.timestampMs, tag.payload)
             RtmpType.AUDIO -> connection.sendAudio(tag.timestampMs, tag.payload)
+            RtmpType.DATA_AMF0 -> connection.sendData(tag.timestampMs, tag.payload)
         }
         bytesSent += tag.payload.size
         tagsSent++

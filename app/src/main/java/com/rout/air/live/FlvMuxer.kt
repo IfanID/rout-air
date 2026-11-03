@@ -2,6 +2,8 @@ package com.rout.air.live
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import com.rout.air.core.VideoCodec
+import com.rout.air.data.DiagLog
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
@@ -11,6 +13,9 @@ import java.nio.ByteBuffer
  * FLV menyimpan H.264 sebagai NAL unit berprefiks panjang 4 byte, sedangkan
  * MediaCodec mengeluarkan Annex-B (00 00 01). Konversi dan pembentukan
  * AVCDecoderConfigurationRecord ada di sini agar bisa diuji tanpa encoder.
+ *
+ * HEVC dan AV1 memakai ExVideoTagHeader E-RTMP: satu byte
+ * 0x80 | packetType | frameType, diikuti fourCC, baru body.
  */
 object FlvCodec {
 
@@ -78,23 +83,42 @@ object FlvCodec {
         return out.toByteArray()
     }
 
-    /** Payload tag video sequence header FLV dari SPS/PPS. */
-    fun videoSequenceHeader(sps: ByteArray, pps: ByteArray): ByteArray {
-        val record = avcDecoderConfigurationRecord(sps, pps)
-        return byteArrayOf(0x17, 0x00, 0x00, 0x00, 0x00) + record
-    }
+    /**
+     * Payload tag video sequence header. [config] berisi
+     * AVCDecoderConfigurationRecord untuk AVC, hvcC untuk HEVC, atau
+     * AV1CodecConfigurationRecord untuk AV1.
+     */
+    fun videoSequenceHeader(codec: VideoCodec, config: ByteArray): ByteArray =
+        if (codec == VideoCodec.AVC) {
+            // Jalur legacy: CodecID 7 + AVCPacketType 0.
+            byteArrayOf(0x17, 0x00, 0x00, 0x00, 0x00) + config
+        } else {
+            byteArrayOf((EX_HEADER or FRAME_KEY or PACKET_SEQUENCE_START).toByte()) +
+                fourCcBytes(codec) + config
+        }
 
-    /** Payload tag video untuk satu frame (AVCC + header FLV). */
-    fun videoFrame(annexB: ByteArray, keyframe: Boolean): ByteArray {
-        val avcc = annexBToAvcc(annexB)
-        val header = byteArrayOf(
-            if (keyframe) 0x17 else 0x27,
-            0x01,
-            0x00,
-            0x00,
-            0x00,
-        )
-        return header + avcc
+    /** Payload tag video untuk satu frame. */
+    fun videoFrame(codec: VideoCodec, data: ByteArray, keyframe: Boolean): ByteArray {
+        val frame = if (keyframe) FRAME_KEY else FRAME_INTER
+        return when (codec) {
+            VideoCodec.AVC -> byteArrayOf(
+                (frame or VideoCodec.AVC.flvCodecId).toByte(),
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+            ) + annexBToAvcc(data)
+
+            // HEVC tanpa B-frame: pts == dts, jadi CodedFramesX (tanpa CTS).
+            VideoCodec.HEVC -> byteArrayOf(
+                (EX_HEADER or frame or PACKET_CODED_FRAMES_X).toByte(),
+            ) + fourCcBytes(codec) + annexBToAvcc(data)
+
+            // AV1 tidak boleh CodedFramesX menurut spesifikasi; body sudah OBU.
+            VideoCodec.AV1 -> byteArrayOf(
+                (EX_HEADER or frame or PACKET_CODED_FRAMES).toByte(),
+            ) + fourCcBytes(codec) + data
+        }
     }
 
     /** Payload tag audio sequence header AAC dari AudioSpecificConfig. */
@@ -105,10 +129,27 @@ object FlvCodec {
     fun audioFrame(aac: ByteArray): ByteArray =
         byteArrayOf(0xAF.toByte(), 0x01) + aac
 
+    private fun fourCcBytes(codec: VideoCodec): ByteArray {
+        val text = codec.fourCc
+        return byteArrayOf(
+            text[0].code.toByte(),
+            text[1].code.toByte(),
+            text[2].code.toByte(),
+            text[3].code.toByte(),
+        )
+    }
+
     private fun writeShort(out: ByteArrayOutputStream, value: Int) {
         out.write((value ushr 8) and 0xFF)
         out.write(value and 0xFF)
     }
+
+    private const val EX_HEADER = 0x80
+    private const val FRAME_KEY = 0x10
+    private const val FRAME_INTER = 0x20
+    private const val PACKET_SEQUENCE_START = 0x00
+    private const val PACKET_CODED_FRAMES = 0x01
+    private const val PACKET_CODED_FRAMES_X = 0x03
 }
 
 /** Format FLV yang sudah siap dikirim ke RTMP. */
@@ -122,23 +163,55 @@ data class FlvTag(
  * perangkat; logika byte-nya diuji lewat [FlvCodec].
  */
 class FlvMuxer {
+    private var codec = VideoCodec.AVC
     private var videoSequence: ByteArray? = null
     private var audioSequence: ByteArray? = null
+    private var metadata: ByteArray? = null
+    private var width = 0
+    private var height = 0
+    private var fps = 0
 
     fun setVideoFormat(format: MediaFormat) {
+        codec = VideoCodec.fromMime(format.string(MediaFormat.KEY_MIME)) ?: VideoCodec.AVC
         val csd0 = format.bytes("csd-0") ?: return
         val csd1 = format.bytes("csd-1")
-        val units = FlvCodec.splitAnnexB(csd0)
-        val sps = units.firstOrNull() ?: return
-        val pps = csd1?.let { FlvCodec.splitAnnexB(it).firstOrNull() }
-            ?: units.getOrNull(1)
-            ?: return
-        videoSequence = FlvCodec.videoSequenceHeader(sps, pps)
+
+        val config: ByteArray? = when (codec) {
+            VideoCodec.AVC -> {
+                val units = FlvCodec.splitAnnexB(csd0)
+                val sps = units.firstOrNull()
+                val pps = csd1?.let { FlvCodec.splitAnnexB(it).firstOrNull() }
+                    ?: units.getOrNull(1)
+                if (sps == null || pps == null) {
+                    null
+                } else {
+                    FlvCodec.avcDecoderConfigurationRecord(sps, pps)
+                }
+            }
+
+            VideoCodec.HEVC -> HevcConfig.configurationRecord(csd0, csd1)
+
+            // MediaCodec AV1 sudah mengeluarkan AV1CodecConfigurationRecord.
+            VideoCodec.AV1 -> csd0
+        }
+        if (config == null) {
+            DiagLog.line("flv: sequence header ${codec.label} tidak bisa dibuat dari csd")
+            return
+        }
+        videoSequence = FlvCodec.videoSequenceHeader(codec, config)
+
+        width = format.int(MediaFormat.KEY_WIDTH)
+        height = format.int(MediaFormat.KEY_HEIGHT)
+        fps = format.int(MediaFormat.KEY_FRAME_RATE)
+        metadata = buildMetadata()
     }
 
     fun setAudioFormat(format: MediaFormat) {
         audioSequence = format.bytes("csd-0")?.let { FlvCodec.audioSequenceHeader(it) }
     }
+
+    /** onMetaData E-RTMP; memberi tahu server codec yang dipakai. */
+    fun metadataTag(): FlvTag? = metadata?.let { FlvTag(timestampMs = 0, payload = it) }
 
     fun videoSequenceTag(): FlvTag? =
         videoSequence?.let { FlvTag(timestampMs = 0, payload = it) }
@@ -150,7 +223,7 @@ class FlvMuxer {
         val keyframe = flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         return FlvTag(
             timestampMs = (presentationTimeUs / 1_000L).coerceAtLeast(0L).toInt(),
-            payload = FlvCodec.videoFrame(data, keyframe),
+            payload = FlvCodec.videoFrame(codec, data, keyframe),
         )
     }
 
@@ -158,6 +231,18 @@ class FlvMuxer {
         timestampMs = (presentationTimeUs / 1_000L).coerceAtLeast(0L).toInt(),
         payload = FlvCodec.audioFrame(data),
     )
+
+    private fun buildMetadata(): ByteArray {
+        val values = linkedMapOf<String, Any?>(
+            // AVC tetap memakai CodecID legacy 7; codec lain memakai fourCC.
+            "videocodecid" to if (codec == VideoCodec.AVC) 7.0 else codec.fourCcId,
+            "audiocodecid" to 10.0,
+        )
+        if (width > 0) values["width"] = width.toDouble()
+        if (height > 0) values["height"] = height.toDouble()
+        if (fps > 0) values["framerate"] = fps.toDouble()
+        return Amf0.encode(listOf("@setDataFrame", "onMetaData", values))
+    }
 
     private fun MediaFormat.bytes(key: String): ByteArray? {
         val buffer: ByteBuffer = try {
@@ -169,4 +254,10 @@ class FlvMuxer {
         buffer.get(copy)
         return copy
     }
+
+    private fun MediaFormat.string(key: String): String? =
+        runCatching { getString(key) }.getOrNull()
+
+    private fun MediaFormat.int(key: String): Int =
+        runCatching { getInteger(key) }.getOrDefault(0)
 }

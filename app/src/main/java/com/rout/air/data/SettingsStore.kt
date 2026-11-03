@@ -9,6 +9,7 @@ import com.rout.air.core.ContentMode
 import com.rout.air.core.LiveConfig
 import com.rout.air.core.SaveLocation
 import com.rout.air.core.VideoBitrateMode
+import com.rout.air.core.VideoCodec
 import com.rout.air.core.VideoProfile
 
 /**
@@ -19,6 +20,7 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun load(): CaptureConfig {
+        migrateRateControl()
         val width = prefs.getInt(KEY_WIDTH, DEFAULT_WIDTH)
         val height = prefs.getInt(KEY_HEIGHT, DEFAULT_HEIGHT)
         // Setelan lama menyimpan skala persen; konversi sekali ke resolusi nyata.
@@ -59,9 +61,10 @@ class SettingsStore(context: Context) {
             outputWidth = outputWidth,
             outputHeight = outputHeight,
             keyframeIntervalSec = prefs.getInt(KEY_KEYFRAME, 2),
-            bitrateMode = enumValue(prefs.getString(KEY_RATE_CONTROL, null), VideoBitrateMode.VBR),
+            bitrateMode = enumValue(prefs.getString(KEY_RATE_CONTROL, null), VideoBitrateMode.CBR),
             cqLevel = prefs.getInt(KEY_CQ_LEVEL, 20).coerceIn(0, 51),
             recordVideoBitrate = prefs.getInt(KEY_RECORD_BITRATE, 0),
+            videoCodec = enumValue(prefs.getString(KEY_VIDEO_CODEC, null), VideoCodec.AVC),
             videoProfile = enumValue(prefs.getString(KEY_PROFILE, null), VideoProfile.Auto),
             colorSpace = enumValue(prefs.getString(KEY_COLOR_SPACE, null), ColorSpaceMode.BT709),
             colorRange = enumValue(prefs.getString(KEY_COLOR_RANGE, null), ColorRangeMode.Limited),
@@ -71,6 +74,23 @@ class SettingsStore(context: Context) {
             staticThrottleEnabled = prefs.getBoolean(KEY_STATIC_THROTTLE, false),
             thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
         )
+    }
+
+    /**
+     * Rate control default kini CBR (sama seperti OBS). Pengguna lama yang
+     * masih menyimpan VBR dari default sebelumnya ikut dipindahkan sekali;
+     * pilihan CBR/CQ dan pilihan setelah migrasi tidak pernah disentuh lagi.
+     */
+    private fun migrateRateControl() {
+        val version = prefs.getInt(KEY_SETTINGS_VERSION, 0)
+        if (version >= SETTINGS_VERSION) return
+        val stored = prefs.getString(KEY_RATE_CONTROL, null)
+        val editor = prefs.edit().putInt(KEY_SETTINGS_VERSION, SETTINGS_VERSION)
+        if (stored == VideoBitrateMode.VBR.name) {
+            editor.putString(KEY_RATE_CONTROL, VideoBitrateMode.CBR.name)
+            DiagLog.line("setelan: rate control VBR lama dipindah ke CBR")
+        }
+        editor.apply()
     }
 
     fun save(config: CaptureConfig) {
@@ -89,6 +109,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_RATE_CONTROL, config.bitrateMode.name)
             .putInt(KEY_CQ_LEVEL, config.cqLevel)
             .putInt(KEY_RECORD_BITRATE, config.recordVideoBitrate)
+            .putString(KEY_VIDEO_CODEC, config.videoCodec.name)
             .putString(KEY_PROFILE, config.videoProfile.name)
             .putString(KEY_COLOR_SPACE, config.colorSpace.name)
             .putString(KEY_COLOR_RANGE, config.colorRange.name)
@@ -96,6 +117,7 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_NO_SPACE, config.noSpaceFileName)
             .putBoolean(KEY_STATIC_THROTTLE, config.staticThrottleEnabled)
             .putBoolean(KEY_THERMAL_THROTTLE, config.thermalThrottleEnabled)
+            .putInt(KEY_SETTINGS_VERSION, SETTINGS_VERSION)
             .apply()
     }
 
@@ -104,6 +126,20 @@ class SettingsStore(context: Context) {
         val width = prefs.getInt(KEY_SCENE_CANVAS_W, 0)
         val height = prefs.getInt(KEY_SCENE_CANVAS_H, 0)
         return if (width > 0 && height > 0) width to height else null
+    }
+
+    /** Setup otomatis hanya muncul sendiri sekali. */
+    fun isWizardDone(): Boolean = prefs.getBoolean(KEY_WIZARD_DONE, false)
+
+    fun setWizardDone() {
+        prefs.edit().putBoolean(KEY_WIZARD_DONE, true).apply()
+    }
+
+    /** Hasil setup otomatis terakhir, mis. "1080p60 · H.264 · 8800 kbps". */
+    fun lastAutoConfig(): String? = prefs.getString(KEY_WIZARD_RESULT, null)
+
+    fun setLastAutoConfig(text: String) {
+        prefs.edit().putString(KEY_WIZARD_RESULT, text).apply()
     }
 
     fun saveSceneCanvas(width: Int, height: Int) {
@@ -177,6 +213,11 @@ class SettingsStore(context: Context) {
         const val KEY_RATE_CONTROL = "rate_control"
         const val KEY_CQ_LEVEL = "cq_level"
         const val KEY_RECORD_BITRATE = "record_video_bitrate"
+        const val KEY_VIDEO_CODEC = "video_codec"
+        const val KEY_SETTINGS_VERSION = "settings_version"
+        const val KEY_WIZARD_DONE = "auto_config_done"
+        const val KEY_WIZARD_RESULT = "auto_config_result"
+        const val SETTINGS_VERSION = 1
         const val KEY_PROFILE = "video_profile"
         const val KEY_COLOR_SPACE = "color_space"
         const val KEY_COLOR_RANGE = "color_range"

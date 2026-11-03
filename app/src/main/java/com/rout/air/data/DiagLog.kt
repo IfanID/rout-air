@@ -1,6 +1,9 @@
 package com.rout.air.data
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -64,6 +67,41 @@ object DiagLog {
                 )
             }.onFailure { Log.w(TAG, "Gagal menulis log: ${it.message}") }
         }
+    }
+
+    /**
+     * Menyalin log sesi ke Download/RoutAir/RoutAir_diag_<waktu>.txt.
+     * Berkas di Android/data tidak terlihat dari pengelola berkas biasa,
+     * jadi tombol diagnostik menyalinnya ke folder Download.
+     *
+     * @return path yang bisa dibaca pengguna, atau null bila gagal.
+     */
+    fun exportToDownloads(context: Context): String? {
+        flush(context)
+        val source = file ?: return null
+        val text = runCatching { source.readText() }.getOrNull() ?: return null
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val name = "RoutAir_diag_$stamp.txt"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                Environment.DIRECTORY_DOWNLOADS + "/RoutAir",
+            )
+        }
+        val resolver = context.contentResolver
+        val uri = runCatching {
+            resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        }.getOrNull() ?: return null
+        val wrote = runCatching {
+            resolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
+        }.isSuccess
+        if (!wrote) {
+            runCatching { resolver.delete(uri, null, null) }
+            return null
+        }
+        return "Download/RoutAir/$name"
     }
 
     /** Nama lama; sekarang hanya menulis ke berkas tunggal. */
