@@ -240,11 +240,11 @@ object SceneManager {
      */
     fun commitToProgram() {
         val next = collection ?: return
-        // Selama layar jeda tampil, simpan program asli yang baru saja
-        // diedit tanpa mengganti apa yang sedang mengudara.
+        // Transisi saat layar jeda tampil dianggap perintah operator untuk
+        // kembali mengudara: layar jeda diakhiri, hasil edit langsung dipakai.
         if (programBeforeScreensaver != null) {
-            programBeforeScreensaver = next
-            return
+            programBeforeScreensaver = null
+            DiagLog.line("jeda: transisi mengakhiri layar jeda")
         }
         programCollection = next
         _program.value = next
@@ -283,7 +283,10 @@ object SceneManager {
         return true
     }
 
-    /** Mengembalikan program seperti sebelum layar jeda. */
+    /**
+     * Mengembalikan program seperti sebelum layar jeda. Dipakai juga saat
+     * sesi berhenti supaya status tidak tertinggal dan memblokir Transisi.
+     */
     fun hideScreensaver(): Boolean {
         val previous = programBeforeScreensaver ?: return false
         DiagLog.line("jeda: kembali ke scene sebelumnya")
@@ -292,6 +295,13 @@ object SceneManager {
         _program.value = previous
         listeners.forEach { it(previous) }
         return true
+    }
+
+    /** Reset aman saat sesi/pipeline berhenti. */
+    fun resetScreensaver() {
+        if (programBeforeScreensaver == null) return
+        runCatching { hideScreensaver() }
+        DiagLog.line("jeda: status direset saat sesi berhenti")
     }
 
     /** True bila ada perubahan pratinjau yang belum di-transisikan. */

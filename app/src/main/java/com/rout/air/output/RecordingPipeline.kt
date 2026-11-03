@@ -130,10 +130,14 @@ class RecordingPipeline(
     private var previewPainter: GlCompositor? = null
     private var previewEglSurface: EGLSurface? = null
     private var programEglSurface: EGLSurface? = null
+    private var overlayProgramEglSurface: EGLSurface? = null
     private var previewTarget: Surface? = previewSurface
     private var previewWidth = previewWidth
     private var previewHeight = previewHeight
     private var programTarget: Surface? = programSurface
+    private var overlayProgramTarget: Surface? = null
+    private var overlayProgramWidth = 0
+    private var overlayProgramHeight = 0
     private var programWidth = programWidth
     private var programHeight = programHeight
 
@@ -250,6 +254,7 @@ class RecordingPipeline(
 
     @Volatile
     private var programSurfaceAttached = false
+    private var overlayProgramSurfaceAttached = false
 
     /** Satu frame preview menunggu; mencegah antrean menumpuk saat preview lambat. */
     private val previewInFlight = AtomicBoolean(false)
@@ -399,7 +404,8 @@ class RecordingPipeline(
 
             // Pratinjau digerakkan di sini, bukan dari onFrameAvailable, supaya
             // tetap hidup saat layar diam atau surface baru dipasang.
-            if ((previewVisible || previewSurfaceAttached || programSurfaceAttached) &&
+            if ((previewVisible || previewSurfaceAttached || programSurfaceAttached ||
+                    overlayProgramSurfaceAttached) &&
                 hasCapturedFrame
             ) {
                 val previewNow = System.nanoTime()
@@ -581,6 +587,33 @@ class RecordingPipeline(
                     "preview: surface dilepas"
                 } else {
                     "preview: surface ${width}x$height"
+                },
+            )
+        }
+        if (surface != null) requestPreviewNow()
+    }
+
+    /**
+     * Surface program tambahan untuk pratinjau overlay live. Dipisah dari
+     * [updateProgram] supaya panel Program di Studio dan overlay bisa
+     * menampilkan gambar yang sama secara bersamaan.
+     */
+    fun updateOverlayProgram(surface: Surface?, width: Int, height: Int) {
+        previewHandler?.post {
+            val core = previewEgl
+            releaseSurface(core, overlayProgramEglSurface)
+            overlayProgramEglSurface = null
+            overlayProgramTarget = surface
+            overlayProgramSurfaceAttached = surface != null
+            if (surface != null && width > 0 && height > 0) {
+                overlayProgramWidth = width
+                overlayProgramHeight = height
+            }
+            diag(
+                if (surface == null || width <= 0) {
+                    "program overlay: surface dilepas"
+                } else {
+                    "program overlay: surface ${width}x$height"
                 },
             )
         }
@@ -1636,6 +1669,11 @@ class RecordingPipeline(
 
         previewEglSurface = ensurePreviewSurface(core, previewEglSurface, previewTarget)
         programEglSurface = ensurePreviewSurface(core, programEglSurface, programTarget)
+        overlayProgramEglSurface = ensurePreviewSurface(
+            core,
+            overlayProgramEglSurface,
+            overlayProgramTarget,
+        )
 
         // Kompositor preview dibuat setelah ada surface yang current; shader
         // tidak bisa dikompilasi tanpa konteks EGL aktif.
@@ -1653,6 +1691,15 @@ class RecordingPipeline(
 
         drawPane(core, painter, previewEglSurface, previewWidth, previewHeight, frame, frame.previewLayers)
         drawPane(core, painter, programEglSurface, programWidth, programHeight, frame, frame.layers)
+        drawPane(
+            core,
+            painter,
+            overlayProgramEglSurface,
+            overlayProgramWidth,
+            overlayProgramHeight,
+            frame,
+            frame.layers,
+        )
 
         val costMs = (System.nanoTime() - started) / 1_000_000
         if (costMs > 100) diag("preview lambat: ${costMs} ms")
@@ -1763,6 +1810,8 @@ class RecordingPipeline(
     }
 
     private fun teardownSession() {
+        // Tanpa ini status layar jeda tertinggal dan Transisi berhenti bekerja.
+        runCatching { SceneManager.resetScreensaver() }
         running = false
         recordingActive = false
         liveActive = false
@@ -1853,10 +1902,14 @@ class RecordingPipeline(
         val core = previewEgl
         releaseSurface(core, previewEglSurface)
         releaseSurface(core, programEglSurface)
+        releaseSurface(core, overlayProgramEglSurface)
         previewEglSurface = null
         programEglSurface = null
+        overlayProgramEglSurface = null
         previewTarget = null
         programTarget = null
+        overlayProgramTarget = null
+        overlayProgramSurfaceAttached = false
         previewPainter?.release()
         previewPainter = null
         runCatching { core?.release() }

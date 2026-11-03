@@ -1,6 +1,8 @@
 package com.rout.air.live
 
 import android.content.Context
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.ConnectionResult
@@ -75,6 +77,18 @@ object GoogleAuth {
                     if (continuation.isActive) continuation.resume(null)
                 }
         }
+    }
+
+    /**
+     * Melepas akun default aplikasi agar pemilih akun muncul lagi.
+     * Izin yang sudah pernah diberikan TIDAK dicabut, jadi memilih akun
+     * lama tidak perlu menyetujui ulang.
+     */
+    suspend fun switchAccount(context: Context): Boolean = withContext(Dispatchers.Main) {
+        runCatching {
+            CredentialManager.create(context)
+                .clearCredentialState(ClearCredentialStateRequest())
+        }.isSuccess
     }
 
     /** Email akun yang login, untuk ditampilkan di Setelan. */

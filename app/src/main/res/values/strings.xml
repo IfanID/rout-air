@@ -344,8 +344,8 @@
     <string name="settings_live_use_key">Gunakan Stream Key</string>
     <string name="settings_google_connect">Hubungkan Akun YouTube</string>
     <string name="settings_google_disconnect">Putuskan</string>
+    <string name="settings_google_switch">Ganti akun</string>
     <string name="settings_google_connected_as">Terhubung sebagai</string>
-    <string name="settings_google_target_ready">Server dan stream key terisi otomatis.</string>
     <string name="settings_google_no_key">Belum ada stream key di akun ini. Buka YouTube Studio &gt; Live sekali untuk membuatnya.</string>
     <string name="settings_google_not_configured">Google Play Services tidak tersedia di perangkat ini. Isi stream key manual di bawah.</string>
     <string name="settings_google_waiting_browser">Menunggu browser…</string>

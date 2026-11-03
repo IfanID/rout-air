@@ -359,6 +359,15 @@ object ChatMonitor {
             }
             val page = api.chat(current.chatId, pageToken)
             if (page == null) {
+                // Token bisa kedaluwarsa di tengah sesi; minta ulang diam-diam
+                // sebelum menghitung sebagai kegagalan.
+                val renewed = GoogleAuth.silentToken(context)
+                if (!renewed.isNullOrBlank() && renewed != token) {
+                    store.saveTokens(GoogleTokens(renewed, GoogleAuth.expiryFrom()))
+                    DiagLog.line("chat: token diperbarui setelah permintaan gagal")
+                    delay(1_000)
+                    continue
+                }
                 failures++
                 if (failures >= 3) {
                     // Siaran mungkin sudah berakhir; cari ulang nanti.
@@ -371,6 +380,9 @@ object ChatMonitor {
             }
             failures = 0
             pageToken = page.nextPageToken
+            if (page.messages.isNotEmpty()) {
+                DiagLog.line("chat: ${page.messages.size} pesan baru")
+            }
             state.update {
                 it.copy(
                     status = "Terhubung",

@@ -67,6 +67,11 @@ object CaptureEngine {
     private var appPreviewHeight = 0
     private var overlayPreviewSurface: Surface? = null
 
+    private var appProgramSurface: Surface? = null
+    private var appProgramWidth = 0
+    private var appProgramHeight = 0
+    private var overlayProgramSurface: Surface? = null
+
     fun attachPreview(surface: Surface?, width: Int, height: Int) {
         if (surface != null && (width <= 0 || height <= 0)) {
             if (surface !== appPreviewSurface) return
@@ -108,13 +113,35 @@ object CaptureEngine {
     /** Panel Program di Studio Mode: keluaran yang benar-benar direkam. */
     fun attachProgram(surface: Surface?, width: Int, height: Int) {
         if (surface != null && (width <= 0 || height <= 0)) {
-            if (surface !== programSurface) return
+            if (surface !== appProgramSurface) return
         }
+        appProgramSurface = surface
+        appProgramWidth = width
+        appProgramHeight = height
         programSurface = surface
         programWidth = width
         programHeight = height
 
         synchronized(lock) { pipeline }?.updateProgram(surface, width, height)
+    }
+
+    /**
+     * Pratinjau overlay yang menampilkan keluaran program (apa yang sedang
+     * mengudara), bukan scene hasil edit. Dipakai saat live aktif.
+     */
+    fun attachOverlayProgram(surface: Surface?, width: Int, height: Int) {
+        if (surface != null && (width <= 0 || height <= 0)) {
+            if (surface !== overlayProgramSurface) return
+        }
+        overlayProgramSurface = surface
+        // Jalur terpisah: panel Program aplikasi tetap mendapat frame juga.
+        synchronized(lock) { pipeline }?.updateOverlayProgram(surface, width, height)
+    }
+
+    /** Lepas pratinjau program milik overlay; panel aplikasi tidak terganggu. */
+    fun detachOverlayProgram() {
+        overlayProgramSurface = null
+        synchronized(lock) { pipeline }?.updateOverlayProgram(null, 0, 0)
     }
 
     /** Membuka sesi pratinjau; belum menulis file. */

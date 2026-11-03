@@ -1307,25 +1307,43 @@ private fun YoutubeAccountSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(email, style = MaterialTheme.typography.bodyMedium)
-                if (live.streamKey.isNotBlank()) {
-                    Text(
-                        stringResource(R.string.settings_google_target_ready),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
-            TextButton(
-                onClick = {
-                    store.clear()
-                    email = ""
-                    status = ""
-                    onLiveConfigChange(
-                        live.copy(serverUrl = "", streamKey = "", accountLinked = false),
-                    )
-                },
-            ) {
-                Text(stringResource(R.string.settings_google_disconnect))
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            // Reset akun default saja; izin lama tetap ada.
+                            GoogleAuth.switchAccount(context)
+                            store.clear()
+                            email = ""
+                            status = ""
+                            onLiveConfigChange(
+                                live.copy(
+                                    serverUrl = "",
+                                    streamKey = "",
+                                    accountLinked = false,
+                                ),
+                            )
+                            busy = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_google_switch))
+                }
+                TextButton(
+                    onClick = {
+                        store.clear()
+                        email = ""
+                        status = ""
+                        onLiveConfigChange(
+                            live.copy(serverUrl = "", streamKey = "", accountLinked = false),
+                        )
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_google_disconnect))
+                }
             }
         }
     } else if (!GoogleAuth.available(context)) {

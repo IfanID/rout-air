@@ -888,7 +888,9 @@ class OverlayLiveService : Service() {
             lastPreviewSync = now
             preview.surfaceTexture?.setDefaultBufferSize(w, previewH.coerceAtLeast(1))
             if (previewAttached) {
-                CaptureEngine.attachOverlayPreview(textureSurface, w, previewH)
+                // Harus jalur program; kalau tidak, resize mengembalikan
+                // pratinjau ke scene edit.
+                CaptureEngine.attachOverlayProgram(textureSurface, w, previewH)
             }
         }
     }
@@ -982,13 +984,15 @@ class OverlayLiveService : Service() {
         if (!surface.isValid) return
         CaptureEngine.setPreviewVisible(true)
         attachedSurface = surface
-        CaptureEngine.attachOverlayPreview(surface, panelW - sidePadPx * 2, previewH)
+        // Saat live, pratinjau overlay menampilkan program yang mengudara
+        // (termasuk layar jeda), bukan scene hasil edit.
+        CaptureEngine.attachOverlayProgram(surface, panelW - sidePadPx * 2, previewH)
         previewAttached = true
     }
 
     private fun detachPreview() {
         if (!previewAttached) return
-        CaptureEngine.detachOverlayPreview()
+        CaptureEngine.detachOverlayProgram()
         attachedSurface = null
         if (!MainActivity.visible) CaptureEngine.setPreviewVisible(false)
         previewAttached = false
