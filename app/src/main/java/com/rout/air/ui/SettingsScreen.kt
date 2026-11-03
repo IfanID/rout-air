@@ -1647,11 +1647,6 @@ private fun AdvancedSettings(
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_performance))
     SettingSwitchRow(
-        title = "Sembunyikan pratinjau saat merekam layar sendiri",
-        subtitle = "Mencegah gambar memantul berulang. Mati = pratinjau selalu terlihat.",
-        checked = config.hidePreviewWhileMirroring,
-    ) { onConfigChange(config.copy(hidePreviewWhileMirroring = it)) }
-    SettingSwitchRow(
         title = stringResource(R.string.settings_static_throttle),
         subtitle = stringResource(R.string.settings_static_throttle_desc),
         checked = config.staticThrottleEnabled,

@@ -1829,7 +1829,19 @@ class RecordingPipeline(
         GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
         GLES20.glScissor(canvasRect[0], canvasRect[1], canvasRect[2], canvasRect[3])
         GLES20.glViewport(canvasRect[0], canvasRect[1], canvasRect[2], canvasRect[3])
+        // Panduan kanvas hanya di tampilan editor, tidak masuk ke encoder.
+        painter.drawCheckerboard(
+            width = config.width.toFloat(),
+            height = config.height.toFloat(),
+            cellsX = (config.width / 60f).coerceAtLeast(1f),
+            cellsY = (config.height / 60f).coerceAtLeast(1f),
+        )
         drawLayers(painter, frame.matrix, layers, config.width, config.height)
+        painter.drawCanvasBorder(
+            width = config.width.toFloat(),
+            height = config.height.toFloat(),
+            thickness = (config.width / 720f).coerceAtLeast(1.5f),
+        )
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
 
         core.swapBuffers(surface)

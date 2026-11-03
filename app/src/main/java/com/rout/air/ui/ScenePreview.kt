@@ -153,7 +153,8 @@ fun ScenePreview(
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val scale = size.width / canvas.width.toFloat()
-                    drawRect(Color(0xFF060708), size = size)
+                    // Panduan kanvas yang sama dengan tab Siaran.
+                    drawCanvasGuide(canvas.width.toFloat() / canvas.height)
 
                     drawLayers.forEach { layer ->
                         val transform = layer.item.transform

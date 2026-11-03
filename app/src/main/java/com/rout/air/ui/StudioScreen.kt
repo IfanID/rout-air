@@ -578,10 +578,6 @@ private fun PreviewPane(
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
-                    PreviewMirrorGuard(
-                        enabled = canvas?.hidePreviewWhileMirroring == true,
-                        modifier = Modifier.matchParentSize(),
-                    )
 
                     // Outline sumber terpilih; digambar di atas SurfaceView memakai
                     // skala kanvas -> ukuran panel.

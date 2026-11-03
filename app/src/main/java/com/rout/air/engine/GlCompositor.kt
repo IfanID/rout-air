@@ -24,6 +24,7 @@ class GlCompositor {
     private var externalProgram = 0
     private var textureProgram = 0
     private var colorProgram = 0
+    private var checkerProgram = 0
 
     private var externalMvp = 0
     private var externalTexMatrix = 0
@@ -41,6 +42,11 @@ class GlCompositor {
     private var colorMvp = 0
     private var colorValue = 0
     private var colorAlpha = 0
+
+    private var checkerMvp = 0
+    private var checkerCells = 0
+    private var checkerColorA = 0
+    private var checkerColorB = 0
 
     private var externalFilter: FilterUniforms? = null
     private var textureFilter: FilterUniforms? = null
@@ -131,6 +137,12 @@ class GlCompositor {
         colorMvp = GLES20.glGetUniformLocation(colorProgram, "uMvp")
         colorValue = GLES20.glGetUniformLocation(colorProgram, "uColor")
         colorAlpha = GLES20.glGetUniformLocation(colorProgram, "uAlpha")
+
+        checkerProgram = GlUtil.compileProgram(VERTEX_CHECKER, FRAGMENT_CHECKER)
+        checkerMvp = GLES20.glGetUniformLocation(checkerProgram, "uMvp")
+        checkerCells = GLES20.glGetUniformLocation(checkerProgram, "uCells")
+        checkerColorA = GLES20.glGetUniformLocation(checkerProgram, "uColorA")
+        checkerColorB = GLES20.glGetUniformLocation(checkerProgram, "uColorB")
     }
 
     fun setCanvasSize(width: Int, height: Int) {
@@ -262,13 +274,49 @@ class GlCompositor {
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
+    /**
+     * Latar kotak-kotak untuk panduan kanvas di tampilan editor. Tidak
+     * dipakai saat menggambar ke encoder.
+     */
+    fun drawCheckerboard(
+        width: Float,
+        height: Float,
+        cellsX: Float,
+        cellsY: Float,
+        colorA: FloatArray = floatArrayOf(0.106f, 0.106f, 0.106f, 1f),
+        colorB: FloatArray = floatArrayOf(0.137f, 0.137f, 0.137f, 1f),
+    ) {
+        buildMvp(0f, 0f, width, height, 0f)
+        GLES20.glUseProgram(checkerProgram)
+        GLES20.glDisable(GLES20.GL_BLEND)
+        bindQuad(checkerProgram)
+        GLES20.glUniformMatrix4fv(checkerMvp, 1, false, mvp, 0)
+        GLES20.glUniform2f(checkerCells, cellsX, cellsY)
+        GLES20.glUniform4fv(checkerColorA, 1, colorA, 0)
+        GLES20.glUniform4fv(checkerColorB, 1, colorB, 0)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    /** Garis tepi kanvas, sama seperti panduan di tampilan Compose. */
+    fun drawCanvasBorder(width: Float, height: Float, thickness: Float = 2f) {
+        val red = 1f
+        val green = 1f
+        val blue = 1f
+        val alpha = 0.20f
+        drawColor(red, green, blue, alpha, 0f, height - thickness, width, thickness, 0f)
+        drawColor(red, green, blue, alpha, 0f, 0f, width, thickness, 0f)
+        drawColor(red, green, blue, alpha, 0f, 0f, thickness, height, 0f)
+        drawColor(red, green, blue, alpha, width - thickness, 0f, thickness, height, 0f)
+    }
+
     fun release() {
-        listOf(externalProgram, textureProgram, colorProgram).forEach {
+        listOf(externalProgram, textureProgram, colorProgram, checkerProgram).forEach {
             if (it != 0) GLES20.glDeleteProgram(it)
         }
         externalProgram = 0
         textureProgram = 0
         colorProgram = 0
+        checkerProgram = 0
     }
 
     private fun buildMvp(
@@ -468,6 +516,30 @@ class GlCompositor {
             void main() {
                 vec4 c = routFilters(texture2D(uTexture, vTexCoord));
                 gl_FragColor = vec4(c.rgb, c.a * uAlpha);
+            }
+        """
+
+        const val VERTEX_CHECKER = """
+            uniform mat4 uMvp;
+            attribute vec4 aPosition;
+            attribute vec2 aTexCoord;
+            varying vec2 vUv;
+            void main() {
+                gl_Position = uMvp * aPosition;
+                vUv = aTexCoord;
+            }
+        """
+
+        const val FRAGMENT_CHECKER = """
+            precision mediump float;
+            uniform vec2 uCells;
+            uniform vec4 uColorA;
+            uniform vec4 uColorB;
+            varying vec2 vUv;
+            void main() {
+                vec2 cell = floor(vUv * uCells);
+                float odd = mod(cell.x + cell.y, 2.0);
+                gl_FragColor = mix(uColorA, uColorB, odd);
             }
         """
 

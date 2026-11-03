@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,7 @@ import com.rout.air.core.LiveStats
 import com.rout.air.core.LiveStatus
 import com.rout.air.core.RecordingState
 import com.rout.air.core.RecordingStats
+import com.rout.air.data.SceneManager
 import com.rout.air.output.CaptureEngine
 import androidx.compose.ui.res.stringResource
 
@@ -76,6 +78,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     var previewReady by remember { mutableStateOf(false) }
+    val program by SceneManager.program.collectAsState()
     val isActive = state is RecordingState.Recording
     val paused = (state as? RecordingState.Recording)?.isPaused == true
     val sessionOnly = state is RecordingState.Previewing
@@ -147,6 +150,29 @@ fun HomeScreen(
                     .background(Color.Black),
                 contentAlignment = Alignment.Center,
             ) {
+                val sessionActive = state is RecordingState.Previewing ||
+                    state is RecordingState.Recording
+                if (!sessionActive) {
+                    // Tanpa sesi: tampilkan program lewat renderer yang sama
+                    // dengan panel Program Studio, supaya isinya 1:1.
+                    val snapshot = program
+                    if (snapshot != null) {
+                        ScenePreview(
+                            canvas = canvasConfig,
+                            collection = snapshot,
+                            selectedItemId = null,
+                            onSelectItem = {},
+                            onTransform = { _, _, _, _, _, _ -> },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        CanvasGuideBackground(
+                            canvasAspect = canvasAspect,
+                            showEmptyLabel = true,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                    }
+                } else {
                 AndroidView(
                     factory = { ctx ->
                         SurfaceView(ctx).apply {
@@ -199,6 +225,7 @@ fun HomeScreen(
                         color = Color.White,
                         textAlign = TextAlign.Center,
                     )
+                }
                 }
             }
         }

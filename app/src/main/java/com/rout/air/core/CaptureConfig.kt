@@ -85,8 +85,6 @@ data class CaptureConfig(
     val fileNameTemplate: String = "RoutAir_{date}_{time}",
     val noSpaceFileName: Boolean = false,
     /** Default mati: selalu fps penuh seperti OBS. */
-    /** Tutup pratinjau saat merekam layar sendiri (anti-pantulan). */
-    val hidePreviewWhileMirroring: Boolean = false,
     val staticThrottleEnabled: Boolean = false,
     val thermalThrottleEnabled: Boolean = false,
 ) {

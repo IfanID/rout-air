@@ -71,7 +71,6 @@ class SettingsStore(context: Context) {
             fileNameTemplate = prefs.getString(KEY_FILE_NAME, "RoutAir_{date}_{time}")
                 ?: "RoutAir_{date}_{time}",
             noSpaceFileName = prefs.getBoolean(KEY_NO_SPACE, false),
-            hidePreviewWhileMirroring = prefs.getBoolean(KEY_HIDE_MIRROR, false),
             staticThrottleEnabled = prefs.getBoolean(KEY_STATIC_THROTTLE, false),
             thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
         )
@@ -116,7 +115,6 @@ class SettingsStore(context: Context) {
             .putString(KEY_COLOR_RANGE, config.colorRange.name)
             .putString(KEY_FILE_NAME, config.fileNameTemplate)
             .putBoolean(KEY_NO_SPACE, config.noSpaceFileName)
-            .putBoolean(KEY_HIDE_MIRROR, config.hidePreviewWhileMirroring)
             .putBoolean(KEY_STATIC_THROTTLE, config.staticThrottleEnabled)
             .putBoolean(KEY_THERMAL_THROTTLE, config.thermalThrottleEnabled)
             .putInt(KEY_SETTINGS_VERSION, SETTINGS_VERSION)
@@ -226,7 +224,6 @@ class SettingsStore(context: Context) {
         const val KEY_FILE_NAME = "file_name_template"
         const val KEY_NO_SPACE = "no_space_filename"
         const val KEY_STATIC_THROTTLE = "static_throttle"
-        const val KEY_HIDE_MIRROR = "hide_preview_mirror"
         const val KEY_THERMAL_THROTTLE = "thermal_throttle"
 
         inline fun <reified T : Enum<T>> enumValue(name: String?, fallback: T): T =
