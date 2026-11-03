@@ -74,9 +74,10 @@ import com.rout.air.live.RtmpTester
 import com.rout.air.live.RtmpTestResult
 import com.rout.air.live.GoogleAuth
 import com.rout.air.live.GoogleAuthStore
-import net.openid.appauth.AuthorizationException
-import net.openid.appauth.AuthorizationResponse
-import net.openid.appauth.AuthorizationService
+import com.rout.air.live.GoogleTokens
+import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.api.ApiException
+import androidx.activity.result.IntentSenderRequest
 import com.rout.air.live.YouTubeApi
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
@@ -1213,12 +1214,10 @@ private fun YoutubeAccountSection(
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
-    val authService = remember { AuthorizationService(context) }
-    DisposableEffect(Unit) { onDispose { authService.dispose() } }
-
-    // Setelah token didapat: ambil email dan server/kunci stream, seperti
-    // tombol Connect Account di OBS.
+    // Setelah token didapat: simpan, ambil email, lalu isi server + stream key
+    // seperti tombol Connect Account di OBS.
     suspend fun finishLogin(accessToken: String) {
+        store.saveTokens(GoogleTokens(accessToken, GoogleAuth.expiryFrom()))
         val mail = withContext(Dispatchers.IO) { GoogleAuth.accountEmail(accessToken) }
         store.accountEmail = mail
         email = mail
@@ -1239,31 +1238,61 @@ private fun YoutubeAccountSection(
     }
 
     val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
+        ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
         val data = result.data
-        val response = data?.let { AuthorizationResponse.fromIntent(it) }
-        if (response == null) {
-            val error = data?.let { AuthorizationException.fromIntent(it) }
-            status = GoogleAuth.errorMessage(error?.error)
+        if (result.resultCode != android.app.Activity.RESULT_OK || data == null) {
+            status = "Login dibatalkan"
             busy = false
             return@rememberLauncherForActivityResult
         }
-        authService.performTokenRequest(
-            response.createTokenExchangeRequest(),
-        ) { tokenResponse, error ->
-            if (tokenResponse?.accessToken == null) {
-                status = GoogleAuth.errorMessage(error?.error)
-                busy = false
-            } else {
-                val tokens = GoogleAuth.toTokens(tokenResponse)
-                store.saveTokens(tokens)
-                scope.launch {
-                    finishLogin(tokens.accessToken)
+        val authorization = try {
+            Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(data)
+        } catch (error: ApiException) {
+            status = error.message ?: "Login gagal"
+            busy = false
+            return@rememberLauncherForActivityResult
+        }
+        val token = authorization.accessToken
+        if (token.isNullOrBlank()) {
+            status = "Google tidak mengembalikan token"
+            busy = false
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            finishLogin(token)
+            busy = false
+        }
+    }
+
+    fun authorize() {
+        status = ""
+        busy = true
+        Identity.getAuthorizationClient(context)
+            .authorize(GoogleAuth.authorizationRequest())
+            .addOnSuccessListener { authorization ->
+                val pending = authorization.pendingIntent
+                if (authorization.hasResolution() && pending != null) {
+                    launcher.launch(
+                        IntentSenderRequest.Builder(pending.intentSender).build(),
+                    )
+                    return@addOnSuccessListener
+                }
+                val token = authorization.accessToken
+                if (token.isNullOrBlank()) {
+                    status = "Google tidak mengembalikan token"
                     busy = false
+                } else {
+                    scope.launch {
+                        finishLogin(token)
+                        busy = false
+                    }
                 }
             }
-        }
+            .addOnFailureListener { error ->
+                status = error.message ?: "Login gagal"
+                busy = false
+            }
     }
 
     if (email.isNotBlank()) {
@@ -1299,26 +1328,13 @@ private fun YoutubeAccountSection(
                 Text(stringResource(R.string.settings_google_disconnect))
             }
         }
-    } else if (!GoogleAuth.configured) {
-        // Build tanpa client OAuth: jangan tampilkan tombol yang pasti gagal.
+    } else if (!GoogleAuth.available(context)) {
+        // Tanpa Google Play Services tombol tidak akan pernah berhasil.
         Hint(stringResource(R.string.settings_google_not_configured))
     } else {
         Button(
             enabled = !busy,
-            onClick = {
-                status = ""
-                busy = true
-                runCatching {
-                    launcher.launch(
-                        authService.getAuthorizationRequestIntent(
-                            GoogleAuth.authorizationRequest(),
-                        ),
-                    )
-                }.onFailure {
-                    status = it.message ?: "Tidak bisa membuka browser"
-                    busy = false
-                }
-            },
+            onClick = { authorize() },
         ) {
             Text(
                 if (busy) {

@@ -15,6 +15,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -22,7 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rout.air.data.SceneManager
-import com.rout.air.data.screensaverScenes
+import com.rout.air.data.isScreensaverScene
 
 /**
  * Panel layar jeda di overlay Live: daftar scene "Layar Jeda" yang tersedia.
@@ -31,11 +34,14 @@ import com.rout.air.data.screensaverScenes
  */
 @Composable
 internal fun OverlayScreensaverPanel(
-    onPick: (String) -> Unit,
+    onPick: (String) -> Boolean,
     onStop: () -> Unit,
 ) {
     val program by SceneManager.program.collectAsState()
-    val scenes = program?.screensaverScenes().orEmpty()
+    var error by remember { mutableStateOf<String?>(null) }
+    // Semua scene boleh dipakai; yang bernama "Layar Jeda" tampil lebih dulu.
+    val scenes = program?.scenes.orEmpty()
+        .sortedByDescending { it.isScreensaverScene() }
     val activeId = program?.activeSceneId
 
     Column(
@@ -47,7 +53,7 @@ internal fun OverlayScreensaverPanel(
     ) {
         if (scenes.isEmpty()) {
             Text(
-                text = "Belum ada scene Layar Jeda. Tambahkan lewat Adegan > Tambah Sumber.",
+                text = "Belum ada scene. Tambahkan lewat Adegan > Tambah Scene.",
                 color = Color(0xFFB8C2CC),
                 fontSize = 10.sp,
             )
@@ -58,7 +64,17 @@ internal fun OverlayScreensaverPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { if (active) onStop() else onPick(scene.id) }
+                    .clickable {
+                        if (active) {
+                            onStop()
+                        } else {
+                            error = if (onPick(scene.id)) {
+                                null
+                            } else {
+                                "Scene gagal ditampilkan"
+                            }
+                        }
+                    }
                     .padding(vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -76,6 +92,13 @@ internal fun OverlayScreensaverPanel(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        error?.let {
+            Text(
+                text = it,
+                color = Color(0xFFFF8A8A),
+                fontSize = 10.sp,
+            )
         }
         TextButton(onClick = onStop) {
             Text(

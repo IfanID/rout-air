@@ -262,19 +262,31 @@ object SceneManager {
      * Live dan rekaman tetap berjalan, hanya gambarnya yang diganti.
      */
     fun showScreensaver(sceneId: String): Boolean {
-        val base = programCollection ?: return false
-        if (base.scenes.none { it.id == sceneId }) return false
+        val base = programCollection ?: current()
+        programCollection = base
+        // Id dari panel bisa hilang setelah koleksi diedit; pakai id tersimpan
+        // atau scene "Layar Jeda" pertama sebagai cadangan.
+        val target = base.scenes.firstOrNull { it.id == sceneId }
+            ?: appContext?.let { SettingsStore(it).loadScreensaverSceneId() }
+                ?.let { saved -> base.scenes.firstOrNull { it.id == saved } }
+            ?: base.scenes.firstOrNull { it.isScreensaverScene() }
+        if (target == null) {
+            DiagLog.line("jeda: tidak ada scene layar jeda untuk ditampilkan")
+            return false
+        }
         if (programBeforeScreensaver == null) programBeforeScreensaver = base
-        val next = base.copy(activeSceneId = sceneId)
+        val next = base.copy(activeSceneId = target.id)
         programCollection = next
         _program.value = next
         listeners.forEach { it(next) }
+        DiagLog.line("jeda: tampil \"${target.name}\" (${target.id})")
         return true
     }
 
     /** Mengembalikan program seperti sebelum layar jeda. */
     fun hideScreensaver(): Boolean {
         val previous = programBeforeScreensaver ?: return false
+        DiagLog.line("jeda: kembali ke scene sebelumnya")
         programBeforeScreensaver = null
         programCollection = previous
         _program.value = previous

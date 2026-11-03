@@ -27,6 +27,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.RemoteViews
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -152,6 +153,8 @@ class OverlayLiveService : Service() {
             stopSelf()
             return
         }
+        // Pastikan koleksi scene tersedia walau Activity sudah dimatikan.
+        runCatching { SceneManager.attach(this) }
         startAsForeground()
         overlayOwner.attach()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -216,13 +219,23 @@ class OverlayLiveService : Service() {
             Intent(this, OverlayLiveService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Tombol tutup ditaruh di dalam layout agar terlihat tanpa perlu
+        // memperluas notifikasi: cukup satu ketukan.
+        val views = RemoteViews(packageName, R.layout.notification_overlay).apply {
+            setTextViewText(R.id.notification_title, getString(R.string.overlay_title))
+            setTextViewText(R.id.notification_text, getString(R.string.overlay_text))
+            setTextViewText(R.id.notification_close, getString(R.string.overlay_close))
+            setOnClickPendingIntent(R.id.notification_root, openApp)
+            setOnClickPendingIntent(R.id.notification_close, closeIntent)
+        }
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.overlay_title))
-            .setContentText(getString(R.string.overlay_text))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setContentIntent(openApp)
-            .addAction(0, getString(R.string.overlay_close), closeIntent)
+            // Decorated style memakai content view yang sama saat ringkas
+            // maupun diperluas, jadi tombol tutup tidak hilang.
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(views)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(

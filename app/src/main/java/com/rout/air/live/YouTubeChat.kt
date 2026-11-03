@@ -323,14 +323,18 @@ object ChatMonitor {
         var nextViewerAt = 0L
         var failures = 0
         while (currentCoroutineContext().isActive) {
-            if (!GoogleAuth.configured) {
-                publish(ChatState(status = "Login Google tidak aktif di build ini"))
+            if (!GoogleAuth.available(context)) {
+                publish(ChatState(status = "Google Play Services tidak tersedia"))
                 delay(30_000)
                 continue
             }
+            // Token hanya berlaku sekitar satu jam; minta ulang tanpa UI.
             val token = store.freshAccessToken()
+                ?: GoogleAuth.silentToken(context)?.also { renewed ->
+                    store.saveTokens(GoogleTokens(renewed, GoogleAuth.expiryFrom()))
+                }
             if (token.isNullOrBlank()) {
-                publish(ChatState(status = "Belum login Google"))
+                publish(ChatState(status = "Login Google diperlukan"))
                 delay(30_000)
                 continue
             }

@@ -1,21 +1,31 @@
 package com.rout.air.live
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Mengunci pembentukan skema redirect AppAuth tanpa perlu perangkat. */
+/** Mengunci masa berlaku token tanpa perlu perangkat. */
 class GoogleAuthTest {
 
     @Test
-    fun redirectSchemeReversesClientId() {
-        assertEquals(
-            "com.googleusercontent.apps.123456-abc",
-            GoogleAuth.redirectScheme("123456-abc.apps.googleusercontent.com"),
-        )
+    fun tokenExpiresAfterFiftyFiveMinutes() {
+        val now = 1_000_000L
+        assertEquals(now + 55 * 60 * 1000L, GoogleAuth.expiryFrom(now))
     }
 
     @Test
-    fun blankClientFallsBackToPackageScheme() {
-        assertEquals("com.rout.air", GoogleAuth.redirectScheme(""))
+    fun freshRequiresMarginBeforeExpiry() {
+        val now = 1_000_000L
+        val token = GoogleTokens("abc", now + 55 * 60 * 1000L)
+        assertTrue(token.fresh(now))
+        // Satu menit sebelum kedaluwarsa sudah dianggap perlu diperbarui.
+        assertFalse(token.fresh(now + 55 * 60 * 1000L - 30_000L))
+    }
+
+    @Test
+    fun blankTokenIsNeverFresh() {
+        val token = GoogleTokens("", Long.MAX_VALUE)
+        assertFalse(token.fresh())
     }
 }

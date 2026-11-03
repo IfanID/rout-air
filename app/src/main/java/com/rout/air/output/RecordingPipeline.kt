@@ -1185,8 +1185,10 @@ class RecordingPipeline(
      * Dijalankan di thread GL setiap hasil Transisi berubah.
      */
     private fun rebuildLayers() {
-        val layers = buildLayers(SceneManager.programCurrent(), "program")
+        val collection = SceneManager.programCurrent()
+        val layers = buildLayers(collection, "program")
         renderLayers = layers
+        diag("scene: program=\"${collection.activeScene()?.name}\" layer=${layers.size}")
         pruneTextures()
     }
 
