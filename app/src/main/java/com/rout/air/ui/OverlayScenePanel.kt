@@ -19,7 +19,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 import com.rout.air.data.SceneManager
+import com.rout.air.data.isScreensaverScene
 
 /**
  * Panel daftar scene di overlay Live untuk berpindah program dengan satu
@@ -27,8 +30,12 @@ import com.rout.air.data.SceneManager
  */
 @Composable
 internal fun OverlayScenePanel(onPick: (String) -> Boolean) {
+    val edit by SceneManager.state.collectAsState()
     val program by SceneManager.program.collectAsState()
-    val scenes = program?.scenes.orEmpty()
+    // Panel Adegan hanya berisi scene siaran biasa; scene "Layar Jeda"
+    // punya panel sendiri agar kedua fungsi tidak tertukar.
+    // Daftar mengikuti koleksi edit supaya tambah/hapus scene langsung terlihat.
+    val scenes = (edit ?: program)?.scenes.orEmpty().filterNot { it.isScreensaverScene() }
     val activeId = program?.activeSceneId
 
     Column(
@@ -38,6 +45,11 @@ internal fun OverlayScenePanel(onPick: (String) -> Boolean) {
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+        Text(
+            text = stringResource(R.string.overlay_scenes),
+            color = Color.White,
+            fontSize = 11.sp,
+        )
         if (scenes.isEmpty()) {
             Text(
                 text = "Belum ada scene.",

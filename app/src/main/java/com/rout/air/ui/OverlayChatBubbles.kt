@@ -3,6 +3,7 @@ package com.rout.air.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,6 +37,7 @@ import com.rout.air.live.nameColor
 internal fun ChatBubbleStack(
     bubbles: List<ChatBubble>,
     onGone: (String) -> Unit,
+    onTap: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -43,13 +45,17 @@ internal fun ChatBubbleStack(
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         bubbles.forEach { bubble ->
-            key(bubble.id) { ChatBubbleRow(bubble, onGone) }
+            key(bubble.id) { ChatBubbleRow(bubble, onGone, onTap) }
         }
     }
 }
 
 @Composable
-private fun ChatBubbleRow(bubble: ChatBubble, onGone: (String) -> Unit) {
+private fun ChatBubbleRow(
+    bubble: ChatBubble,
+    onGone: (String) -> Unit,
+    onTap: (String) -> Unit,
+) {
     val appear = remember { Animatable(0f) }
     val fade = remember { Animatable(0f) }
 
@@ -70,6 +76,7 @@ private fun ChatBubbleRow(bubble: ChatBubble, onGone: (String) -> Unit) {
         border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
         modifier = Modifier
             .fillMaxWidth()
+            .clickable { onTap(bubble.id) }
             .graphicsLayer {
                 alpha = appear.value * (1f - fade.value)
                 translationY = (1f - appear.value) * -12.dp.toPx()

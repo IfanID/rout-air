@@ -229,6 +229,68 @@ fun SceneCollection.addScreensaverScene(
 }
 
 /**
+ * Membentuk koleksi sementara untuk satu tampilan layar jeda. Koleksi ini
+ * hanya dipakai saat jeda aktif dan tidak pernah disimpan sebagai scene.
+ */
+internal fun buildScreensaverCollection(
+    entry: ScreensaverEntry,
+    width: Int,
+    height: Int,
+    measure: (text: String, size: Float, maxWidth: Int) -> Int,
+): SceneCollection {
+    val built = buildScreensaverScene(width, height, measure, entry.name)
+    val path = entry.imagePath
+    if (path.isNullOrBlank()) {
+        return SceneCollection(
+            activeSceneId = built.scene.id,
+            scenes = listOf(built.scene),
+            sources = built.sources,
+        )
+    }
+
+    val (imageWidth, imageHeight) = com.rout.air.engine.SourceBitmap
+        .probeSize(path, width, height) ?: (width to height)
+    // Orientasi menentukan sisi yang memenuhi kanvas: vertikal mengisi
+    // tinggi, horizontal mengisi lebar.
+    val scale = if (entry.vertical) {
+        height.toFloat() / imageHeight
+    } else {
+        width.toFloat() / imageWidth
+    }.coerceAtLeast(0.01f)
+
+    val image = SceneSource(
+        type = SourceType.Image,
+        name = entry.name,
+        settings = SourceSettings(
+            imagePath = path,
+            width = imageWidth,
+            height = imageHeight,
+        ),
+    )
+    val imageItem = SceneItem(
+        sourceId = image.id,
+        z = 1,
+        transform = Transform(
+            x = width / 2f,
+            y = height / 2f,
+            scaleX = scale,
+            scaleY = scale,
+            align = Align.Center,
+        ),
+    )
+    // Judul dan subteks naik satu lapis agar berada di atas gambar.
+    val items = built.scene.items.map { item ->
+        if (item.z >= 1) item.copy(z = item.z + 1) else item
+    } + imageItem
+    val scene = built.scene.copy(items = items)
+    return SceneCollection(
+        activeSceneId = scene.id,
+        scenes = listOf(scene),
+        sources = built.sources + image,
+    )
+}
+
+/**
  * Memastikan collection punya scene layar jeda. Bila sudah ada, scene itu
  * yang dipakai supaya perubahan pengguna tidak tertimpa.
  */

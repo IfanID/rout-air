@@ -697,7 +697,7 @@ class OverlayRecordingService : Service() {
             lastPreviewSync = now
             preview.surfaceTexture?.setDefaultBufferSize(w, previewH.coerceAtLeast(1))
             if (previewAttached) {
-                CaptureEngine.attachOverlayPreview(textureSurface, w, previewH)
+                CaptureEngine.attachOverlayProgram(textureSurface, w, previewH)
             }
         }
     }
@@ -739,13 +739,15 @@ class OverlayRecordingService : Service() {
         if (!surface.isValid) return
         CaptureEngine.setPreviewVisible(true)
         attachedSurface = surface
-        CaptureEngine.attachOverlayPreview(surface, panelW - sidePadPx * 2, previewH)
+        // Panel overlay merekam menampilkan program yang mengudara, sama
+        // dengan Tab Siaran, bukan scene hasil edit.
+        CaptureEngine.attachOverlayProgram(surface, panelW - sidePadPx * 2, previewH)
         previewAttached = true
     }
 
     private fun detachPreview() {
         if (!previewAttached) return
-        CaptureEngine.detachOverlayPreview()
+        CaptureEngine.detachOverlayProgram()
         attachedSurface = null
         if (!MainActivity.visible) CaptureEngine.setPreviewVisible(false)
         previewAttached = false

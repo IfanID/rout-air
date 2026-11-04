@@ -149,14 +149,6 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
-    /** Id scene layar jeda yang dipakai tombol overlay. */
-    fun loadScreensaverSceneId(): String =
-        prefs.getString(KEY_JEDA_SCENE, "").orEmpty()
-
-    fun saveScreensaverSceneId(id: String) {
-        prefs.edit().putString(KEY_JEDA_SCENE, id).apply()
-    }
-
     fun loadLive(): LiveConfig = LiveConfig(
         service = com.rout.air.core.LiveService.fromName(prefs.getString(KEY_LIVE_SERVICE, null)),
         serverUrl = prefs.getString(KEY_LIVE_URL, "").orEmpty(),
@@ -202,7 +194,6 @@ class SettingsStore(context: Context) {
         const val KEY_LIVE_PASSWORD = "live_password"
         const val KEY_LIVE_TRACK = "live_track"
         const val KEY_LIVE_ACCOUNT = "live_account_linked"
-        const val KEY_JEDA_SCENE = "screensaver_scene_id"
         const val KEY_SCENE_CANVAS_W = "scene_canvas_width"
         const val KEY_SCENE_CANVAS_H = "scene_canvas_height"
 

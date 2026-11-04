@@ -57,6 +57,7 @@ import com.rout.air.core.SceneCollection
 import com.rout.air.core.SourceType
 import com.rout.air.data.AudioMixer
 import com.rout.air.data.SceneManager
+import com.rout.air.data.ScreensaverStore
 import com.rout.air.data.SettingsStore
 import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
@@ -98,6 +99,7 @@ fun RoutAirApp(
 
     remember(context) { SceneManager.attach(context) }
     remember(context) { AudioMixer.attach(context) }
+    remember(context) { ScreensaverStore.attach(context) }
     val scenes by SceneManager.state.collectAsState()
 
     val audioMix by AudioMixer.mix.collectAsState()
@@ -161,7 +163,6 @@ fun RoutAirApp(
     // disesuaikan dengan kanvas yang benar-benar dipakai.
     var lastCanvasSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(canvasConfig.width, canvasConfig.height) {
-        SceneManager.ensureScreensaverLayout(canvasConfig.width, canvasConfig.height)
         val previous = lastCanvasSize
         val currentSize = canvasConfig.width to canvasConfig.height
         if (previous != null && previous != currentSize) {

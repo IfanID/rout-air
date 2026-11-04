@@ -40,9 +40,10 @@ fun SceneCollection.renameScene(sceneId: String, name: String): SceneCollection 
     scenes = scenes.map { if (it.id == sceneId) it.copy(name = name) else it },
 )
 
-/** Menghapus adegan; adegan terakhir tidak boleh dihapus. */
+/** Menghapus adegan; adegan terakhir dan layar jeda tidak boleh dihapus. */
 fun SceneCollection.removeScene(sceneId: String): SceneCollection {
     if (scenes.size <= 1) return this
+    if (scenes.firstOrNull { it.id == sceneId }?.isScreensaverScene() == true) return this
     val remaining = scenes.filterNot { it.id == sceneId }
     val active = if (activeSceneId == sceneId) remaining.first().id else activeSceneId
     return copy(scenes = remaining, activeSceneId = active)

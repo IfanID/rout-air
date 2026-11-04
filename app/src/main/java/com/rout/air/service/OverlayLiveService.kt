@@ -72,6 +72,7 @@ import com.rout.air.data.SceneManager
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -115,6 +116,8 @@ class OverlayLiveService : Service() {
     private val overlayOwner = OverlayViewOwner()
     private lateinit var resizeHandle: ImageView
     private lateinit var action: ImageButton
+    private lateinit var micButton: ImageButton
+    private lateinit var bubbleToggle: ImageButton
     private lateinit var timerView: TextView
     private lateinit var params: WindowManager.LayoutParams
 
@@ -139,6 +142,10 @@ class OverlayLiveService : Service() {
 
     /** Bubble chat yang tampil di bawah logo; maksimal [MAX_BUBBLES]. */
     private val bubbleState = mutableStateOf<List<ChatBubble>>(emptyList())
+    /** Timer per bubble; dipakai ulang saat bubble diketuk atau pesan berulang. */
+    private val bubbleJobs = mutableMapOf<String, Job>()
+    /** Bubble bisa disembunyikan tanpa menutup panel obrolan. */
+    private var bubblesEnabled = true
     private val seenBubbleIds = LinkedHashSet<String>()
     /** Pesan lama saat siaran baru terdeteksi tidak ikut muncul sebagai bubble. */
     private var bubblePrimed = false
@@ -157,6 +164,9 @@ class OverlayLiveService : Service() {
         }
         // Pastikan koleksi scene tersedia walau Activity sudah dimatikan.
         runCatching { SceneManager.attach(this) }
+        // Overlay bisa berjalan tanpa Activity, jadi mixer perlu disiapkan.
+        runCatching { AudioMixer.attach(this) }
+        runCatching { com.rout.air.data.ScreensaverStore.attach(this) }
         startAsForeground()
         overlayOwner.attach()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -166,6 +176,7 @@ class OverlayLiveService : Service() {
         }
         observeState()
         observeChat()
+        observeMixer()
         observeScreensaver()
         observeLive()
         startTicker()
@@ -278,6 +289,7 @@ class OverlayLiveService : Service() {
                     ChatBubbleStack(
                         bubbles = bubbleState.value,
                         onGone = { id -> removeBubble(id) },
+                        onTap = { id -> extendBubble(id) },
                     )
                 }
             }
@@ -340,7 +352,18 @@ class OverlayLiveService : Service() {
                 marginStart = dp(2)
             })
         }
-        // Hanya tombol tutup di header.
+        // Bubble chat bisa disembunyikan tanpa menutup panel obrolan.
+        bubbleToggle = headerButton(
+            R.drawable.ic_chat,
+            getString(R.string.overlay_bubbles_hide),
+        ) {
+            bubblesEnabled = !bubblesEnabled
+            updateBubbleToggle()
+            updateBubbleVisibility()
+        }
+        addHeaderButton(bubbleToggle)
+        updateBubbleToggle()
+        // Tombol tutup di header.
         addHeaderButton(headerButton(R.drawable.ic_overlay_close, getString(R.string.overlay_close)) {
             setMenuOpen(false)
         })
@@ -503,10 +526,7 @@ class OverlayLiveService : Service() {
                 ComposeView(this@OverlayLiveService).apply {
                     setContent {
                         RoutAirTheme {
-                            OverlayScreensaverPanel(
-                                onPick = { id -> SceneManager.showScreensaver(id) },
-                                onStop = { SceneManager.hideScreensaver() },
-                            )
+                            OverlayScreensaverPanel()
                         }
                     }
                 },
@@ -600,8 +620,8 @@ class OverlayLiveService : Service() {
             controls.addView(FrameLayout(this), LinearLayout.LayoutParams(0, controlsPx, 1f))
         }
 
-        // 1. Rekam/Stop, 2. kosong, 3. kotak isi mata, 4. pesan,
-        // 5. VU meter audio, 6-8 kosong, 9. buka Studio.
+        // 1. Rekam/Stop, 2. kosong, 3. pratinjau, 4. obrolan, 5. audio,
+        // 6. adegan, 7. mikrofon, 8. layar jeda, 9. buka Studio.
         addCell(action, dp(32))
         addEmptyCell()
         addCell(
@@ -625,7 +645,16 @@ class OverlayLiveService : Service() {
                 showContent(ContentMode.Scenes)
             },
         )
-        addEmptyCell()
+        // Slot 7: mute mikrofon cepat tanpa membuka panel audio.
+        micButton = toolButton(
+            R.drawable.ic_mic,
+            getString(R.string.overlay_mic_mute),
+        ) {
+            val channel = AudioMixer.mix.value.channel(AudioChannelId.Microphone)
+            AudioMixer.update(channel.copy(muted = !channel.muted))
+        }
+        addCell(micButton)
+        updateMicButton(AudioMixer.mix.value.channel(AudioChannelId.Microphone))
         // Slot 8: panel layar jeda (daftar scene penutup yang tersedia).
         screensaverButton = toolButton(
             R.drawable.ic_screensaver,
@@ -1046,7 +1075,7 @@ class OverlayLiveService : Service() {
         val live = CaptureEngine.liveStats.value
         if (live.active) {
             val seconds = (live.uptimeMs / 1000).coerceAtLeast(0)
-            timerView.text = "%02d:%02d".format(seconds / 60, seconds % 60)
+            timerView.text = formatElapsed(seconds)
             return
         }
         val state = CaptureEngine.state.value
@@ -1060,7 +1089,20 @@ class OverlayLiveService : Service() {
         } else {
             0
         }
-        timerView.text = "%02d:%02d".format(elapsed / 60, elapsed % 60)
+        timerView.text = formatElapsed(elapsed)
+    }
+
+    /** MM:SS, atau H:MM:SS setelah siaran melewati satu jam. */
+    private fun formatElapsed(totalSeconds: Long): String {
+        val seconds = totalSeconds.coerceAtLeast(0)
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        val rest = seconds % 60
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(hours, minutes, rest)
+        } else {
+            "%02d:%02d".format(minutes, rest)
+        }
     }
 
     private fun observeChat() {
@@ -1073,6 +1115,8 @@ class OverlayLiveService : Service() {
                         chatWasLive = false
                         bubblePrimed = false
                         seenBubbleIds.clear()
+                        bubbleJobs.values.forEach { it.cancel() }
+                        bubbleJobs.clear()
                         bubbleState.value = emptyList()
                     }
                 } else {
@@ -1093,6 +1137,9 @@ class OverlayLiveService : Service() {
             chatScroll.scrollY + chatScroll.height >= chatBody.height - dp(24)
         chatBody.text = when {
             shown.isNotEmpty() -> chatSpans(shown)
+            status.isNotBlank() && status != "Terhubung" -> status
+            com.rout.air.live.ChatMonitor.state.value.live ->
+                getString(R.string.overlay_chat_waiting)
             status.isNotBlank() -> status
             else -> getString(R.string.overlay_no_messages)
         }
@@ -1113,10 +1160,40 @@ class OverlayLiveService : Service() {
 
     /** Bubble tampil saat live atau saat ada pesan uji di layar. */
     private fun updateBubbleVisibility() {
-        val visible = !menuOpen && (
+        val visible = bubblesEnabled && !menuOpen && (
             com.rout.air.live.ChatMonitor.state.value.live || bubbleState.value.isNotEmpty()
             )
         bubbleCompose.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    /** Ikon header mencerminkan bubble sedang tampil atau disembunyikan. */
+    private fun updateBubbleToggle() {
+        bubbleToggle.alpha = if (bubblesEnabled) 0.9f else 0.4f
+        bubbleToggle.contentDescription = getString(
+            if (bubblesEnabled) R.string.overlay_bubbles_hide else R.string.overlay_bubbles_show,
+        )
+    }
+
+    /** Sakelar mikrofon di baris kontrol overlay. */
+    private fun updateMicButton(channel: com.rout.air.core.AudioChannel) {
+        micButton.setImageResource(
+            if (channel.muted) R.drawable.ic_mic_off else R.drawable.ic_mic,
+        )
+        micButton.setColorFilter(
+            if (channel.muted) Color.parseColor("#FF6B6B") else Color.WHITE,
+        )
+        micButton.contentDescription = getString(
+            if (channel.muted) R.string.overlay_mic_unmute else R.string.overlay_mic_mute,
+        )
+    }
+
+    /** Ikuti perubahan mixer agar ikon mikrofon selalu sesuai keadaan. */
+    private fun observeMixer() {
+        scope.launch {
+            AudioMixer.mix.collect { mix ->
+                updateMicButton(mix.channel(AudioChannelId.Microphone))
+            }
+        }
     }
 
     /** Mencatat pesan baru sebagai bubble; pesan lama saat baru tersambung dilewati. */
@@ -1146,8 +1223,14 @@ class OverlayLiveService : Service() {
     }
 
     private fun showBubble(message: ChatMessage) {
+        // Pesan sama dari penulis sama tidak menumpuk: bubble lama dipakai
+        // ulang, dipindah ke atas, dan durasinya diperpanjang.
+        val duplicate = bubbleState.value.firstOrNull {
+            !it.leaving && it.author == message.author && it.text == message.text
+        }
+        val id = duplicate?.id ?: message.id
         val bubble = ChatBubble(
-            id = message.id,
+            id = id,
             author = message.author,
             text = message.text,
             role = message.role,
@@ -1156,29 +1239,48 @@ class OverlayLiveService : Service() {
         // Bubble baru di atas; hanya [MAX_BUBBLES] yang terlihat. Pesan ke-4
         // mendorong yang paling bawah keluar, seperti chat YouTube.
         var visible = 0
-        bubbleState.value = (listOf(bubble) + bubbleState.value).map { item ->
+        val rest = bubbleState.value.filterNot { it.id == id }
+        bubbleState.value = (listOf(bubble) + rest).map { item ->
             val keep = !item.leaving && visible < MAX_BUBBLES
             if (keep) visible++
             if (keep || item.leaving) item else item.copy(leaving = true)
         }
-        // Bubble hilang sendiri agar tidak menutupi layar saat chat sepi.
-        scope.launch {
-            delay(bubbleDurationMs(message.text))
-            markBubbleLeaving(bubble.id)
+        // Bubble yang terdorong keluar tidak perlu timer lagi.
+        bubbleState.value.filter { it.leaving }.forEach {
+            bubbleJobs.remove(it.id)?.cancel()
         }
+        // Bubble hilang sendiri agar tidak menutupi layar saat chat sepi.
+        scheduleBubbleExit(id, bubble.text)
         if (!menuOpen) {
             // Pastikan ruang di bawah logo cukup untuk bubble yang tampil.
             applyPosition(logoPx, logoPx)
         }
     }
 
+    /** Ketuk bubble agar tampil lebih lama (berguna untuk pesan panjang). */
+    private fun extendBubble(id: String) {
+        val bubble = bubbleState.value.firstOrNull { it.id == id && !it.leaving } ?: return
+        scheduleBubbleExit(id, bubble.text, extraMs = 2_000L)
+    }
+
+    /** Jadwalkan bubble keluar sendiri; timer lama dibatalkan lebih dulu. */
+    private fun scheduleBubbleExit(id: String, text: String, extraMs: Long = 0L) {
+        bubbleJobs.remove(id)?.cancel()
+        bubbleJobs[id] = scope.launch {
+            delay(bubbleDurationMs(text) + extraMs)
+            markBubbleLeaving(id)
+        }
+    }
+
     private fun markBubbleLeaving(id: String) {
+        bubbleJobs.remove(id)?.cancel()
         bubbleState.value = bubbleState.value.map {
             if (it.id == id && !it.leaving) it.copy(leaving = true) else it
         }
     }
 
     private fun removeBubble(id: String) {
+        bubbleJobs.remove(id)?.cancel()
         bubbleState.value = bubbleState.value.filterNot { it.id == id }
         updateBubbleVisibility()
     }

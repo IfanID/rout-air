@@ -65,7 +65,6 @@ object CaptureEngine {
     private var appPreviewSurface: Surface? = null
     private var appPreviewWidth = 0
     private var appPreviewHeight = 0
-    private var overlayPreviewSurface: Surface? = null
 
     private var appProgramSurface: Surface? = null
     private var appProgramWidth = 0
@@ -79,35 +78,10 @@ object CaptureEngine {
         appPreviewSurface = surface
         appPreviewWidth = width
         appPreviewHeight = height
-        // Overlay yang sedang tampil tetap memakai surface-nya.
-        if (overlayPreviewSurface == null) {
-            previewSurface = surface
-            previewWidth = width
-            previewHeight = height
-            synchronized(lock) { pipeline }?.updatePreview(surface, width, height)
-        }
-    }
-
-    /** Surface pratinjau milik overlay; menimpa pratinjau aplikasi sementara. */
-    fun attachOverlayPreview(surface: Surface?, width: Int, height: Int) {
-        if (surface != null && (width <= 0 || height <= 0)) {
-            if (surface !== overlayPreviewSurface) return
-        }
-        overlayPreviewSurface = surface
         previewSurface = surface
         previewWidth = width
         previewHeight = height
         synchronized(lock) { pipeline }?.updatePreview(surface, width, height)
-    }
-
-    /** Tutup pratinjau overlay dan kembalikan ke surface aplikasi. */
-    fun detachOverlayPreview() {
-        overlayPreviewSurface = null
-        val surface = appPreviewSurface
-        previewSurface = surface
-        previewWidth = appPreviewWidth
-        previewHeight = appPreviewHeight
-        synchronized(lock) { pipeline }?.updatePreview(surface, appPreviewWidth, appPreviewHeight)
     }
 
     /** Panel Program di Studio Mode: keluaran yang benar-benar direkam. */
@@ -265,8 +239,7 @@ object CaptureEngine {
 
     /** Preview berhenti digambar saat aplikasi tidak terlihat. */
     fun setPreviewVisible(visible: Boolean) {
-        // Overlay tetap butuh render walau aplikasi di background.
-        synchronized(lock) { pipeline }?.setPreviewVisible(visible || overlayPreviewSurface != null)
+        synchronized(lock) { pipeline }?.setPreviewVisible(visible)
     }
 
     fun clearError() {

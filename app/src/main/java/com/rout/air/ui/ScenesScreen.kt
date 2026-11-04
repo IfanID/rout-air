@@ -75,11 +75,11 @@ import com.rout.air.core.SourceSettings
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
 import com.rout.air.data.SceneStore
-import com.rout.air.data.addScreensaverScene
 import com.rout.air.data.addScene
 import com.rout.air.data.addScreenItem
 import com.rout.air.data.addSource
 import com.rout.air.data.duplicateScene
+import com.rout.air.data.isScreensaverScene
 import com.rout.air.data.moveScene
 import com.rout.air.data.moveLayer
 import com.rout.air.data.removeItem
@@ -125,6 +125,7 @@ fun ScenesScreen(
     var showAddScene by remember { mutableStateOf(false) }
     var showRenameScene by remember { mutableStateOf(false) }
     var showAddSource by remember { mutableStateOf(false) }
+    var showScreensaverPage by remember { mutableStateOf(false) }
     var showAppAudioPicker by remember { mutableStateOf(false) }
     var replaceSourceId by remember { mutableStateOf<String?>(null) }
 
@@ -193,6 +194,14 @@ fun ScenesScreen(
 
     BackHandler(enabled = selectedItem != null) { onSelectItem(null) }
 
+    if (showScreensaverPage) {
+        ScreensaverPage(
+            onBack = { showScreensaverPage = false },
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
+
     if (selectedItem != null && selectedSource != null) {
         SourceEditor(
             canvas = canvasConfig,
@@ -252,7 +261,7 @@ fun ScenesScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            collection.scenes.forEach { scene ->
+            collection.scenes.filterNot { it.isScreensaverScene() }.forEach { scene ->
                 val active = scene.id == collection.activeSceneId
                 Surface(
                     color = if (active) {
@@ -392,6 +401,40 @@ fun ScenesScreen(
                 "untuk memindahkan lapisan. Geser/putar/crop sumber langsung " +
                 "di panel Pratinjau pada halaman Studio.",
         )
+
+        // Layar jeda punya bagian sendiri, terpisah dari daftar scene.
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = stringResource(R.string.scenes_screensaver),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Spacer(Modifier.height(6.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { showScreensaverPage = true },
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_screensaver),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = stringResource(R.string.screensaver_section_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(text = "›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 
     if (showAddScene) {
@@ -463,25 +506,6 @@ fun ScenesScreen(
                 showAddSource = false
                 urlError = null
                 showUrlDialog = true
-            },
-            onScreensaver = {
-                showAddSource = false
-                val (next, sceneId) = collection.addScreensaverScene(
-                    canvasConfig.width,
-                    canvasConfig.height,
-                ) { text, size, maxWidth ->
-                    com.rout.air.engine.SourceBitmap.measureTextHeight(
-                        text,
-                        size,
-                        maxWidth,
-                        density,
-                    )
-                }
-                onCollectionChange(next)
-                onSelectItem(
-                    next.scenes.firstOrNull { it.id == sceneId }
-                        ?.items?.firstOrNull()?.id,
-                )
             },
             onImage = {
                 showAddSource = false

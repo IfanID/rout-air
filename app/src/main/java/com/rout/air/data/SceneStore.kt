@@ -110,50 +110,41 @@ object SceneManager {
         val s = SceneStore(context)
         store = s
         appContext = context.applicationContext
-        val settings = SettingsStore(context)
-        val config = settings.load()
+        val config = SettingsStore(context).load()
         val width = config.width.coerceAtLeast(2)
         val height = config.height.coerceAtLeast(2)
-        val density = context.resources.displayMetrics.density
 
         var loaded = s.load() ?: SceneCollection.default(width, height)
-        // Scene layar jeda selalu tersedia; dibuat sekali lalu dipakai ulang.
-        val (withJeda, jedaId) = loaded.withScreensaverScene(width, height) {
-                text, size, maxWidth ->
-            com.rout.air.engine.SourceBitmap.measureTextHeight(text, size, maxWidth, density)
+        // Scene layar jeda lama dipindahkan keluar dari koleksi scene.
+        // Layar jeda kini hidup sebagai konfigurasi tersendiri dan hanya
+        // disuntik saat live, jadi tidak boleh tampil sebagai scene.
+        val jedaSceneIds = loaded.scenes.filter { it.isScreensaverScene() }.map { it.id }.toSet()
+        if (jedaSceneIds.isNotEmpty()) {
+            val remaining = loaded.scenes.filterNot { it.id in jedaSceneIds }
+            // Jangan sampai koleksi kosong bila semua scene bertanda jeda.
+            if (remaining.isNotEmpty()) {
+                val active = if (loaded.activeSceneId in jedaSceneIds) {
+                    remaining.first().id
+                } else {
+                    loaded.activeSceneId
+                }
+                val usedSources = remaining.flatMap { scene ->
+                    scene.items.map { it.sourceId }
+                }.toSet()
+                loaded = loaded.copy(
+                    scenes = remaining,
+                    sources = loaded.sources.filter { it.id in usedSources },
+                    activeSceneId = active,
+                )
+                s.save(loaded)
+                DiagLog.line("jeda: scene layar jeda lama dipindahkan dari daftar scene")
+            }
         }
-        if (withJeda != loaded) {
-            loaded = withJeda
-            s.save(loaded)
-        }
-        settings.saveScreensaverSceneId(jedaId)
 
         collection = loaded
         programCollection = loaded
         _state.value = loaded
         _program.value = loaded
-    }
-
-    /**
-     * Menyesuaikan posisi layar jeda dengan kanvas sebenarnya. Dipanggil
-     * setelah orientasi perangkat diketahui.
-     */
-    fun ensureScreensaverLayout(width: Int, height: Int) {
-        val current = collection ?: return
-        val context = appContext ?: return
-        val density = context.resources.displayMetrics.density
-        val next = current.upgradeScreensaverScenes(width, height) { text, size, maxWidth ->
-            com.rout.air.engine.SourceBitmap.measureTextHeight(text, size, maxWidth, density)
-        }
-        if (next == current) return
-        collection = next
-        _state.value = next
-        // Jangan ganggu program yang sedang menampilkan layar jeda.
-        if (programBeforeScreensaver == null) {
-            programCollection = next
-            _program.value = next
-        }
-        store?.save(next)
     }
 
     /**
@@ -258,28 +249,18 @@ object SceneManager {
     fun screensaverActive(): Boolean = programBeforeScreensaver != null
 
     /**
-     * Menampilkan scene layar jeda di program tanpa mengubah koleksi edit.
-     * Live dan rekaman tetap berjalan, hanya gambarnya yang diganti.
+     * Menampilkan komposisi layar jeda di program tanpa mengubah koleksi
+     * scene pengguna. Live dan rekaman tetap berjalan, hanya gambarnya yang
+     * diganti. Koleksi [next] tidak pernah disimpan.
      */
-    fun showScreensaver(sceneId: String): Boolean {
+    fun showScreensaver(next: SceneCollection): Boolean {
+        if (next.scenes.isEmpty()) return false
         val base = programCollection ?: current()
-        programCollection = base
-        // Id dari panel bisa hilang setelah koleksi diedit; pakai id tersimpan
-        // atau scene "Layar Jeda" pertama sebagai cadangan.
-        val target = base.scenes.firstOrNull { it.id == sceneId }
-            ?: appContext?.let { SettingsStore(it).loadScreensaverSceneId() }
-                ?.let { saved -> base.scenes.firstOrNull { it.id == saved } }
-            ?: base.scenes.firstOrNull { it.isScreensaverScene() }
-        if (target == null) {
-            DiagLog.line("jeda: tidak ada scene layar jeda untuk ditampilkan")
-            return false
-        }
         if (programBeforeScreensaver == null) programBeforeScreensaver = base
-        val next = base.copy(activeSceneId = target.id)
         programCollection = next
         _program.value = next
         listeners.forEach { it(next) }
-        DiagLog.line("jeda: tampil \"${target.name}\" (${target.id})")
+        DiagLog.line("jeda: suntik \"${next.activeScene()?.name}\"")
         return true
     }
 

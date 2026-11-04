@@ -45,7 +45,6 @@ internal fun AddSourceDialog(
     onScreen: () -> Unit,
     onImage: () -> Unit,
     onImageUrl: () -> Unit,
-    onScreensaver: () -> Unit,
     onText: () -> Unit,
     onColor: () -> Unit,
     onApplicationAudio: () -> Unit,
@@ -82,13 +81,6 @@ internal fun AddSourceDialog(
                         stringResource(R.string.scenes_image_url_desc),
                         true,
                         onImageUrl,
-                    )
-                    SourceOption(
-                        "★",
-                        stringResource(R.string.scenes_screensaver),
-                        stringResource(R.string.scenes_screensaver_desc),
-                        true,
-                        onScreensaver,
                     )
                     SourceOption("T", "Teks", "Teks yang bisa diubah", true, onText)
                     SourceOption("■", "Warna", "Latar warna solid", true, onColor)
