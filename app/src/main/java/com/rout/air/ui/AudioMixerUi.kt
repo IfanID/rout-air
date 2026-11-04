@@ -160,7 +160,7 @@ internal fun categoryFor(channel: AudioChannel, active: Boolean): ChannelCategor
 }
 
 private fun channelSubtitle(channel: AudioChannel): String = when {
-    channel.appUid != 0 -> channel.appPackage ?: "Application Audio Capture"
+    channel.appUid != 0 -> channel.appPackage ?: "Tangkap audio aplikasi"
     channel.capture == com.rout.air.core.AudioCaptureKind.Microphone ->
         channel.deviceName ?: "Mikrofon default"
     channel.sourceId != null -> "Sumber audio"

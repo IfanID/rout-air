@@ -60,6 +60,7 @@ import com.rout.air.live.nameColor
 import com.rout.air.ui.ChatBubbleStack
 import com.rout.air.ui.LiveSetupCard
 import com.rout.air.ui.OverlayAudioPanel
+import com.rout.air.ui.OverlayInfoPanel
 import com.rout.air.ui.OverlayScenePanel
 import com.rout.air.ui.OverlayScreensaverPanel
 import com.rout.air.ui.theme.RoutAirTheme
@@ -68,7 +69,9 @@ import com.rout.air.R
 import com.rout.air.core.AudioChannelId
 import com.rout.air.core.RecordingState
 import com.rout.air.data.AudioMixer
+import com.rout.air.data.OverlayInfoStore
 import com.rout.air.data.SceneManager
+import com.rout.air.data.buildOverlayInfoText
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -106,6 +109,8 @@ class OverlayLiveService : Service() {
     private lateinit var chatJumpButton: ImageButton
     private lateinit var viewerLabel: TextView
     private lateinit var signalLabel: TextView
+    private lateinit var infoBox: FrameLayout
+    private val infoChip by lazy { InfoChip(this, "live", 8) }
     private lateinit var bubbleCompose: ComposeView
     private lateinit var screensaverButton: ImageButton
     private var setupWindow: ComposeView? = null
@@ -167,6 +172,7 @@ class OverlayLiveService : Service() {
         // Overlay bisa berjalan tanpa Activity, jadi mixer perlu disiapkan.
         runCatching { AudioMixer.attach(this) }
         runCatching { com.rout.air.data.ScreensaverStore.attach(this) }
+        runCatching { OverlayInfoStore.attach(this) }
         startAsForeground()
         overlayOwner.attach()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -179,6 +185,7 @@ class OverlayLiveService : Service() {
         observeMixer()
         observeScreensaver()
         observeLive()
+        observeInfo()
         startTicker()
         watchPreview()
         com.rout.air.live.ChatMonitor.start(this)
@@ -200,6 +207,7 @@ class OverlayLiveService : Service() {
         running.value = false
         hideLiveSetupOverlay()
         detachPreview()
+        infoChip.detach()
         scope.cancel()
         runCatching { windowManager.removeView(root) }
         super.onDestroy()
@@ -352,9 +360,15 @@ class OverlayLiveService : Service() {
                 marginStart = dp(2)
             })
         }
+        // Tombol info di header: membuka panel pilihan data chip.
+        addHeaderButton(
+            headerButton(R.drawable.ic_speed, getString(R.string.overlay_info_title)) {
+                showContent(ContentMode.Info)
+            },
+        )
         // Bubble chat bisa disembunyikan tanpa menutup panel obrolan.
         bubbleToggle = headerButton(
-            R.drawable.ic_chat,
+            R.drawable.ic_bubbles,
             getString(R.string.overlay_bubbles_hide),
         ) {
             bubblesEnabled = !bubblesEnabled
@@ -558,6 +572,25 @@ class OverlayLiveService : Service() {
             )
         }
         panel.addView(sceneBox, contentParams())
+
+        infoBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            addView(
+                ComposeView(this@OverlayLiveService).apply {
+                    setContent {
+                        RoutAirTheme {
+                            OverlayInfoPanel()
+                        }
+                    }
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        panel.addView(infoBox, contentParams())
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1014,6 +1047,8 @@ class OverlayLiveService : Service() {
 
     private fun setMenuOpen(open: Boolean) {
         menuOpen = open
+        // Chip info hanya bisa digeser saat panel terbuka.
+        infoChip.setDraggable(open)
         if (open) {
             computePanelSize()
             logo.visibility = View.GONE
@@ -1372,9 +1407,29 @@ class OverlayLiveService : Service() {
         scope.launch {
             while (true) {
                 updateTimer()
+                updateInfoChip()
                 delay(1000)
             }
         }
+    }
+
+    /** Chip pojok layar mengikuti pilihan di panel info. */
+    private fun observeInfo() {
+        scope.launch {
+            OverlayInfoStore.items.collect { updateInfoChip() }
+        }
+    }
+
+    private fun updateInfoChip() {
+        val text = buildOverlayInfoText(
+            items = OverlayInfoStore.items.value,
+            stats = CaptureEngine.stats.value,
+            live = CaptureEngine.liveStats.value,
+            sceneName = SceneManager.program.value?.activeScene()?.name,
+            width = CaptureEngine.sessionWidth,
+            height = CaptureEngine.sessionHeight,
+        )
+        infoChip.setText(text)
     }
 
     private fun observeState() {
@@ -1399,15 +1454,16 @@ class OverlayLiveService : Service() {
         }
     }
 
-    private enum class ContentMode { Preview, Messages, Vu, Screensaver, Scenes }
+    private enum class ContentMode { Preview, Messages, Vu, Screensaver, Scenes, Info }
 
-    /** Ganti isi panel overlay: pratinjau, pesan, atau VU audio. */
+    /** Ganti isi panel overlay: pratinjau, pesan, VU audio, atau info. */
     private fun showContent(mode: ContentMode) {
         previewBox.visibility = if (mode == ContentMode.Preview) View.VISIBLE else View.GONE
         messageBox.visibility = if (mode == ContentMode.Messages) View.VISIBLE else View.GONE
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
         jedaBox.visibility = if (mode == ContentMode.Screensaver) View.VISIBLE else View.GONE
         sceneBox.visibility = if (mode == ContentMode.Scenes) View.VISIBLE else View.GONE
+        infoBox.visibility = if (mode == ContentMode.Info) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
         // Saat panel obrolan dibuka, tampilkan pesan terbaru di bawah.
         if (mode == ContentMode.Messages) {

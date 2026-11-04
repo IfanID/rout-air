@@ -62,7 +62,7 @@ internal fun AddSourceDialog(
             Column(Modifier.padding(14.dp)) {
                 Text(stringResource(R.string.scenes_tambah_sumber), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Pilih jenis sumber seperti di OBS",
+                    "Pilih jenis sumber yang ingin ditambahkan",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -86,7 +86,7 @@ internal fun AddSourceDialog(
                     SourceOption("■", "Warna", "Latar warna solid", true, onColor)
                     SourceOption(
                         "◉",
-                        "Application Audio Capture",
+                        "Tangkap audio aplikasi",
                         "Suara satu aplikasi; kanal masuk ke tab Audio",
                         true,
                         onApplicationAudio,
@@ -105,10 +105,10 @@ internal fun AddSourceDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
-                    SourceOption("▶", "Media Source", "File video/audio lokal", false) {}
-                    SourceOption("◨", "Kamera", "Video Capture Device", false) {}
-                    SourceOption("▦", "Aplikasi", "Application Audio/Window Capture", false) {}
-                    SourceOption("◍", "Browser", "Browser source", false) {}
+                    SourceOption("▶", "Sumber media", "File video/audio lokal", false) {}
+                    SourceOption("◨", "Kamera", "Perangkat tangkap video", false) {}
+                    SourceOption("▦", "Aplikasi", "Tangkap audio/jendela aplikasi", false) {}
+                    SourceOption("◍", "Browser", "Sumber browser", false) {}
                     SourceOption("▥", "Grup", "Kelompokkan sumber", false) {}
                 }
 
@@ -194,7 +194,7 @@ private fun inputTypeLabel(type: Int): String = when (type) {
     AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB"
     AudioDeviceInfo.TYPE_DOCK -> "Dock"
     AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Line in"
-    else -> "Audio input"
+    else -> "Masukan audio"
 }
 
 /**
@@ -251,7 +251,7 @@ internal fun AudioSourceSetupDialog(
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.padding(16.dp)) {
                 Text(
-                    if (audioInput) "Tambah Audio Input" else "Tambah Audio Output",
+                    if (audioInput) "Tambah input audio" else "Tambah output audio",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(Modifier.height(8.dp))

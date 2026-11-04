@@ -113,14 +113,14 @@ internal fun RecordButton(
     val scheme = MaterialTheme.colorScheme
 
     // Denyut hanya saat merekam supaya jelas bahwa sesi sedang berjalan.
-    val pulse = rememberInfiniteTransition(label = stringResource(R.string.studio_denyut_rekam)).animateFloat(
+    val pulse = rememberInfiniteTransition(label = "denyut-rekam").animateFloat(
         initialValue = 0.45f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 900, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = stringResource(R.string.studio_indikator),
+        label = "indikator",
     )
     val indicatorAlpha = if (isActive && !paused) pulse.value else 1f
 

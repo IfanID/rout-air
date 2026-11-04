@@ -146,6 +146,10 @@ class VideoEncoder(
                         )
                         setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                         setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                        // Minta codec dijadwalkan realtime pada fps target;
+                        // tanpa ini sebagian encoder membatasi laju input.
+                        setInteger(MediaFormat.KEY_OPERATING_RATE, fps)
+                        setInteger(MediaFormat.KEY_PRIORITY, 0)
                         // 0 = auto: biarkan encoder memilih interval keyframe.
                         if (keyframeIntervalSec > 0) {
                             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyframeIntervalSec)

@@ -614,7 +614,7 @@ private fun SourceRow(
     val offset by animateFloatAsState(
         targetValue = target,
         animationSpec = if (dragging) snap() else tween(durationMillis = 180),
-        label = stringResource(R.string.scenes_geser_hapus),
+        label = "geser-hapus",
     )
     // Geser pegangan naik/turun untuk memindahkan urutan lapisan.
     var rowHeightPx by remember(item.id) { mutableFloatStateOf(0f) }
@@ -1238,7 +1238,7 @@ private fun SourceEditor(
         val uniformScale = (item.transform.scaleX + item.transform.scaleY) / 2f
         val uniformDiffers = abs(item.transform.scaleX - item.transform.scaleY) > 0.005f
         LabeledSlider(
-            label = if (uniformDiffers) "Scale seragam (X ≠ Y)" else "Scale seragam",
+            label = if (uniformDiffers) "Skala seragam (X ≠ Y)" else "Skala seragam",
             value = uniformScale,
             range = 0.05f..4f,
             format = { "%.2f×".format(it) },
@@ -1463,9 +1463,9 @@ private fun AudioSourceEditor(
             Column(Modifier.padding(16.dp)) {
                 Text(
                     text = if (source.type == SourceType.AudioInput) {
-                        "Audio Input Capture"
+                        stringResource(R.string.scenes_tipe_audio_input)
                     } else {
-                        "Audio Output Capture"
+                        stringResource(R.string.scenes_tipe_audio_output)
                     },
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -1508,7 +1508,7 @@ private fun AudioSourceEditor(
                             android.media.AudioDeviceInfo.TYPE_LINE_ANALOG,
                             android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Line in"
                             0 -> "Mengikuti perangkat input sistem"
-                            else -> "Audio input"
+                            else -> stringResource(R.string.scenes_tipe_audio_input)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

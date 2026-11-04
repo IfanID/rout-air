@@ -71,6 +71,8 @@ data class LiveStats(
     val uptimeMs: Long = 0L,
     val reconnects: Int = 0,
     val lastError: String? = null,
+    /** FPS encoder yang sedang dikirim ke server. */
+    val fps: Int = 0,
 ) {
     val active: Boolean
         get() = status == LiveStatus.Live ||

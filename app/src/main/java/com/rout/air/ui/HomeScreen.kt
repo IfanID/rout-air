@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +79,9 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     var previewReady by remember { mutableStateOf(false) }
+    // Konfirmasi sebelum sesi diakhiri: melepas izin rekam layar tidak bisa
+    // dibatalkan tanpa dialog izin Android lagi.
+    var confirmEndSession by remember { mutableStateOf(false) }
     val program by SceneManager.program.collectAsState()
     val isActive = state is RecordingState.Recording
     val paused = (state as? RecordingState.Recording)?.isPaused == true
@@ -117,7 +121,7 @@ fun HomeScreen(
             // Mengakhiri sesi sekaligus melepas izin MediaProjection. Setelah
             // ini izin harus diminta ulang saat sesi dibuka lagi.
             if (sessionOnly) {
-                IconButton(onClick = onEndSession) {
+                IconButton(onClick = { confirmEndSession = true }) {
                     Icon(
                         painter = painterResource(R.drawable.ic_end_session),
                         contentDescription = stringResource(R.string.home_akhiri_sesi),
@@ -345,6 +349,27 @@ fun HomeScreen(
                 onClick = onToggleLiveOverlay,
             )
         }
+    }
+
+    if (confirmEndSession) {
+        AlertDialog(
+            onDismissRequest = { confirmEndSession = false },
+            title = { Text(stringResource(R.string.home_akhiri_sesi)) },
+            text = { Text(stringResource(R.string.home_akhiri_sesi_konfirmasi)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmEndSession = false
+                        onEndSession()
+                    },
+                ) { Text(stringResource(R.string.common_ya)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmEndSession = false }) {
+                    Text(stringResource(R.string.common_tidak))
+                }
+            },
+        )
     }
 }
 

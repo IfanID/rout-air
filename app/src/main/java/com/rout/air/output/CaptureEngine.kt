@@ -31,6 +31,9 @@ object CaptureEngine {
     private val _liveStats = MutableStateFlow(LiveStats())
     val liveStats: StateFlow<LiveStats> = _liveStats.asStateFlow()
 
+    // FPS encoder terakhir dari pipeline; dipakai melengkapi statistik live.
+    private var lastEncoderFps = 0
+
     private val _sessionActive = MutableStateFlow(false)
     val sessionActive: StateFlow<Boolean> = _sessionActive.asStateFlow()
 
@@ -160,13 +163,32 @@ object CaptureEngine {
             autoRecord = autoRecord,
             onSessionEnd = {
                 _sessionActive.value = false
+                lastEncoderFps = 0
                 _liveStats.value = LiveStats()
                 synchronized(lock) {
                     if (pipeline === created) pipeline = null
                 }
             },
-            onStats = { stats -> _stats.value = stats },
-            onLiveStats = { live -> _liveStats.value = live },
+            onStats = { stats ->
+                _stats.value = stats
+                if (stats.fps > 0) lastEncoderFps = stats.fps
+                // FPS encoder dipakai panel live; RtmpSink hanya melaporkan
+                // jaringan, jadi angkanya ditempelkan dari pipeline.
+                val live = _liveStats.value
+                if (live.active) {
+                    _liveStats.value = live.copy(fps = lastEncoderFps)
+                }
+            },
+            onLiveStats = { live ->
+                // Snapshot dari RtmpSink tidak memuat FPS; isi dari nilai
+                // encoder terakhir supaya label tidak berkedip ke 0.
+                _liveStats.value = if (live.active) {
+                    live.copy(fps = lastEncoderFps)
+                } else {
+                    lastEncoderFps = 0
+                    live
+                }
+            },
         ) { newState ->
             _state.value = newState
             if (newState is RecordingState.Idle) {

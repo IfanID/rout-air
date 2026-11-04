@@ -211,6 +211,15 @@ class RecordingPipeline(
     private var lastEncodedNs = Long.MIN_VALUE
     private var lastPreviewNs = 0L
 
+    // FPS hasil publikasi statistik terakhir; dipakai baris diagnostik.
+    @Volatile
+    private var lastPublishedFps = 0
+    private var lastSlowFrameLogNs = 0L
+
+    // Titik acuan perhitungan FPS encoder antar publikasi statistik.
+    private var statsBaseNs = 0L
+    private var statsBaseFrames = 0
+
     @Volatile
     private var hasEncodedFrame = false
 
@@ -316,7 +325,8 @@ class RecordingPipeline(
                 val seconds = (now - startTimeNs) / 1_000_000_000L
                 diag(
                     "t=${seconds}s frames=$capturedFrames submitted=$submittedFrames " +
-                        "encoded=$encodedOutputs swapFail=$swapFailures pace=$pacedFrames " +
+                        "encoded=$encodedOutputs fps=$lastPublishedFps " +
+                        "swapFail=$swapFailures pace=$pacedFrames " +
                         "preview=$previewSwaps src=${sourceWidth}x$sourceHeight " +
                         "audio=$audioActive ${telemetryText()}",
                 )
@@ -375,7 +385,9 @@ class RecordingPipeline(
             }
 
             if (watchdogTicks % 5 == 0) updateThermalPolicy()
-            if (recordingActive) publishStats(now)
+            // Live tanpa rekaman juga butuh statistik (FPS/bitrate) untuk
+            // overlay, jadi kedua mode mempublikasikan statistik.
+            if (recordingActive || liveActive) publishStats(now)
 
             // Preview boleh tertahan tanpa mengganggu rekaman; dicatat saja.
             if (previewVisible && previewInFlight.get() &&
@@ -524,6 +536,10 @@ class RecordingPipeline(
 
         diag("rekam: lepas (live lanjut) saved=$saved")
         publishStats(System.nanoTime(), finalBytes)
+        // Encoder masih hidup untuk live, tapi acuan FPS diulang agar tidak
+        // menghitung frame sebelum rekaman berhenti.
+        statsBaseNs = 0L
+        statsBaseFrames = 0
         recordingStopping = false
         recordingBaseElapsedNs = 0L
         recordingStartedAtMs = 0L
@@ -1046,6 +1062,9 @@ class RecordingPipeline(
         hasEncodedFrame = false
         lastEncodedNs = Long.MIN_VALUE
         lastEncodedWallNs = System.nanoTime()
+        // Titik acuan FPS baru dimulai bersama encoder yang baru.
+        statsBaseNs = 0L
+        statsBaseFrames = 0
         encodersRunning = true
     }
 
@@ -1099,6 +1118,8 @@ class RecordingPipeline(
         recordingClock.reset()
         recordingStartedAtMs = 0L
         recordingBaseElapsedNs = 0L
+        statsBaseNs = 0L
+        statsBaseFrames = 0
 
         if (!hadRecording || saved) {
             onState(RecordingState.Previewing)
@@ -1111,6 +1132,20 @@ class RecordingPipeline(
                 ),
             )
         }
+        // Sesi pratinjau masih hidup: pacer wajib jalan lagi, kalau tidak
+        // panel Program (dan Pratinjau) membeku di frame terakhir.
+        restartPacerIfRunning()
+    }
+
+    /**
+     * Menghidupkan kembali pacer setelah encoder berhenti. Pacer adalah
+     * penggerak satu-satunya frame pratinjau; tanpa ini gambar tertahan.
+     */
+    private fun restartPacerIfRunning() {
+        if (!running || teardownStarted) return
+        glHandler.removeCallbacks(pacer)
+        nextPacerNs = 0L
+        glHandler.postDelayed(pacer, frameIntervalMs)
     }
 
     /** Menghitung statistik live dari pipeline; dipanggil tiap detik. */
@@ -1125,6 +1160,20 @@ class RecordingPipeline(
         } else {
             0
         }
+        // FPS = selisih frame encoder sejak publikasi sebelumnya. Publikasi
+        // pertama hanya menjadi titik acuan sehingga nilainya 0.
+        val fps = if (statsBaseNs == 0L || nowNs <= statsBaseNs) {
+            statsBaseNs = nowNs
+            statsBaseFrames = encodedOutputs
+            0
+        } else {
+            val span = (nowNs - statsBaseNs) / 1_000_000_000.0
+            val frames = (encodedOutputs - statsBaseFrames).coerceAtLeast(0)
+            statsBaseNs = nowNs
+            statsBaseFrames = encodedOutputs
+            if (span > 0.0) (frames / span).roundToInt() else 0
+        }
+        lastPublishedFps = fps
         onStats(
             RecordingStats(
                 durationMs = durationMs,
@@ -1133,6 +1182,7 @@ class RecordingPipeline(
                 bytes = bytes,
                 bitrateKbps = kbps,
                 paused = recordingClock.isPaused,
+                fps = fps,
             ),
         )
     }
@@ -1178,9 +1228,13 @@ class RecordingPipeline(
         recordingClock.reset()
         recordingStartedAtMs = 0L
         recordingBaseElapsedNs = 0L
+        statsBaseNs = 0L
+        statsBaseFrames = 0
         onStats(RecordingStats())
         onLiveStats(LiveStats())
         onState(RecordingState.Error(message))
+        // Sesi pratinjau tetap hidup setelah encoder gagal disiapkan.
+        restartPacerIfRunning()
     }
 
     private fun readDisplaySize(): Pair<Int, Int>? {
@@ -1880,7 +1934,9 @@ class RecordingPipeline(
         }
 
         val painter = compositor ?: return
+        val drawStart = System.nanoTime()
         drawLayers(painter, texMatrix, renderLayers, config.width, config.height)
+        val drawMs = (System.nanoTime() - drawStart) / 1_000_000
         if (transitionAlpha > 0f) {
             painter.drawColor(
                 red = 0f,
@@ -1896,13 +1952,25 @@ class RecordingPipeline(
         }
         samplePixelChange(System.nanoTime())
 
+        val frameStart = System.nanoTime()
         core.setPresentationTime(surface, presentationNs)
-        if (!core.swapBuffers(surface)) {
+        val swapped = core.swapBuffers(surface)
+        val swapMs = (System.nanoTime() - frameStart) / 1_000_000
+        if (!swapped) {
             swapFailures++
             consecutiveSwapFailures++
             diag("swapBuffers encoder gagal")
         } else {
             consecutiveSwapFailures = 0
+        }
+        // Catat frame yang lambat agar penyebab stutter terlihat: waktu habis
+        // di swapBuffers berarti encoder tidak sanggup menerima frame.
+        if (swapMs > 35) {
+            val now = System.nanoTime()
+            if (now - lastSlowFrameLogNs > 2_000_000_000L) {
+                lastSlowFrameLogNs = now
+                diag("encoder lambat: draw=${drawMs}ms swap=${swapMs}ms fps=$lastPublishedFps")
+            }
         }
     }
 

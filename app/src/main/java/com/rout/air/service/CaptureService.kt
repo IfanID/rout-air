@@ -213,7 +213,7 @@ class CaptureService : Service() {
         val liveOn = live.status == LiveStatus.Live
         val text = when (state) {
             RecordingState.Preparing -> "Menyiapkan tangkap layar"
-            RecordingState.Previewing -> if (liveOn) "Live streaming" else "Pratinjau aktif, siap merekam"
+            RecordingState.Previewing -> if (liveOn) "Live aktif" else "Pratinjau aktif, siap merekam"
             is RecordingState.Recording -> when {
                 liveOn && state.isPaused -> "Rekaman dijeda • Live"
                 liveOn -> "Merekam + Live"
@@ -224,7 +224,7 @@ class CaptureService : Service() {
             is RecordingState.Error -> state.message
             RecordingState.Idle -> "Tidak ada rekaman"
         }
-        val actionLabel = if (recording != null) "Stop" else "Tutup"
+        val actionLabel = if (recording != null) "Hentikan" else "Tutup"
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RoutAir")

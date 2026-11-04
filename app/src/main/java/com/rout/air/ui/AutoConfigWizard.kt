@@ -163,7 +163,7 @@ fun AutoConfigWizardDialog(
                         selected = target == AutoConfigPlan.Target.Streaming,
                         onClick = { target = AutoConfigPlan.Target.Streaming },
                         enabled = !running,
-                        label = { Text("Streaming") },
+                        label = { Text("Siaran") },
                     )
                     FilterChip(
                         selected = target == AutoConfigPlan.Target.Recording,

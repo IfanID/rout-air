@@ -31,12 +31,16 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.rout.air.ui.OverlayAudioPanel
+import com.rout.air.ui.OverlayInfoPanel
 import com.rout.air.ui.theme.RoutAirTheme
 import com.rout.air.MainActivity
 import com.rout.air.R
 import com.rout.air.core.AudioChannelId
 import com.rout.air.core.RecordingState
 import com.rout.air.data.AudioMixer
+import com.rout.air.data.OverlayInfoStore
+import com.rout.air.data.SceneManager
+import com.rout.air.data.buildOverlayInfoText
 import com.rout.air.output.CaptureEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +76,8 @@ class OverlayRecordingService : Service() {
     private lateinit var pauseAction: ImageButton
     private lateinit var timerView: TextView
     private lateinit var statsView: TextView
+    private lateinit var infoBox: FrameLayout
+    private val infoChip by lazy { InfoChip(this, "record", 44) }
     private lateinit var params: WindowManager.LayoutParams
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -104,12 +110,16 @@ class OverlayRecordingService : Service() {
         startAsForeground()
         overlayOwner.attach()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        runCatching { SceneManager.attach(this) }
+        runCatching { OverlayInfoStore.attach(this) }
         runCatching { buildOverlay() }.onFailure {
             stopSelf()
             return
         }
         observeState()
+        observeInfo()
         watchPreview()
+        startInfoTicker()
         running.value = true
     }
 
@@ -126,6 +136,7 @@ class OverlayRecordingService : Service() {
         com.rout.air.data.DiagLog.line("OverlayService: onDestroy")
         running.value = false
         detachPreview()
+        infoChip.detach()
         scope.cancel()
         runCatching { windowManager.removeView(root) }
         super.onDestroy()
@@ -256,7 +267,12 @@ class OverlayRecordingService : Service() {
                 marginStart = dp(2)
             })
         }
-        // Hanya tombol tutup di header.
+        // Tombol info di header: membuka panel pilihan data chip.
+        addHeaderButton(
+            headerButton(R.drawable.ic_speed, getString(R.string.overlay_info_title)) {
+                showContent(ContentMode.Info)
+            },
+        )
         addHeaderButton(headerButton(R.drawable.ic_overlay_close, getString(R.string.overlay_close)) {
             setMenuOpen(false)
         })
@@ -337,6 +353,22 @@ class OverlayRecordingService : Service() {
             ))
         }
         panel.addView(vuBox, contentParams())
+
+        // Panel info: memilih data yang tampil di chip pojok layar.
+        infoBox = FrameLayout(this).apply {
+            background = boxBackground()
+            visibility = View.GONE
+            addView(
+                ComposeView(this@OverlayRecordingService).apply {
+                    setContent { RoutAirTheme { OverlayInfoPanel(showReconnect = false) } }
+                },
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        panel.addView(infoBox, contentParams())
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -715,6 +747,8 @@ class OverlayRecordingService : Service() {
 
     private fun setMenuOpen(open: Boolean) {
         menuOpen = open
+        // Chip info hanya bisa digeser saat panel terbuka.
+        infoChip.setDraggable(open)
         if (open) {
             computePanelSize()
             logo.visibility = View.GONE
@@ -768,6 +802,34 @@ class OverlayRecordingService : Service() {
                 }
             }
         }
+    }
+
+    /** Chip info tetap berdetak walau panel overlay tertutup. */
+    private fun observeInfo() {
+        scope.launch {
+            OverlayInfoStore.items.collect { updateInfoChip() }
+        }
+    }
+
+    private fun startInfoTicker() {
+        scope.launch {
+            while (true) {
+                updateInfoChip()
+                delay(1000)
+            }
+        }
+    }
+
+    private fun updateInfoChip() {
+        val text = buildOverlayInfoText(
+            items = OverlayInfoStore.items.value,
+            stats = CaptureEngine.stats.value,
+            live = CaptureEngine.liveStats.value,
+            sceneName = SceneManager.program.value?.activeScene()?.name,
+            width = CaptureEngine.sessionWidth,
+            height = CaptureEngine.sessionHeight,
+        )
+        infoChip.setText(text)
     }
 
     private fun updateTimer() {
@@ -845,12 +907,13 @@ class OverlayRecordingService : Service() {
         }
     }
 
-    private enum class ContentMode { Preview, Vu }
+    private enum class ContentMode { Preview, Vu, Info }
 
-    /** Ganti isi panel overlay: pratinjau atau VU audio. */
+    /** Ganti isi panel overlay: pratinjau, VU audio, atau info. */
     private fun showContent(mode: ContentMode) {
         previewBox.visibility = if (mode == ContentMode.Preview) View.VISIBLE else View.GONE
         vuBox.visibility = if (mode == ContentMode.Vu) View.VISIBLE else View.GONE
+        infoBox.visibility = if (mode == ContentMode.Info) View.VISIBLE else View.GONE
         if (mode == ContentMode.Preview) maybeAttach() else detachPreview()
     }
 

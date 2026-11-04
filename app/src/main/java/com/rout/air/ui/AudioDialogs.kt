@@ -168,10 +168,10 @@ private fun AdvancedHeader() {
         HeaderCell("Status", 72.dp)
         HeaderCell("Volume", 124.dp)
         HeaderCell("Mono", 52.dp)
-        HeaderCell("Balance", 164.dp)
-        HeaderCell("Sync", 104.dp)
+        HeaderCell("Panorama", 164.dp)
+        HeaderCell("Sinkron", 104.dp)
         HeaderCell("Monitor", 64.dp)
-        HeaderCell("Tracks", 164.dp)
+        HeaderCell("Track", 164.dp)
     }
 }
 

@@ -102,7 +102,7 @@ fun AudioScreen(
                 }
                 if (sessionLive) {
                     Text(
-                        text = if (runtime.running) "MIXER AKTIF" else "AUDIO OFF",
+                        text = if (runtime.running) "MIXER AKTIF" else "AUDIO MATI",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (runtime.running) {
                             MaterialTheme.colorScheme.primary
@@ -636,7 +636,7 @@ private fun mixerSubtitle(state: RecordingState, mix: AudioMix, ready: Int): Str
         "Merekam • $ready kanal masuk trek audio"
     }
     state is RecordingState.Idle ->
-        "Mixer gaya OBS • ${mix.enabledChannels().size} dari ${mix.channels.size} kanal siap"
+        "Mixer audio • ${mix.enabledChannels().size} dari ${mix.channels.size} kanal siap"
 
-    else -> "Mixer gaya OBS • $ready dari ${mix.channels.size} kanal aktif"
+    else -> "Mixer audio • $ready dari ${mix.channels.size} kanal aktif"
 }

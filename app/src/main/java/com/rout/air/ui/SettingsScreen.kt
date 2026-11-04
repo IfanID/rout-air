@@ -89,17 +89,17 @@ import kotlin.math.roundToInt
 
 private enum class SettingsPage(val title: String) {
     Root("Setelan"),
-    General("General"),
-    Stream("Stream"),
+    General("Umum"),
+    Stream("Siaran"),
     Output("Output"),
     Audio("Audio"),
     Video("Video"),
-    Advanced("Advanced"),
+    Advanced("Lanjutan"),
 }
 
 /**
- * Setelan mengikuti struktur OBS: Video, Output, Audio, Hotkeys, Advanced.
- * Dipisah per halaman karena layar HP tidak cukup untuk satu dialog panjang.
+ * Setelan dipisah per halaman supaya tidak menumpuk dalam satu dialog:
+ * Umum, Siaran, Output, Audio, Video, dan Lanjutan.
  */
 @Composable
 fun SettingsScreen(
@@ -135,22 +135,22 @@ fun SettingsScreen(
             )
             Spacer(Modifier.height(16.dp))
 
-            SettingsEntry("General", "Bahasa, tema, konfirmasi") {
+            SettingsEntry("Umum", "Bahasa, tema, dan konfirmasi") {
                 page = SettingsPage.General
             }
-            SettingsEntry("Stream", "Service, server, stream key, tes koneksi") {
+            SettingsEntry("Siaran", "Layanan, server, kunci stream, tes koneksi") {
                 page = SettingsPage.Stream
             }
-            SettingsEntry("Output", "Streaming/Recording, encoder, bitrate, format") {
+            SettingsEntry("Output", "Siaran/rekaman, encoder, bitrate, format") {
                 page = SettingsPage.Output
             }
-            SettingsEntry("Audio", "Sample rate, kanal, perangkat, meter") {
+            SettingsEntry("Audio", "Laju sampel, kanal, perangkat, dan meter") {
                 page = SettingsPage.Audio
             }
-            SettingsEntry("Video", "Kanvas, output resolution, fps, warna") {
+            SettingsEntry("Video", "Kanvas, resolusi output, fps, dan warna") {
                 page = SettingsPage.Video
             }
-            SettingsEntry("Advanced", "Performa, informasi teknis, diagnostik") {
+            SettingsEntry("Lanjutan", "Performa, informasi teknis, dan diagnostik") {
                 page = SettingsPage.Advanced
             }
         } else {
@@ -213,7 +213,7 @@ private fun SettingsEntry(title: String, subtitle: String, onClick: () -> Unit) 
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(stringResource(R.string.settings_teks), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.settings_chevron), style = MaterialTheme.typography.titleLarge)
         }
     }
 }
@@ -328,8 +328,8 @@ private fun VideoSettings(
                 label = {
                     Text(
                         when (mode) {
-                            ColorRangeMode.Limited -> "Limited (16-235)"
-                            ColorRangeMode.Full -> "Full (0-255)"
+                            ColorRangeMode.Limited -> "Terbatas (16–235)"
+                            ColorRangeMode.Full -> "Penuh (0–255)"
                         },
                     )
                 },
@@ -346,9 +346,9 @@ private fun VideoSettings(
 }
 
 private enum class OutputTab(val label: String) {
-    Streaming("Streaming"),
-    Recording("Recording"),
-    Audio("Audio Output"),
+    Streaming("Siaran"),
+    Recording("Rekaman"),
+    Audio("Audio"),
 }
 
 /** Bitrate yang diatur blok setelan video pada tab yang sedang dibuka. */
@@ -414,7 +414,7 @@ private fun StreamingTab(
 ) {
     Spacer(Modifier.height(12.dp))
     OutputSummary(
-        "Streaming • ${config.videoCodec.label} • ${bitrateText(config.videoBitrate)} • " +
+        "Siaran • ${config.videoCodec.label} • ${bitrateText(config.videoBitrate)} • " +
             "${config.bitrateMode.name} • track ${live.audioTrack}",
     )
 
@@ -726,13 +726,9 @@ private fun VideoEncodeSection(
     Hint(stringResource(R.string.settings_profile_hint))
 
     Spacer(Modifier.height(12.dp))
-    SectionTitle(stringResource(R.string.settings_rescale_output))
+    SectionTitle(stringResource(R.string.settings_output_resolution))
     ResolutionPicker(config = config, onConfigChange = onConfigChange)
-    Hint(stringResource(R.string.settings_rescale_output_hint))
-
-    Spacer(Modifier.height(12.dp))
-    SectionTitle(stringResource(R.string.settings_media_codec_limit))
-    Hint(stringResource(R.string.settings_media_codec_limit_desc))
+    Hint(stringResource(R.string.settings_output_resolution_hint))
 }
 
 /** Penanda tab sekaligus nilai yang paling sering dicek. */
@@ -1413,7 +1409,7 @@ private fun AudioSettings(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = when (channel.id) {
-                        AudioChannelId.Internal -> "Desktop Audio"
+                        AudioChannelId.Internal -> "Audio desktop"
                         AudioChannelId.Microphone -> "Mic/Auxiliary Audio"
                         else -> channel.name
                     },
@@ -1476,7 +1472,7 @@ private fun AudioSettings(
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_meters))
     Text(
-        "Decay Rate",
+        "Kecepatan turun meter",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -1491,7 +1487,7 @@ private fun AudioSettings(
     }
     Spacer(Modifier.height(6.dp))
     Text(
-        "Peak Meter Type",
+        "Tipe meter peak",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -1617,8 +1613,8 @@ private fun AdvancedSettings(
             "${it.name} • ${if (it.hardware) "hardware" else "software"}"
         } ?: "tidak tersedia",
     )
-    InfoRow("Audio", "AAC-LC + mixer OBS")
-    InfoRow("Rate control", canvasConfig.bitrateMode.name)
+    InfoRow("Audio", "AAC-LC + mixer aplikasi")
+    InfoRow("Kontrol bitrate", canvasConfig.bitrateMode.name)
 
     Text(
         "Encoder MediaCodec terdeteksi:",
@@ -1640,9 +1636,9 @@ private fun AdvancedSettings(
             )
         }
     }
-    InfoRow("Profile", canvasConfig.videoProfile.name)
-    InfoRow("Color", "${canvasConfig.colorSpace.name} • ${canvasConfig.colorRange.name}")
-    InfoRow("Network", "RTMP/RTMPS • reconnect maks 8×")
+    InfoRow("Profil", canvasConfig.videoProfile.name)
+    InfoRow("Warna", "${canvasConfig.colorSpace.name} • ${canvasConfig.colorRange.name}")
+    InfoRow("Jaringan", "RTMP/RTMPS • sambung ulang maks 8×")
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_performance))
@@ -1929,7 +1925,7 @@ private fun GameLoadBenchmarkSection() {
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Frame rate", style = MaterialTheme.typography.bodyMedium)
+    Text("FPS", style = MaterialTheme.typography.bodyMedium)
     Row(
         modifier = Modifier
             .fillMaxWidth()

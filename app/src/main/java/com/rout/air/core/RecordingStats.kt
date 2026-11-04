@@ -11,4 +11,6 @@ data class RecordingStats(
     val bytes: Long = 0L,
     val bitrateKbps: Int = 0,
     val paused: Boolean = false,
+    /** Frame encoder per detik pada interval statistik terakhir. */
+    val fps: Int = 0,
 )
