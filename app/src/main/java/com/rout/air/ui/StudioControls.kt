@@ -137,6 +137,10 @@ internal fun RecordButton(
         else -> scheme.onPrimary
     }
 
+    // Label aksesibilitas di luar lambda semantics (bukan composable).
+    val actionLabel = stringResource(
+        if (isActive) R.string.studio_stop_recording else R.string.studio_start_recording,
+    )
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -145,9 +149,7 @@ internal fun RecordButton(
         contentColor = content,
         modifier = modifier
             .height(52.dp)
-            .semantics {
-                contentDescription = if (isActive) "Berhenti merekam" else "Mulai merekam"
-            },
+            .semantics { contentDescription = actionLabel },
     ) {
         Row(
             modifier = Modifier
@@ -175,9 +177,9 @@ internal fun RecordButton(
             }
             Text(
                 text = when {
-                    preparing -> "Menyiapkan…"
-                    isActive -> "Berhenti"
-                    else -> "Rekam"
+                    preparing -> stringResource(R.string.studio_preparing)
+                    isActive -> stringResource(R.string.floating_stop)
+                    else -> stringResource(R.string.floating_record)
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,

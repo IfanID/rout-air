@@ -18,6 +18,10 @@ class RoutAirApplication : Application() {
         }
         // Rekam jejak crash ke log/crash.txt sebelum proses dimatikan.
         com.rout.air.data.CrashLog.install(this)
+        // Tema (aksen & AMOLED) dibaca sekali di awal proses.
+        com.rout.air.ui.theme.Appearance.attach(this)
+        // Teks untuk kelas non-UI (encoder, jaringan) memakai context aplikasi.
+        com.rout.air.data.Msg.attach(this)
         // Satu berkas log per sesi aplikasi; ditimpa setiap aplikasi dibuka.
         com.rout.air.data.DiagLog.startSession(this)
         // File pending dari sesi yang mati tanpa menutup MP4 tidak terlihat di

@@ -32,7 +32,7 @@ class EglCore(shareWith: EglCore? = null) {
             config = shareWith.configHandle()
         } else {
             display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            check(display != EGL14.EGL_NO_DISPLAY) { "Display EGL tidak tersedia" }
+            check(display != EGL14.EGL_NO_DISPLAY) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_egl_display) }
 
             val version = IntArray(2)
             check(EGL14.eglInitialize(display, version, 0, version, 1)) {
@@ -54,7 +54,7 @@ class EglCore(shareWith: EglCore? = null) {
             val configs = arrayOfNulls<EGLConfig>(1)
             val count = IntArray(1)
             val chosen = EGL14.eglChooseConfig(display, attributes, 0, configs, 0, 1, count, 0)
-            check(chosen && count[0] > 0) { "Konfigurasi EGL tidak cocok" }
+            check(chosen && count[0] > 0) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_egl_config) }
             config = configs[0]
         }
 

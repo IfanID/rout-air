@@ -4,14 +4,23 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.hardware.display.DisplayManager
+import android.media.MediaPlayer
 import android.media.projection.MediaProjection
 import android.os.PowerManager
 import android.media.projection.MediaProjectionManager
 import android.net.TrafficStats
 import android.opengl.EGLSurface
 import android.opengl.GLES20
+import android.opengl.GLUtils
 import android.os.Build
 import android.os.Debug
 import android.os.Environment
@@ -20,10 +29,15 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.StatFs
 import android.util.DisplayMetrics
+import android.util.Size
 import android.util.Log
 import android.view.Display
 import android.view.Surface
+import android.view.View
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.core.content.ContextCompat
+import com.rout.air.R
 import com.rout.air.capture.ScreenCapture
 import com.rout.air.core.Align
 import com.rout.air.core.AudioRuntime
@@ -50,6 +64,7 @@ import com.rout.air.encode.EncoderProbe
 import com.rout.air.encode.Mp4Writer
 import com.rout.air.encode.OutputTarget
 import com.rout.air.encode.TeeSink
+import java.io.File
 import com.rout.air.encode.VideoEncoder
 import com.rout.air.engine.EglCore
 import com.rout.air.engine.GlCompositor
@@ -91,6 +106,8 @@ class RecordingPipeline(
     private val onSessionEnd: () -> Unit = {},
     private val onStats: (RecordingStats) -> Unit = {},
     private val onLiveStats: (LiveStats) -> Unit = {},
+    /** Hasil tombol Simpan replay: sukses dan pesan untuk pengguna. */
+    private val onReplaySaved: (Boolean, String) -> Unit = { _, _ -> },
     private val onState: (RecordingState) -> Unit,
 ) {
     private val glThread = HandlerThread("rout-gl").apply { start() }
@@ -155,6 +172,7 @@ class RecordingPipeline(
     private var videoEncoder: VideoEncoder? = null
     private var audioEncoder: AudioCaptureEngine? = null
     private var muxer: Mp4Writer? = null
+    private var replay: ReplayBuffer? = null
     /** Semua tujuan keluaran aktif: MP4 dan/atau RTMP. */
     private val sinks = TeeSink()
     private var target: OutputTarget? = null
@@ -174,6 +192,13 @@ class RecordingPipeline(
     /** Cache tekstur 2D per sumber (gambar/teks). */
     private val textureCache = mutableMapOf<String, CachedTexture>()
     private val retiredTextures = mutableListOf<Int>()
+
+    /** Kamera aktif per sumber; hanya disentuh thread GL. */
+    private val cameraSources = mutableMapOf<String, CameraTexture>()
+    private val mediaSources = mutableMapOf<String, CameraTexture>()
+    private val browserSources = mutableMapOf<String, BrowserTexture>()
+    private val cameraHandler by lazy { Handler(glThread.looper) }
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     // Transisi: fade ke hitam, ganti layer di tengah, lalu fade masuk.
     private var pendingProgramCollection: SceneCollection? = null
@@ -376,7 +401,7 @@ class RecordingPipeline(
 
                 WatchdogAction.StorageFailed -> {
                     diag("watchdog: penulisan file gagal terus")
-                    stopReason = "penyimpanan penuh atau gagal menulis"
+                    stopReason = com.rout.air.data.Msg.get(com.rout.air.R.string.error_storage_full)
                     if (recordingActive) stopRecording() else stopLive()
                     return
                 }
@@ -498,7 +523,7 @@ class RecordingPipeline(
                 Log.e(TAG, "Gagal memulai rekaman", error)
                 diag("rekam gagal: ${error.message}")
                 releaseWakeLock()
-                abortRecording(error.message ?: "Gagal memulai rekaman")
+                abortRecording(error.message ?: context.getString(R.string.error_start_recording))
             }
         }
     }
@@ -529,9 +554,9 @@ class RecordingPipeline(
         val writer = muxer
         val finalBytes = writer?.bytesWritten ?: 0L
         writer?.let { sinks.remove(it, finish = false) }
+        releaseReplay()
         val saved = runCatching { writer?.finish() ?: false }.getOrDefault(false)
         muxer = null
-        runCatching { target?.finish(context, saved) }
         target = null
 
         diag("rekam: lepas (live lanjut) saved=$saved")
@@ -707,9 +732,9 @@ class RecordingPipeline(
         )
 
         val manager = context.getSystemService(MediaProjectionManager::class.java)
-            ?: error("MediaProjectionManager tidak tersedia")
+            ?: error(context.getString(R.string.error_projection_missing))
         val mediaProjection = manager.getMediaProjection(resultCode, projectionData)
-            ?: error("Izin tangkap layar tidak valid")
+            ?: error(context.getString(R.string.error_projection_invalid))
         mediaProjection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
         projection = mediaProjection
 
@@ -755,7 +780,7 @@ class RecordingPipeline(
             sourceHeight = height
         }
         if (sourceWidth <= 0 || sourceHeight <= 0) {
-            error("Ukuran layar tidak terbaca")
+            error(context.getString(R.string.error_screen_size))
         }
         frameTexture.setDefaultBufferSize(sourceWidth, sourceHeight)
 
@@ -841,8 +866,8 @@ class RecordingPipeline(
 
     /** Menyiapkan file MP4 memakai sesi dan encoder yang (mungkin) sudah jalan. */
     private fun beginRecording() {
-        check(egl != null) { "Sesi tangkap layar belum siap" }
-        check(projection != null) { "Izin tangkap layar tidak valid" }
+        check(egl != null) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_capture_not_ready) }
+        check(projection != null) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_projection_invalid) }
 
         // MediaMuxer baru bisa menulis AV1 mulai Android 14.
         val plannedCodec = if (encodersRunning) {
@@ -872,7 +897,31 @@ class RecordingPipeline(
         target = output
         outputUri = output.uri.toString()
 
-        val writer = Mp4Writer(output)
+        // Split recording dan replay memakai rotasi segmen yang sama; nama
+        // part pertama dipakai sebagai dasar supaya cap waktunya seragam.
+        val splitActive = config.splitMinutes > 0 || config.splitSizeMb > 0
+        val baseName = output.displayName
+        val segmentSpec = if (splitActive) {
+            Mp4Writer.SegmentSpec(
+                maxDurationUs = config.splitMinutes * 60_000_000L,
+                maxBytes = config.splitSizeMb.toLong() * 1024L * 1024L,
+                next = { part ->
+                    runCatching {
+                        OutputTarget.create(
+                            context = context,
+                            location = config.saveLocation,
+                            nameTemplate = config.fileNameTemplate,
+                            noSpaceFileName = config.noSpaceFileName,
+                            part = part,
+                            baseName = baseName,
+                        )
+                    }.getOrNull()
+                },
+            )
+        } else {
+            null
+        }
+        val writer = Mp4Writer(output, segmentSpec)
         muxer = writer
 
         val mixSnapshot = AudioMixer.snapshot()
@@ -891,6 +940,21 @@ class RecordingPipeline(
 
         if (!encodersRunning) startEncoders(wantsAudio, mixSnapshot)
         sinks.add(writer)
+
+        // Replay buffer menulis segmen 5 detik sendiri; dimatikan otomatis
+        // saat batas penyimpanan habis supaya rekaman utama tidak terganggu.
+        if (config.replayBufferEnabled) {
+            replay = runCatching {
+                ReplayBuffer(
+                    context = context,
+                    directory = File(context.cacheDir, "replay"),
+                    targetDurationUs = config.replaySeconds * 1_000_000L,
+                ).also {
+                    it.expectTracks(if (wantsAudio) trackCount else 0)
+                    sinks.add(it.sink())
+                }
+            }.onFailure { diag("replay: gagal disiapkan (${it.message})") }.getOrNull()
+        }
 
         recordingStopping = false
         recordingActive = true
@@ -1089,9 +1153,9 @@ class RecordingPipeline(
 
         val finalBytes = muxer?.bytesWritten ?: 0L
         muxer?.let { sinks.remove(it, finish = false) }
+        releaseReplay()
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
-        runCatching { target?.finish(context, saved) }
         target = null
 
         liveSink?.let { sinks.remove(it, finish = true) }
@@ -1128,13 +1192,50 @@ class RecordingPipeline(
             val detail = reason?.let { " • $it" }.orEmpty()
             onState(
                 RecordingState.Error(
-                    "Rekaman gagal disimpan (frame $capturedFrames, video $encodedOutputs)$detail",
+                    context.getString(
+                        R.string.error_record_not_saved,
+                        capturedFrames,
+                        encodedOutputs,
+                        detail,
+                    ),
                 ),
             )
         }
         // Sesi pratinjau masih hidup: pacer wajib jalan lagi, kalau tidak
         // panel Program (dan Pratinjau) membeku di frame terakhir.
         restartPacerIfRunning()
+    }
+
+    /**
+     * Menyimpan segmen replay terakhir. Penggabungan dilakukan di thread
+     * sendiri supaya frame yang sedang direkam tidak tertahan.
+     */
+    fun saveReplay() {
+        val buffer = replay
+        if (buffer == null) {
+            onReplaySaved(false, com.rout.air.data.Msg.get(com.rout.air.R.string.replay_buffer_inactive))
+            return
+        }
+        val location = config.saveLocation
+        val template = config.fileNameTemplate
+        val noSpace = config.noSpaceFileName
+        Thread({
+            val uri = runCatching { buffer.save(location, template, noSpace) }.getOrNull()
+            if (uri != null) {
+                diag("replay: disimpan ke $uri")
+                onReplaySaved(true, uri.toString())
+            } else {
+                diag("replay: tidak ada segmen untuk disimpan")
+                onReplaySaved(false, com.rout.air.data.Msg.get(com.rout.air.R.string.replay_no_segments))
+            }
+        }, "rout-replay-save").start()
+    }
+
+    private fun releaseReplay() {
+        val buffer = replay ?: return
+        replay = null
+        sinks.remove(buffer.sink(), finish = false)
+        runCatching { buffer.release() }
     }
 
     /**
@@ -1217,9 +1318,10 @@ class RecordingPipeline(
         encoderEglSurface?.let { runCatching { core?.releaseSurface(it) } }
         encoderEglSurface = null
         muxer?.let { sinks.remove(it, finish = false) }
-        runCatching { muxer?.finish() }
+        releaseReplay()
+        runCatching { muxer?.abort() }
         muxer = null
-        runCatching { target?.finish(context, false) }
+        runCatching { target?.finish(false) }
         target = null
         sinks.finishAll()
         liveSink = null
@@ -1331,10 +1433,22 @@ class RecordingPipeline(
 
         val scene = collection.activeScene() ?: return emptyList()
         val layers = mutableListOf<RenderLayer>()
+        val visitedScenes = mutableSetOf(scene.id)
 
-        for (item in scene.items.sortedBy { it.z }) {
+        fun appendItems(items: List<com.rout.air.core.SceneItem>, parent: Transform?, depth: Int) {
+        for (item in items.sortedBy { it.z }) {
             if (!item.visible) continue
             val source = collection.source(item.sourceId) ?: continue
+            // Transform grup induk diterapkan sebagai skala+geser dari kiri-atas.
+            val transform = parent?.let { p ->
+                item.transform.copy(
+                    x = p.x + item.transform.x * p.scaleX,
+                    y = p.y + item.transform.y * p.scaleY,
+                    scaleX = item.transform.scaleX * p.scaleX,
+                    scaleY = item.transform.scaleY * p.scaleY,
+                    rotation = item.transform.rotation + p.rotation,
+                )
+            } ?: item.transform
             diag(
                 "layer: ${source.type} \"${source.name}\" z=${item.z} " +
                     "filter=${source.filters.size} opacity=${item.opacity}",
@@ -1346,7 +1460,7 @@ class RecordingPipeline(
                     textureId = textureId,
                     naturalWidth = 0,
                     naturalHeight = 0,
-                    transform = item.transform,
+                    transform = transform,
                     crop = item.crop,
                     colorArgb = 0,
                     blend = item.blend,
@@ -1356,14 +1470,14 @@ class RecordingPipeline(
                     filters = com.rout.air.engine.FilterState.from(source.filters),
                 )
 
-                SourceType.Image, SourceType.Text -> {
+                SourceType.Image, SourceType.Text, SourceType.SlideShow -> {
                     val cached = ensureTexture(source) ?: continue
                     layers += RenderLayer(
                         type = source.type,
                         textureId = cached.textureId,
                         naturalWidth = cached.width,
                         naturalHeight = cached.height,
-                        transform = item.transform,
+                        transform = transform,
                         crop = item.crop,
                         colorArgb = 0,
                         blend = item.blend,
@@ -1373,24 +1487,482 @@ class RecordingPipeline(
                     )
                 }
 
+                SourceType.Camera -> {
+                    val camera = ensureCamera(source) ?: continue
+                    layers += RenderLayer(
+                        type = SourceType.Camera,
+                        textureId = camera.textureId,
+                        naturalWidth = camera.width,
+                        naturalHeight = camera.height,
+                        transform = transform,
+                        crop = item.crop,
+                        colorArgb = 0,
+                        blend = item.blend,
+                        opacity = item.opacity,
+                        sourceId = source.id,
+                        filters = com.rout.air.engine.FilterState.from(source.filters),
+                        camera = camera,
+                    )
+                }
+
+                SourceType.Media -> {
+                    val media = ensureMedia(source) ?: continue
+                    layers += RenderLayer(
+                        type = SourceType.Media,
+                        textureId = media.textureId,
+                        naturalWidth = media.width,
+                        naturalHeight = media.height,
+                        transform = transform,
+                        crop = item.crop,
+                        colorArgb = 0,
+                        blend = item.blend,
+                        opacity = item.opacity,
+                        sourceId = source.id,
+                        filters = com.rout.air.engine.FilterState.from(source.filters),
+                        camera = media,
+                    )
+                }
+
+                SourceType.Browser -> {
+                    val browser = ensureBrowser(source) ?: continue
+                    layers += RenderLayer(
+                        type = SourceType.Browser,
+                        textureId = browser.textureId,
+                        naturalWidth = browser.width,
+                        naturalHeight = browser.height,
+                        transform = transform,
+                        crop = item.crop,
+                        colorArgb = 0,
+                        blend = item.blend,
+                        opacity = item.opacity,
+                        sourceId = source.id,
+                        browser = browser,
+                    )
+                }
+
                 SourceType.Color -> layers += RenderLayer(
                     type = SourceType.Color,
                     textureId = 0,
                     naturalWidth = source.settings.width.coerceAtLeast(1),
                     naturalHeight = source.settings.height.coerceAtLeast(1),
-                    transform = item.transform,
+                    transform = transform,
                     crop = item.crop,
                     colorArgb = source.settings.color,
                     blend = item.blend,
                     opacity = item.opacity,
                 )
 
+                SourceType.Group -> {
+                    val nestedId = source.settings.groupSceneId
+                    if (depth < 4 && nestedId != null && visitedScenes.add(nestedId)) {
+                        val nested = collection.scenes.firstOrNull { it.id == nestedId }
+                        if (nested != null) appendItems(nested.items, transform, depth + 1)
+                        visitedScenes.remove(nestedId)
+                    }
+                }
+
                 SourceType.AudioInput, SourceType.AudioOutput -> Unit
             }
         }
+        }
+        appendItems(scene.items, null, 0)
 
         diag("scene $label: ${scene.name} layer=${layers.size}")
         return layers
+    }
+
+    /** Halaman web yang digambar berkala menjadi tekstur 2D. */
+    private fun ensureBrowser(source: SceneSource): BrowserTexture? {
+        val url = source.settings.browserUrl ?: return null
+        val existing = browserSources[source.id]
+        if (existing != null && existing.url == url) return existing
+        if (existing != null) releaseBrowser(source.id)
+
+        val width = source.settings.width.takeIf { it > 0 } ?: config.width
+        val height = source.settings.height.takeIf { it > 0 } ?: config.height
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D,
+            GLES20.GL_TEXTURE_MIN_FILTER,
+            GLES20.GL_LINEAR,
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D,
+            GLES20.GL_TEXTURE_MAG_FILTER,
+            GLES20.GL_LINEAR,
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D,
+            GLES20.GL_TEXTURE_WRAP_S,
+            GLES20.GL_CLAMP_TO_EDGE,
+        )
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D,
+            GLES20.GL_TEXTURE_WRAP_T,
+            GLES20.GL_CLAMP_TO_EDGE,
+        )
+
+        val entry = BrowserTexture(ids[0], width, height, url)
+        browserSources[source.id] = entry
+        mainHandler.post { createBrowserView(entry) }
+        diag("browser: $url ${width}x$height")
+        return entry
+    }
+
+    private fun createBrowserView(entry: BrowserTexture) {
+        if (entry.released) return
+        runCatching {
+            val web = WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                setBackgroundColor(android.graphics.Color.BLACK)
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        renderBrowserView(entry, view)
+                    }
+                }
+                layoutParams = android.view.ViewGroup.LayoutParams(entry.width, entry.height)
+                measure(
+                    View.MeasureSpec.makeMeasureSpec(entry.width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(entry.height, View.MeasureSpec.EXACTLY),
+                )
+                layout(0, 0, entry.width, entry.height)
+                loadUrl(entry.url)
+            }
+            entry.webView = web
+        }.onFailure { diag("browser: gagal membuat WebView (${it.message})") }
+    }
+
+    /** Dipanggil di thread utama; hasilnya diunggah saat frame berikutnya. */
+    private fun renderBrowserView(entry: BrowserTexture, web: WebView? = entry.webView) {
+        val view = web ?: return
+        if (entry.released) return
+        runCatching {
+            if (view.width <= 0 || view.height <= 0) return@runCatching
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            entry.bitmap = bitmap
+            entry.dirty = true
+        }
+    }
+
+    private fun drawBrowser(
+        painter: GlCompositor,
+        browser: BrowserTexture,
+        layer: RenderLayer,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+    ) {
+        val now = System.nanoTime()
+        if (now - browser.lastRefreshNs > 1_000_000_000L) {
+            browser.lastRefreshNs = now
+            val view = browser.webView
+            if (view != null) mainHandler.post { renderBrowserView(browser, view) }
+        }
+        val bitmap = browser.bitmap
+        if (bitmap != null && browser.dirty) {
+            runCatching {
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, browser.textureId)
+                GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+            }
+            browser.dirty = false
+        }
+        val crop = layer.crop
+        painter.drawTexture2D(
+            textureId = browser.textureId,
+            left = left,
+            bottom = bottom,
+            width = width,
+            height = height,
+            rotation = layer.transform.rotation,
+            cropLeft = crop.left,
+            cropTop = crop.top,
+            cropRight = crop.right,
+            cropBottom = crop.bottom,
+            flipH = layer.transform.flipH,
+            flipV = layer.transform.flipV,
+            blend = layer.blend,
+            opacity = layer.opacity,
+            filters = layer.filters,
+        )
+    }
+
+    private fun releaseBrowser(sourceId: String) {
+        val entry = browserSources.remove(sourceId) ?: return
+        entry.released = true
+        entry.webView?.let { web -> mainHandler.post { runCatching { web.destroy() } } }
+        entry.webView = null
+        entry.bitmap = null
+        runCatching { GLES20.glDeleteTextures(1, intArrayOf(entry.textureId), 0) }
+    }
+
+    private class BrowserTexture(
+        val textureId: Int,
+        val width: Int,
+        val height: Int,
+        val url: String,
+    ) {
+        @Volatile
+        var bitmap: Bitmap? = null
+        @Volatile
+        var dirty = false
+        @Volatile
+        var released = false
+        @Volatile
+        var lastRefreshNs = 0L
+        var webView: WebView? = null
+    }
+
+    /** Kamera untuk sumber ini; dibuat sekali lalu dipakai ulang. */
+    private fun ensureCamera(source: SceneSource): CameraTexture? {
+        val existing = cameraSources[source.id]
+        if (existing != null && existing.facing == source.settings.cameraFacing) return existing
+        if (existing != null) releaseCamera(source.id)
+
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            diag("kamera: izin belum diberikan")
+            return null
+        }
+        val manager = context.getSystemService(CameraManager::class.java) ?: return null
+        val id = cameraIdFor(manager, source.settings.cameraFacing) ?: return null
+        val characteristics = runCatching { manager.getCameraCharacteristics(id) }.getOrNull()
+            ?: return null
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?: return null
+        val sizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
+        if (sizes.isEmpty()) return null
+        val chosen = chooseCameraSize(sizes, config.width, config.height)
+
+        val texture = GlUtil.createExternalTexture()
+        val surfaceTexture = SurfaceTexture(texture).apply {
+            setDefaultBufferSize(chosen.width, chosen.height)
+        }
+        val surface = Surface(surfaceTexture)
+        val entry = CameraTexture(
+            textureId = texture,
+            surfaceTexture = surfaceTexture,
+            surface = surface,
+            width = chosen.width,
+            height = chosen.height,
+            facing = source.settings.cameraFacing,
+        )
+        surfaceTexture.setOnFrameAvailableListener({ entry.frameAvailable = true }, cameraHandler)
+        cameraSources[source.id] = entry
+
+        runCatching {
+            manager.openCamera(id, object : CameraDevice.StateCallback() {
+                override fun onOpened(device: CameraDevice) {
+                    entry.device = device
+                    val request = runCatching {
+                        device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                            addTarget(surface)
+                            set(
+                                CaptureRequest.CONTROL_AF_MODE,
+                                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE,
+                            )
+                        }
+                    }.getOrNull()
+                    device.createCaptureSession(
+                        listOf(surface),
+                        object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(session: CameraCaptureSession) {
+                                entry.session = session
+                                if (request != null) {
+                                    runCatching {
+                                        session.setRepeatingRequest(
+                                            request.build(),
+                                            null,
+                                            cameraHandler,
+                                        )
+                                    }
+                                }
+                            }
+
+                            override fun onConfigureFailed(session: CameraCaptureSession) {
+                                diag("kamera: sesi gagal dikonfigurasi")
+                            }
+                        },
+                        cameraHandler,
+                    )
+                }
+
+                override fun onDisconnected(device: CameraDevice) {
+                    entry.device = null
+                    device.close()
+                }
+
+                override fun onError(device: CameraDevice, error: Int) {
+                    diag("kamera: error $error")
+                    entry.device = null
+                    device.close()
+                }
+            }, cameraHandler)
+        }.onFailure { diag("kamera: gagal dibuka (${it.message})") }
+
+        diag("kamera: ${chosen.width}x${chosen.height} id=$id")
+        return entry
+    }
+
+    private fun cameraIdFor(manager: CameraManager, facing: Int): String? {
+        val wanted = if (facing == 1) {
+            CameraCharacteristics.LENS_FACING_FRONT
+        } else {
+            CameraCharacteristics.LENS_FACING_BACK
+        }
+        return manager.cameraIdList.firstOrNull { id ->
+            runCatching {
+                manager.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.LENS_FACING) == wanted
+            }.getOrDefault(false)
+        } ?: manager.cameraIdList.firstOrNull()
+    }
+
+    /** Ukuran keluaran kamera terdekat ke kanvas, dibatasi 1920 px. */
+    private fun chooseCameraSize(sizes: Array<out Size>, width: Int, height: Int): Size {
+        val targetAspect = width.toFloat() / height.toFloat()
+        val capped = sizes.filter { it.width <= 1920 && it.height <= 1080 }
+        val pool = capped.ifEmpty { sizes.toList() }
+        return pool.minByOrNull { size ->
+            kotlin.math.abs(size.width.toFloat() / size.height - targetAspect)
+        } ?: sizes.first()
+    }
+
+    private fun drawCamera(
+        painter: GlCompositor,
+        camera: CameraTexture,
+        layer: RenderLayer,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+    ) {
+        synchronized(camera.lock) {
+            if (camera.frameAvailable) {
+                runCatching { camera.surfaceTexture.updateTexImage() }
+                    .onFailure { Log.w(TAG, "kamera: updateTexImage gagal: ${it.message}") }
+                runCatching { camera.surfaceTexture.getTransformMatrix(camera.texMatrix) }
+                camera.frameAvailable = false
+            }
+            val crop = layer.crop
+            painter.drawExternal(
+                textureId = camera.textureId,
+                texMatrix = camera.texMatrix,
+                left = left,
+                bottom = bottom,
+                width = width,
+                height = height,
+                rotation = layer.transform.rotation,
+                cropLeft = crop.left,
+                cropTop = crop.top,
+                cropRight = crop.right,
+                cropBottom = crop.bottom,
+                flipH = layer.transform.flipH,
+                flipV = layer.transform.flipV,
+                blend = layer.blend,
+                opacity = layer.opacity,
+                filters = layer.filters,
+            )
+        }
+    }
+
+    private fun releaseCamera(sourceId: String) {
+        val entry = cameraSources.remove(sourceId) ?: return
+        runCatching { entry.session?.close() }
+        entry.session = null
+        runCatching { entry.device?.close() }
+        entry.device = null
+        runCatching { entry.surface.release() }
+        runCatching { entry.surfaceTexture.release() }
+        runCatching { GLES20.glDeleteTextures(1, intArrayOf(entry.textureId), 0) }
+        diag("kamera: dilepas $sourceId")
+    }
+
+    private fun releaseAllCameras() {
+        cameraSources.keys.toList().forEach { releaseCamera(it) }
+    }
+
+    /**
+     * Sumber kamera aktif. Objek ini hidup selama sumbernya dipakai dan
+     * menyimpan texture OES, SurfaceTexture, serta sesi Camera2.
+     */
+    private class CameraTexture(
+        val textureId: Int,
+        val surfaceTexture: SurfaceTexture,
+        val surface: Surface,
+        val width: Int,
+        val height: Int,
+        val facing: Int,
+        val mediaPath: String? = null,
+    ) {
+        val lock = Any()
+        val texMatrix = FloatArray(16)
+        @Volatile
+        var frameAvailable = false
+        var device: CameraDevice? = null
+        var session: CameraCaptureSession? = null
+        var player: MediaPlayer? = null
+    }
+
+    /** Video lokal sebagai sumber; diputar berulang tanpa audio. */
+    private fun ensureMedia(source: SceneSource): CameraTexture? {
+        val path = source.settings.mediaPath ?: return null
+        val existing = mediaSources[source.id]
+        if (existing != null && existing.mediaPath == path) return existing
+        if (existing != null) releaseMedia(source.id)
+        if (!File(path).exists()) {
+            diag("media: berkas tidak ditemukan ($path)")
+            return null
+        }
+        val width = source.settings.width.coerceAtLeast(2)
+        val height = source.settings.height.coerceAtLeast(2)
+        val texture = GlUtil.createExternalTexture()
+        val surfaceTexture = SurfaceTexture(texture).apply { setDefaultBufferSize(width, height) }
+        val surface = Surface(surfaceTexture)
+        val entry = CameraTexture(
+            textureId = texture,
+            surfaceTexture = surfaceTexture,
+            surface = surface,
+            width = width,
+            height = height,
+            facing = 0,
+            mediaPath = path,
+        )
+        surfaceTexture.setOnFrameAvailableListener({ entry.frameAvailable = true }, cameraHandler)
+        val player = MediaPlayer()
+        runCatching {
+            player.setDataSource(path)
+            player.setSurface(surface)
+            player.isLooping = true
+            // Audio media tidak masuk mixer rekaman; bisukan agar tidak
+            // terdengar ganda saat pratinjau.
+            player.setVolume(0f, 0f)
+            player.setOnPreparedListener { runCatching { it.start() } }
+            player.setOnErrorListener { _, what, extra ->
+                diag("media: error $what/$extra")
+                true
+            }
+            player.prepareAsync()
+        }.onFailure { diag("media: gagal disiapkan (${it.message})") }
+        entry.player = player
+        mediaSources[source.id] = entry
+        diag("media: $path ${width}x$height")
+        return entry
+    }
+
+    private fun releaseMedia(sourceId: String) {
+        val entry = mediaSources.remove(sourceId) ?: return
+        runCatching { entry.player?.stop() }
+        runCatching { entry.player?.release() }
+        entry.player = null
+        runCatching { entry.surface.release() }
+        runCatching { entry.surfaceTexture.release() }
+        runCatching { GLES20.glDeleteTextures(1, intArrayOf(entry.textureId), 0) }
     }
 
     /** Melepas tekstur yang tidak dipakai program maupun pratinjau. */
@@ -1402,6 +1974,10 @@ class RecordingPipeline(
         unused.forEach { sourceId ->
             textureCache.remove(sourceId)?.let { retiredTextures += it.textureId }
         }
+        // Kamera yang tidak lagi dipakai program/pratinjau ikut dilepas.
+        cameraSources.keys.filter { it !in keep }.forEach { releaseCamera(it) }
+        mediaSources.keys.filter { it !in keep }.forEach { releaseMedia(it) }
+        browserSources.keys.filter { it !in keep }.forEach { releaseBrowser(it) }
         flushRetiredTextures()
     }
 
@@ -1419,7 +1995,20 @@ class RecordingPipeline(
 
     /** Memuat tekstur sumber gambar/teks; dipakai ulang selama isinya sama. */
     private fun ensureTexture(source: SceneSource): CachedTexture? {
-        val signature = sourceSignature(source)
+        // Slide show berganti berkas mengikuti waktu, jadi indeks ikut tanda
+        // tangan supaya tekstur dimuat ulang tepat saat gambar berganti.
+        val slideIndex = if (source.type == SourceType.SlideShow) {
+            val paths = source.settings.imagePaths
+            if (paths.isEmpty()) {
+                -1
+            } else {
+                val interval = source.settings.slideIntervalSec.coerceAtLeast(1).toLong()
+                ((System.nanoTime() / 1_000_000_000L) / interval % paths.size).toInt()
+            }
+        } else {
+            0
+        }
+        val signature = sourceSignature(source) + "|slide=$slideIndex"
         textureCache[source.id]?.let { if (it.signature == signature) return it }
 
         val bitmap = when (source.type) {
@@ -1428,6 +2017,19 @@ class RecordingPipeline(
                 maxWidth = config.width,
                 maxHeight = config.height,
             )
+
+            SourceType.SlideShow -> {
+                val paths = source.settings.imagePaths
+                if (slideIndex in paths.indices) {
+                    SourceBitmap.loadImage(
+                        path = paths[slideIndex],
+                        maxWidth = config.width,
+                        maxHeight = config.height,
+                    )
+                } else {
+                    null
+                }
+            }
 
             SourceType.Text -> SourceBitmap.renderText(
                 text = source.settings.text,
@@ -1466,6 +2068,9 @@ class RecordingPipeline(
         append('|').append(source.settings.textColor)
         append('|').append(source.settings.width)
         append('|').append(source.settings.height)
+        append('|').append(source.settings.cameraFacing)
+        append('|').append(source.settings.imagePaths.joinToString(","))
+        append('|').append(source.settings.slideIntervalSec)
     }
 
     /** Menggambar semua layer kanvas pada konteks yang sedang aktif. */
@@ -1634,7 +2239,7 @@ class RecordingPipeline(
                 filters = layer.filters,
             )
 
-            SourceType.Image, SourceType.Text -> painter.drawTexture2D(
+            SourceType.Image, SourceType.Text, SourceType.SlideShow -> painter.drawTexture2D(
                 textureId = layer.textureId,
                 left = left,
                 bottom = bottom,
@@ -1651,6 +2256,19 @@ class RecordingPipeline(
                 opacity = layer.opacity,
                 filters = layer.filters,
             )
+
+            SourceType.Camera, SourceType.Media -> {
+                val external = layer.camera ?: return
+                drawCamera(painter, external, layer, left, bottom, drawWidth, drawHeight)
+            }
+
+            SourceType.Browser -> {
+                val browser = layer.browser ?: return
+                drawBrowser(painter, browser, layer, left, bottom, drawWidth, drawHeight)
+            }
+
+            // Grup sudah diratakan menjadi layer biasa saat build.
+            SourceType.Group -> Unit
 
             SourceType.Color -> painter.drawColor(
                 red = ((layer.colorArgb ushr 16) and 0xFF) / 255f,
@@ -2020,6 +2638,9 @@ class RecordingPipeline(
         if (owned.isNotEmpty()) {
             runCatching { GLES20.glDeleteTextures(owned.size, owned.toIntArray(), 0) }
         }
+        releaseAllCameras()
+        mediaSources.keys.toList().forEach { releaseMedia(it) }
+        browserSources.keys.toList().forEach { releaseBrowser(it) }
         textureCache.clear()
         retiredTextures.clear()
 
@@ -2130,7 +2751,11 @@ class RecordingPipeline(
                 target = null
                 glThread.quitSafely()
             }
-            onState(RecordingState.Error(error.message ?: "Gagal memulai tangkap layar"))
+            onState(
+                RecordingState.Error(
+                    error.message ?: context.getString(R.string.error_start_capture),
+                ),
+            )
             onSessionEnd()
         }
     }
@@ -2331,6 +2956,8 @@ class RecordingPipeline(
         val sourceId: String? = null,
         val screenDisplay: com.rout.air.core.ScreenDisplay? = null,
         val filters: com.rout.air.engine.FilterState = com.rout.air.engine.FilterState.NONE,
+        val camera: CameraTexture? = null,
+        val browser: BrowserTexture? = null,
     )
 
     private data class CachedTexture(

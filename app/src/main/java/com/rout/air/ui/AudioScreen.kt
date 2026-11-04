@@ -102,7 +102,10 @@ fun AudioScreen(
                 }
                 if (sessionLive) {
                     Text(
-                        text = if (runtime.running) "MIXER AKTIF" else "AUDIO MATI",
+                        text = stringResource(
+                            if (runtime.running) R.string.audio_mixer_active
+                            else R.string.audio_mixer_off,
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (runtime.running) {
                             MaterialTheme.colorScheme.primary
@@ -118,9 +121,11 @@ fun AudioScreen(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                AudioHeaderAction("＋ Application Audio") { appPickerOpen = true }
+                AudioHeaderAction(stringResource(R.string.audio_add_app_capture)) {
+                    appPickerOpen = true
+                }
                 if (mix.channels.any { it.global && it.capture == com.rout.air.core.AudioCaptureKind.Microphone }) {
-                    AudioHeaderAction("Ganti mikrofon") {
+                    AudioHeaderAction(stringResource(R.string.audio_change_mic)) {
                         deviceTarget = AudioChannelId.Microphone
                     }
                 }
@@ -181,7 +186,7 @@ fun AudioScreen(
                     ) {
                         Text(stringResource(R.string.audio_tidak_ada_sumber_yang_ditampilkan), color = TextSecondary)
                         Text(
-                            "Aktifkan “Tampilkan sumber nonaktif” di menu Opsi.",
+                            stringResource(R.string.audio_show_inactive_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextTertiary,
                         )
@@ -381,8 +386,7 @@ private fun HorizontalMixer(
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = stringResource(R.string.audio_audio_internal_memakai_audioplaybackcapt) +
-                "atau yang melarang tangkap audio akan terekam senyap.",
+            text = stringResource(R.string.audio_internal_hint_full),
             style = MaterialTheme.typography.labelSmall,
             color = TextTertiary,
             modifier = Modifier.padding(horizontal = 12.dp),
@@ -468,7 +472,7 @@ private fun MixerToolbar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "$hiddenCount tersembunyi",
+                    text = stringResource(R.string.audio_hidden_count, hiddenCount),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (hiddenCount > 0) TextSecondary else TextTertiary,
                     modifier = Modifier
@@ -520,23 +524,29 @@ private fun MixerToolbar(
                     },
                 )
                 HorizontalDivider(color = Divider)
-                CheckItem("Tampilkan sumber tersembunyi", mix.showHidden, onShowHidden)
-                CheckItem("Tampilkan sumber nonaktif", mix.showInactive, onShowInactive)
                 CheckItem(
-                    if (mix.verticalLayout) {
-                        "Simpan sumber tersembunyi di kanan"
-                    } else {
-                        "Simpan sumber tersembunyi di bawah"
-                    },
+                    stringResource(R.string.audio_show_hidden_sources),
+                    mix.showHidden,
+                    onShowHidden,
+                )
+                CheckItem(
+                    stringResource(R.string.audio_show_inactive_sources),
+                    mix.showInactive,
+                    onShowInactive,
+                )
+                CheckItem(
+                    stringResource(
+                        if (mix.verticalLayout) R.string.audio_keep_hidden_right
+                        else R.string.audio_keep_hidden_below,
+                    ),
                     mix.keepHiddenLast,
                     onKeepHiddenLast,
                 )
                 CheckItem(
-                    if (mix.verticalLayout) {
-                        "Simpan sumber nonaktif di kanan"
-                    } else {
-                        "Simpan sumber nonaktif di bawah"
-                    },
+                    stringResource(
+                        if (mix.verticalLayout) R.string.audio_keep_inactive_right
+                        else R.string.audio_keep_inactive_below,
+                    ),
                     mix.keepInactiveLast,
                     onKeepInactiveLast,
                 )
@@ -544,7 +554,10 @@ private fun MixerToolbar(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            if (mix.verticalLayout) "Tata letak horizontal" else "Tata letak vertikal",
+                            stringResource(
+                                if (mix.verticalLayout) R.string.audio_layout_horizontal
+                                else R.string.audio_layout_vertical,
+                            ),
                         )
                     },
                     onClick = {
@@ -626,17 +639,24 @@ private fun rankedChannels(mix: AudioMix, activeIds: Set<AudioChannelId>): List<
     )
 }
 
+@Composable
 private fun mixerSubtitle(state: RecordingState, mix: AudioMix, ready: Int): String = when {
-    !mix.masterEnabled -> "Rekam audio dimatikan • mixer tetap aktif"
-    state is RecordingState.Preparing -> "Menyiapkan sesi tangkap layar…"
-    state is RecordingState.Previewing -> "Pratinjau • $ready kanal audio aktif"
-    state is RecordingState.Recording -> if (state.isPaused) {
-        "Rekaman dijeda • $ready kanal siap"
-    } else {
-        "Merekam • $ready kanal masuk trek audio"
-    }
-    state is RecordingState.Idle ->
-        "Mixer audio • ${mix.enabledChannels().size} dari ${mix.channels.size} kanal siap"
+    !mix.masterEnabled -> stringResource(R.string.audio_subtitle_master_off)
+    state is RecordingState.Preparing -> stringResource(R.string.studio_menyiapkan_tangkap_layar)
+    state is RecordingState.Previewing ->
+        stringResource(R.string.audio_subtitle_preview, ready)
 
-    else -> "Mixer audio • $ready dari ${mix.channels.size} kanal aktif"
+    state is RecordingState.Recording -> if (state.isPaused) {
+        stringResource(R.string.audio_subtitle_paused, ready)
+    } else {
+        stringResource(R.string.audio_subtitle_recording, ready)
+    }
+
+    state is RecordingState.Idle -> stringResource(
+        R.string.audio_subtitle_idle,
+        mix.enabledChannels().size,
+        mix.channels.size,
+    )
+
+    else -> stringResource(R.string.audio_subtitle_active, ready, mix.channels.size)
 }

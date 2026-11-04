@@ -20,13 +20,21 @@ import java.util.UUID
 class SceneStore(context: Context) {
     private val appContext = context.applicationContext
     private val file = File(appContext.filesDir, FILE_NAME)
+    private val backup = File(appContext.filesDir, BACKUP_NAME)
     private val assets = File(appContext.filesDir, ASSET_DIR).apply { mkdirs() }
 
     fun load(): SceneCollection? {
-        if (!file.exists()) return null
-        val parsed = runCatching { SceneJson.decode(file.readText()) }.getOrNull()
-            ?: return null
-        return migrate(parsed)
+        read(file)?.let { return migrate(it) }
+        // Berkas utama rusak atau hilang: pakai salinan terakhir yang masih
+        // valid, lalu pulihkan supaya penyimpanan berikutnya normal.
+        val restored = read(backup) ?: return null
+        runCatching { backup.copyTo(file, overwrite = true) }
+        return migrate(restored)
+    }
+
+    private fun read(source: File): SceneCollection? {
+        if (!source.exists()) return null
+        return runCatching { SceneJson.decode(source.readText()) }.getOrNull()
     }
 
     /**
@@ -53,7 +61,18 @@ class SceneStore(context: Context) {
     }
 
     fun save(collection: SceneCollection) {
-        runCatching { file.writeText(SceneJson.encode(collection)) }
+        val text = SceneJson.encode(collection)
+        runCatching {
+            // Tulis ke berkas sementara lalu ganti nama: crash di tengah
+            // penulisan tidak meninggalkan JSON setengah jadi.
+            val temp = File(appContext.filesDir, "$FILE_NAME.tmp")
+            temp.writeText(text)
+            if (file.exists()) runCatching { file.copyTo(backup, overwrite = true) }
+            if (!temp.renameTo(file)) {
+                file.writeText(text)
+                temp.delete()
+            }
+        }
     }
 
     /**
@@ -74,8 +93,22 @@ class SceneStore(context: Context) {
         }.getOrNull()
     }
 
+    /** Menyalin video pilihan ke penyimpanan aplikasi agar path tetap valid. */
+    fun importMedia(uri: Uri): String? {
+        val name = "media_${UUID.randomUUID().toString().take(8)}.mp4"
+        val target = File(assets, name)
+        return runCatching {
+            val input = appContext.contentResolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                target.outputStream().use { sink -> source.copyTo(sink) }
+            }
+            target.absolutePath
+        }.getOrNull()
+    }
+
     private companion object {
         const val FILE_NAME = "scene_collection.json"
+        const val BACKUP_NAME = "scene_collection.bak.json"
         const val ASSET_DIR = "scene_assets"
     }
 }
@@ -114,7 +147,12 @@ object SceneManager {
         val width = config.width.coerceAtLeast(2)
         val height = config.height.coerceAtLeast(2)
 
-        var loaded = s.load() ?: SceneCollection.default(width, height)
+        var loaded = s.load() ?: SceneCollection.default(
+            width,
+            height,
+            context.getString(com.rout.air.R.string.src_layar),
+            context.getString(com.rout.air.R.string.scenes_adegan_n, 1),
+        )
         // Scene layar jeda lama dipindahkan keluar dari koleksi scene.
         // Layar jeda kini hidup sebagai konfigurasi tersendiri dan hanya
         // disuntik saat live, jadi tidak boleh tampil sebagai scene.
@@ -209,18 +247,12 @@ object SceneManager {
         store?.save(next)
     }
 
-    /** Dipakai UI saat flow belum terisi (mis. sesi dipulihkan). */
-    fun ensure(width: Int, height: Int): SceneCollection {
-        collection?.let { return it }
-        val created = SceneCollection.default(width, height)
-        collection = created
-        programCollection = created
-        _state.value = created
-        _program.value = created
-        return created
-    }
-
-    fun current(): SceneCollection = collection ?: ensure(1920, 1080)
+    fun current(): SceneCollection = collection ?: SceneCollection.default(
+        1920,
+        1080,
+        appContext?.getString(com.rout.air.R.string.src_layar).orEmpty(),
+        appContext?.getString(com.rout.air.R.string.scenes_adegan_n, 1).orEmpty(),
+    )
 
     /** Snapshot program; pemanggil pipeline memakai ini, bukan hasil edit. */
     fun programCurrent(): SceneCollection = programCollection ?: current()

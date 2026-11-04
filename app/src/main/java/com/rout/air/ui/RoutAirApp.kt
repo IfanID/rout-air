@@ -26,6 +26,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,13 +75,13 @@ import com.rout.air.R
  * Rekaman, dan Setelan. Studio Mode sengaja jadi halaman sendiri, bukan
  * disatukan ke Siaran.
  */
-enum class AppTab(val title: String, val symbol: String) {
-    Home("Siaran", "●"),
-    Studio("Studio", "◫"),
-    Scenes("Adegan", "▤"),
-    Audio("Audio", "♪"),
-    Recordings("Rekaman", "▶"),
-    Settings("Setelan", "⚙"),
+enum class AppTab(@StringRes val labelRes: Int, val symbol: String) {
+    Home(R.string.tab_siaran, "●"),
+    Studio(R.string.tab_studio, "◫"),
+    Scenes(R.string.tab_adegan, "▤"),
+    Audio(R.string.tab_audio, "♪"),
+    Recordings(R.string.tab_rekaman, "▶"),
+    Settings(R.string.tab_setelan, "⚙"),
 }
 
 /** Overlay mana yang diminta pengguna; keduanya tidak boleh jalan bersamaan. */
@@ -96,6 +97,18 @@ fun RoutAirApp(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val store = remember(context) { SettingsStore(context) }
+
+    // Pengenalan singkat hanya pada peluncuran pertama.
+    var onboardingDone by remember { mutableStateOf(store.isOnboardingDone()) }
+    if (!onboardingDone) {
+        OnboardingScreen(
+            onDone = {
+                store.setOnboardingDone()
+                onboardingDone = true
+            },
+        )
+        return
+    }
 
     remember(context) { SceneManager.attach(context) }
     remember(context) { AudioMixer.attach(context) }
@@ -157,7 +170,15 @@ fun RoutAirApp(
 
     var lockedCanvas by remember { mutableStateOf<CaptureConfig?>(null) }
     val canvasConfig = lockedCanvas ?: liveCanvas
-    val collection = scenes ?: SceneCollection.default(canvasConfig.width, canvasConfig.height)
+    // Nama adegan/sumber bawaan mengikuti bahasa aplikasi.
+    val defaultScreenName = stringResource(R.string.src_layar)
+    val defaultSceneName = stringResource(R.string.scenes_adegan_n, 1)
+    val collection = scenes ?: SceneCollection.default(
+        canvasConfig.width,
+        canvasConfig.height,
+        defaultScreenName,
+        defaultSceneName,
+    )
 
     // Scene layar jeda dibuat sebelum orientasi diketahui; posisinya
     // disesuaikan dengan kanvas yang benar-benar dipakai.
@@ -575,7 +596,7 @@ fun RoutAirApp(
                         selected = tab == item,
                         onClick = { tab = item },
                         icon = { Text(item.symbol) },
-                        label = { Text(item.title) },
+                        label = { Text(stringResource(item.labelRes)) },
                     )
                 }
             }
@@ -707,7 +728,8 @@ fun RoutAirApp(
                             )
                             startLive()
                         }.onFailure { error ->
-                            setupError = error.message ?: "Gagal membuat siaran."
+                            setupError = error.message
+                                ?: context.getString(R.string.live_setup_failed)
                         }
                     }
                 },

@@ -17,14 +17,18 @@ object ImageFetcher {
     fun download(context: Context, rawUrl: String): Result<String> {
         val url = rawUrl.trim()
         val parsed = runCatching { URL(url) }.getOrNull()
-            ?: return Result.failure(IllegalArgumentException("URL tidak valid"))
+            ?: return Result.failure(
+                IllegalArgumentException(context.getString(com.rout.air.R.string.error_url_invalid)),
+            )
         if (parsed.protocol != "http" && parsed.protocol != "https") {
-            return Result.failure(IllegalArgumentException("Hanya http/https"))
+            return Result.failure(
+                IllegalArgumentException(context.getString(com.rout.air.R.string.error_url_scheme)),
+            )
         }
         val dir = File(context.filesDir, "images").apply { mkdirs() }
         val target = File(dir, "url-${System.currentTimeMillis()}.img")
         val connection = runCatching { parsed.openConnection() as HttpURLConnection }.getOrNull()
-            ?: return Result.failure(IllegalStateException("Tidak bisa membuka koneksi"))
+            ?: return Result.failure(IllegalStateException(context.getString(com.rout.air.R.string.error_connection_open)))
         return try {
             connection.connectTimeout = 15_000
             connection.readTimeout = 20_000

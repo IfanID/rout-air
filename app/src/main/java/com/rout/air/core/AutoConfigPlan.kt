@@ -15,11 +15,11 @@ object AutoConfigPlan {
     enum class Target { Streaming, Recording }
 
     /** Preferensi fps seperti halaman Video di wizard OBS. */
-    enum class FpsPreference(val label: String) {
-        PreferHighFps("Utamakan fps"),
-        PreferHighRes("Utamakan resolusi"),
-        Force30("Paksa 30 fps"),
-        Force60("Paksa 60 fps"),
+    enum class FpsPreference {
+        PreferHighFps,
+        PreferHighRes,
+        Force30,
+        Force60,
     }
 
     data class Candidate(val width: Int, val height: Int, val fps: Int) {
@@ -46,7 +46,14 @@ object AutoConfigPlan {
         val fps: Int,
         val codec: VideoCodec,
         val bitrateKbps: Int,
-        val reason: String,
+        /** True bila kandidat ini lulus uji; false bila terpaksa turun. */
+        val passed: Boolean = true,
+        /** True bila tidak ada kandidat yang sempat diuji. */
+        val noCandidate: Boolean = false,
+        /** fps yang benar-benar tercapai saat diuji. */
+        val achievedFps: Double = 0.0,
+        /** Bitrate dipangkas karena hasil tes upload. */
+        val uploadLimited: Boolean = false,
     )
 
     private fun even(value: Int): Int = (value / 2) * 2
@@ -187,7 +194,8 @@ object AutoConfigPlan {
                 fps = 30,
                 codec = codec,
                 bitrateKbps = upperBitrateKbps(1280, 720, 30),
-                reason = "Tidak ada kandidat yang diuji; memakai 720p30",
+                passed = false,
+                noCandidate = true,
             )
 
         val candidate = best.candidate
@@ -207,21 +215,15 @@ object AutoConfigPlan {
         }
         bitrate = bitrate.coerceAtLeast(minBitrateKbps(candidate.width, candidate.height, candidate.fps))
 
-        val reason = buildString {
-            append(if (passed != null) "Lulus uji " else "Turun ke kandidat terakhir ")
-            append(candidate.label)
-            append(" (")
-            append(String.format(java.util.Locale.US, "%.1f", best.achievedFps))
-            append(" fps)")
-            if (uploadKbps != null && uploadKbps > 0) append(" • dibatasi upload")
-        }
         return Recommendation(
             width = candidate.width,
             height = candidate.height,
             fps = candidate.fps,
             codec = codec,
             bitrateKbps = bitrate,
-            reason = reason,
+            passed = passed != null,
+            achievedFps = best.achievedFps,
+            uploadLimited = uploadKbps != null && uploadKbps > 0,
         )
     }
 }

@@ -225,7 +225,11 @@ fun HomeScreen(
 
                 if (!previewReady) {
                     Text(
-                        text = if (isActive) "Program disiapkan" else "Program",
+                        text = if (isActive) {
+                            stringResource(R.string.home_program_ready)
+                        } else {
+                            stringResource(R.string.home_program)
+                        },
                         color = Color.White,
                         textAlign = TextAlign.Center,
                     )

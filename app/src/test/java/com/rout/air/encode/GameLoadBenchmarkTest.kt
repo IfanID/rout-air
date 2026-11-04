@@ -28,7 +28,7 @@ class GameLoadBenchmarkTest {
         val presets = GameLoadBenchmark.Preset.entries
         presets.zipWithNext { lower, higher ->
             assertTrue(
-                "${higher.label} harus lebih berat dari ${lower.label}",
+                "${higher.name} harus lebih berat dari ${lower.name}",
                 higher.objects > lower.objects && higher.layers >= lower.layers,
             )
         }
@@ -63,8 +63,17 @@ class GameLoadBenchmarkTest {
 
     @Test
     fun thermalNamesAreReadable() {
-        assertEquals("normal", GameLoadBenchmark.thermalName(0))
-        assertEquals("panas", GameLoadBenchmark.thermalName(2))
-        assertEquals("tidak diketahui", GameLoadBenchmark.thermalName(99))
+        assertEquals(
+            GameLoadBenchmark.ThermalLevel.Normal,
+            GameLoadBenchmark.thermalLevel(0),
+        )
+        assertEquals(
+            GameLoadBenchmark.ThermalLevel.Hot,
+            GameLoadBenchmark.thermalLevel(2),
+        )
+        assertEquals(
+            GameLoadBenchmark.ThermalLevel.Unknown,
+            GameLoadBenchmark.thermalLevel(99),
+        )
     }
 }

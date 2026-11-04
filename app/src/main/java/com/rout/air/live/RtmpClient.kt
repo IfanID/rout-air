@@ -34,13 +34,13 @@ data class RtmpEndpoint(
             val uri = URI(serverUrl.trim())
             val secure = uri.scheme.equals("rtmps", ignoreCase = true)
             require(uri.scheme.equals("rtmp", true) || secure) {
-                "URL harus diawali rtmp:// atau rtmps://"
+                com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_scheme)
             }
-            val host = uri.host ?: error("Host RTMP tidak valid")
+            val host = uri.host ?: error(com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_host))
             val port = if (uri.port > 0) uri.port else if (secure) 443 else 1935
             val segments = uri.path.orEmpty().split('/').filter { it.isNotBlank() }
             val combined = if (streamKey.isBlank()) segments else segments + streamKey.trim()
-            require(combined.isNotEmpty()) { "Nama stream/kunci belum diisi" }
+            require(combined.isNotEmpty()) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_stream_empty) }
             val stream = combined.last()
             val app = combined.dropLast(1).joinToString("/").ifBlank { "live" }
             return RtmpEndpoint(secure, host, port, app, stream)
@@ -127,7 +127,7 @@ class RtmpConnection(
 
             sendCommand(0.0, connectionCommand())
             if (!connectLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                return fail("Server tidak menjawab connect")
+                return fail(com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_connect_timeout))
             }
             if (failure != null) return false
 
@@ -137,10 +137,10 @@ class RtmpConnection(
                 val advertised = serverVideoFourCcs
                 if (advertised == null) {
                     com.rout.air.data.DiagLog.line(
-                        "rtmp: server tidak mengiklankan codec; $fourCc diteruskan",
+                        com.rout.air.data.Msg.get(com.rout.air.R.string.log_rtmp_codec_unadvertised, fourCc),
                     )
                 } else if (fourCc !in advertised) {
-                    fatalReason = "Server tidak menerima $fourCc lewat RTMP"
+                    fatalReason = com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_codec_rejected, fourCc)
                     return fail(fatalReason!!)
                 }
             }
@@ -149,7 +149,7 @@ class RtmpConnection(
             sendCommand(3.0, listOf("FCPublish", 3.0, null, endpoint.streamName))
             sendCommand(4.0, listOf("createStream", 4.0, null))
             if (!createLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                return fail("Server tidak menjawab createStream")
+                return fail(com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_createstream_timeout))
             }
 
             sendCommand(
@@ -158,11 +158,11 @@ class RtmpConnection(
                 streamId = streamId,
             )
             if (!publishLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-                return fail("Server tidak mengonfirmasi publish")
+                return fail(com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_publish_timeout))
             }
             return failure == null
         } catch (error: Throwable) {
-            return fail(error.message ?: "Gagal terhubung ke RTMP")
+            return fail(error.message ?: com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_connect))
         }
     }
 
@@ -206,7 +206,7 @@ class RtmpConnection(
         out.flush()
 
         if (readFully(input, 1)[0].toInt() != 0x03) {
-            throw IllegalStateException("Versi RTMP server tidak didukung")
+            throw IllegalStateException(com.rout.air.data.Msg.get(com.rout.air.R.string.error_rtmp_version))
         }
         val s1 = readFully(input, 1536)
         readFully(input, 1536) // S2 tidak dipakai

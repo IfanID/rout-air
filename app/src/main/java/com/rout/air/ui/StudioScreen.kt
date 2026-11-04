@@ -297,6 +297,10 @@ private fun PreviewFullscreenButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    // Label aksesibilitas dihitung di luar lambda semantics (bukan composable).
+    val description = stringResource(
+        if (fullscreen) R.string.studio_fullscreen_exit else R.string.icon_fullscreen,
+    )
     Box(
         modifier = modifier
             .size(36.dp)
@@ -304,10 +308,7 @@ private fun PreviewFullscreenButton(
             .background(Color(0xE6000000))
             .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .semantics {
-                contentDescription =
-                    if (fullscreen) "Keluar pratinjau penuh" else "Pratinjau penuh"
-            },
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         if (fullscreen) {
@@ -455,7 +456,7 @@ private fun RawPreview(
             )
             Text(
                 text = if (selected == null) {
-                    "Ketuk sumber untuk memilih, lalu geser/putar"
+                    stringResource(R.string.studio_hint_select)
                 } else {
                     stringResource(
                         R.string.studio_selected_n,

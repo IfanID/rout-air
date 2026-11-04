@@ -17,12 +17,12 @@ data class RtmpTestResult(
 object RtmpTester {
     fun test(config: LiveConfig, timeoutMs: Long = 12_000L): RtmpTestResult {
         if (!config.isConfigured) {
-            return RtmpTestResult(false, 0L, "Server dan kunci stream belum diisi")
+            return RtmpTestResult(false, 0L, com.rout.air.data.Msg.get(com.rout.air.R.string.error_stream_key_empty))
         }
         val endpoint = runCatching {
             RtmpEndpoint.parse(config.serverUrl, config.streamKey)
         }.getOrElse {
-            return RtmpTestResult(false, 0L, it.message ?: "URL tidak valid")
+            return RtmpTestResult(false, 0L, it.message ?: com.rout.air.data.Msg.get(com.rout.air.R.string.error_url_invalid))
         }
         val started = System.nanoTime()
         val connection = RtmpConnection(

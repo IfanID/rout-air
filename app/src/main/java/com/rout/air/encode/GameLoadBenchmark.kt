@@ -1,6 +1,8 @@
 package com.rout.air.encode
 
 import android.content.Context
+import androidx.annotation.StringRes
+import com.rout.air.R
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -46,17 +48,29 @@ object GameLoadBenchmark {
 
     /** Setelan beban, disamakan dengan menu grafis mobile NTE. */
     enum class Preset(
-        val label: String,
+        @StringRes val labelRes: Int,
         val objects: Int,
         val layers: Int,
         val shadows: Boolean,
         /** 0 = jumlah inti dikurangi 2 supaya UI tetap responsif. */
         val cpuThreads: Int,
     ) {
-        Low("Rendah", 150, 2, shadows = false, cpuThreads = 2),
-        Medium("Sedang", 300, 3, shadows = false, cpuThreads = 4),
-        High("Tinggi", 600, 5, shadows = true, cpuThreads = 6),
-        Ultra("Ultra", 1000, 8, shadows = true, cpuThreads = 0),
+        Low(R.string.bench_preset_low, 150, 2, shadows = false, cpuThreads = 2),
+        Medium(R.string.bench_preset_medium, 300, 3, shadows = false, cpuThreads = 4),
+        High(R.string.bench_preset_high, 600, 5, shadows = true, cpuThreads = 6),
+        Ultra(R.string.bench_preset_ultra, 1000, 8, shadows = true, cpuThreads = 0),
+    }
+
+    /** Tingkat panas perangkat; label dibaca dari resource. */
+    enum class ThermalLevel(@StringRes val labelRes: Int) {
+        Normal(R.string.thermal_normal),
+        Warm(R.string.thermal_warm),
+        Hot(R.string.thermal_hot),
+        VeryHot(R.string.thermal_very_hot),
+        Critical(R.string.thermal_critical),
+        Emergency(R.string.thermal_emergency),
+        Shutdown(R.string.thermal_shutdown),
+        Unknown(R.string.thermal_unknown),
     }
 
     data class Result(
@@ -71,7 +85,7 @@ object GameLoadBenchmark {
         val frames: Int,
         val lateFrames: Int,
         val bitrateKbps: Int,
-        val thermalMax: String,
+        val thermalMax: ThermalLevel,
         val uri: String?,
         val error: String? = null,
     )
@@ -217,9 +231,16 @@ object GameLoadBenchmark {
             scene = activeScene
             activeScene.setHud(
                 listOf(
-                    "RoutAir · BENCHMARK",
-                    "${usedCodec.label} · ${preset.label} · ${width}x$height@$targetFps",
-                    "mengukur…",
+                    com.rout.air.data.Msg.get(R.string.bench_hud_title),
+                    com.rout.air.data.Msg.get(
+                        R.string.bench_hud_config,
+                        usedCodec.label,
+                        com.rout.air.data.Msg.get(preset.labelRes),
+                        width,
+                        height,
+                        targetFps,
+                    ),
+                    com.rout.air.data.Msg.get(R.string.bench_measuring),
                 ),
             )
             load.start()
@@ -300,13 +321,36 @@ object GameLoadBenchmark {
                     val minNow = perSecond.minOrNull() ?: 0
                     activeScene.setHud(
                         listOf(
-                            "RoutAir · BENCHMARK",
-                            "${usedCodec.label} · ${preset.label} · ${width}x$height@$targetFps",
-                            "fps $fpsLast   rata ${oneDecimal(avgNow)}   min $minNow",
-                            "frame ${oneDecimal(renderPeakNs / 1e6)} ms   " +
-                                "render ${oneDecimal(renderSumNs / 1e6 / fpsLast.coerceAtLeast(1))} ms",
-                            "CPU app $cpuPercent%   RAM $pssMb MB",
-                            "termal ${thermalName(thermalMax)}   sisa ${seconds - done} detik",
+                            com.rout.air.data.Msg.get(R.string.bench_hud_title),
+                            com.rout.air.data.Msg.get(
+                                R.string.bench_hud_config,
+                                usedCodec.label,
+                                com.rout.air.data.Msg.get(preset.labelRes),
+                                width,
+                                height,
+                                targetFps,
+                            ),
+                            com.rout.air.data.Msg.get(
+                                R.string.bench_hud_fps,
+                                fpsLast,
+                                oneDecimal(avgNow),
+                                minNow,
+                            ),
+                            com.rout.air.data.Msg.get(
+                                R.string.bench_hud_render,
+                                oneDecimal(renderPeakNs / 1e6),
+                                oneDecimal(renderSumNs / 1e6 / fpsLast.coerceAtLeast(1)),
+                            ),
+                            com.rout.air.data.Msg.get(
+                                R.string.bench_hud_cpu,
+                                cpuPercent,
+                                pssMb,
+                            ),
+                            com.rout.air.data.Msg.get(
+                                R.string.bench_hud_thermal,
+                                com.rout.air.data.Msg.get(thermalLevel(thermalMax).labelRes),
+                                seconds - done,
+                            ),
                         ),
                     )
                     renderSumNs = 0L
@@ -339,9 +383,16 @@ object GameLoadBenchmark {
                 0
             }
             DiagLog.line(
-                "bench: ${usedCodec.label} ${preset.label} ${width}x$height@$targetFps " +
+                "bench: ${usedCodec.label} " +
+                    com.rout.air.data.Msg.get(preset.labelRes) +
+                    " ${width}x$height@$targetFps " +
                     String.format(Locale.US, "avg=%.1f worst=%.1f", avgFps, worst) +
-                    " frame=$frames telat=${lateFrames.get()} termal=${thermalName(thermalMax)}",
+                    com.rout.air.data.Msg.get(
+                        R.string.bench_log_suffix,
+                        frames,
+                        lateFrames.get(),
+                        com.rout.air.data.Msg.get(thermalLevel(thermalMax).labelRes),
+                    ),
             )
             return Result(
                 codec = usedCodec,
@@ -355,7 +406,7 @@ object GameLoadBenchmark {
                 frames = frames,
                 lateFrames = lateFrames.get(),
                 bitrateKbps = kbps,
-                thermalMax = thermalName(thermalMax),
+                thermalMax = thermalLevel(thermalMax),
                 uri = target?.uri?.toString(),
             )
         } finally {
@@ -375,15 +426,15 @@ object GameLoadBenchmark {
     }
 
     /** Status termal Android dalam teks yang bisa dibaca. */
-    fun thermalName(status: Int): String = when (status) {
-        PowerManager.THERMAL_STATUS_NONE -> "normal"
-        PowerManager.THERMAL_STATUS_LIGHT -> "hangat"
-        PowerManager.THERMAL_STATUS_MODERATE -> "panas"
-        PowerManager.THERMAL_STATUS_SEVERE -> "sangat panas"
-        PowerManager.THERMAL_STATUS_CRITICAL -> "kritis"
-        PowerManager.THERMAL_STATUS_EMERGENCY -> "darurat"
-        PowerManager.THERMAL_STATUS_SHUTDOWN -> "matikan"
-        else -> "tidak diketahui"
+    fun thermalLevel(status: Int): ThermalLevel = when (status) {
+        PowerManager.THERMAL_STATUS_NONE -> ThermalLevel.Normal
+        PowerManager.THERMAL_STATUS_LIGHT -> ThermalLevel.Warm
+        PowerManager.THERMAL_STATUS_MODERATE -> ThermalLevel.Hot
+        PowerManager.THERMAL_STATUS_SEVERE -> ThermalLevel.VeryHot
+        PowerManager.THERMAL_STATUS_CRITICAL -> ThermalLevel.Critical
+        PowerManager.THERMAL_STATUS_EMERGENCY -> ThermalLevel.Emergency
+        PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalLevel.Shutdown
+        else -> ThermalLevel.Unknown
     }
 
     /** Satu angka desimal dengan titik, tidak mengikuti locale perangkat. */

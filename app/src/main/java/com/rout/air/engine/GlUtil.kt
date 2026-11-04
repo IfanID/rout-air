@@ -19,7 +19,7 @@ object GlUtil {
         if (status[0] == 0) {
             val log = GLES20.glGetProgramInfoLog(program)
             GLES20.glDeleteProgram(program)
-            error("Gagal link program: $log")
+            error(com.rout.air.data.Msg.get(com.rout.air.R.string.error_gl_link, log))
         }
         GLES20.glDeleteShader(vertex)
         GLES20.glDeleteShader(fragment)
@@ -36,7 +36,7 @@ object GlUtil {
         if (status[0] == 0) {
             val log = GLES20.glGetShaderInfoLog(shader)
             GLES20.glDeleteShader(shader)
-            error("Gagal compile shader: $log")
+            error(com.rout.air.data.Msg.get(com.rout.air.R.string.error_gl_shader, log))
         }
         return shader
     }

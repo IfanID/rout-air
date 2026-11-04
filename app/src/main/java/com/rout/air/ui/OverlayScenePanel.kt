@@ -52,7 +52,7 @@ internal fun OverlayScenePanel(onPick: (String) -> Boolean) {
         )
         if (scenes.isEmpty()) {
             Text(
-                text = "Belum ada scene.",
+                text = stringResource(R.string.overlay_no_scenes),
                 color = Color(0xFFB8C2CC),
                 fontSize = 10.sp,
             )

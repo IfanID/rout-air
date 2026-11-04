@@ -856,7 +856,10 @@ internal fun AudioChannelRow(
                     onClick = {
                         onChannelChange(channel.copy(enabled = !channel.enabled))
                     },
-                    description = if (channel.enabled) "Nonaktifkan kanal" else "Aktifkan kanal",
+                    description = stringResource(
+                        if (channel.enabled) R.string.audio_disable_channel
+                        else R.string.audio_enable_channel,
+                    ),
                     active = !channel.enabled,
                     activeColor = ErrorRed,
                     activeBackground = Color.Transparent,
@@ -917,7 +920,9 @@ internal fun AudioChannelRow(
                     onClick = {
                         onChannelChange(channel.copy(muted = !channel.muted))
                     },
-                    description = if (channel.muted) "Aktifkan suara" else "Bisukan",
+                    description = stringResource(
+                        if (channel.muted) R.string.audio_unmute else R.string.audio_mute,
+                    ),
                     active = channel.muted,
                     activeColor = ErrorRed,
                     activeBackground = Color.Transparent,
@@ -934,11 +939,10 @@ internal fun AudioChannelRow(
                             ),
                         )
                     },
-                    description = if (channel.monitor.monitors) {
-                        "Matikan monitoring"
-                    } else {
-                        "Aktifkan monitoring"
-                    },
+                    description = stringResource(
+                        if (channel.monitor.monitors) R.string.audio_monitor_off_action
+                        else R.string.audio_monitor_on_action,
+                    ),
                     active = channel.monitor.monitors,
                     activeColor = Color.White,
                     activeBackground = Color(0xFF1E8528),
@@ -1014,7 +1018,10 @@ internal fun AudioChannelColumn(
                     onClick = {
                         onChannelChange(channel.copy(enabled = !channel.enabled))
                     },
-                    description = if (channel.enabled) "Nonaktifkan kanal" else "Aktifkan kanal",
+                    description = stringResource(
+                        if (channel.enabled) R.string.audio_disable_channel
+                        else R.string.audio_enable_channel,
+                    ),
                     active = !channel.enabled,
                     activeColor = ErrorRed,
                     activeBackground = Color.Transparent,
@@ -1115,7 +1122,9 @@ internal fun AudioChannelColumn(
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             MixerIconButton(
                 onClick = { onChannelChange(channel.copy(muted = !channel.muted)) },
-                description = if (channel.muted) "Aktifkan suara" else "Bisukan",
+                description = stringResource(
+                        if (channel.muted) R.string.audio_unmute else R.string.audio_mute,
+                    ),
                 active = channel.muted,
                 activeColor = ErrorRed,
                 activeBackground = Color.Transparent,
@@ -1132,11 +1141,10 @@ internal fun AudioChannelColumn(
                         ),
                     )
                 },
-                description = if (channel.monitor.monitors) {
-                    "Matikan monitoring"
-                } else {
-                    "Aktifkan monitoring"
-                },
+                description = stringResource(
+                    if (channel.monitor.monitors) R.string.audio_monitor_off_action
+                    else R.string.audio_monitor_on_action,
+                ),
                 active = channel.monitor.monitors,
                 activeColor = Color.White,
                 activeBackground = Color(0xFF1E8528),

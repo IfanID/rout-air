@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.annotation.StringRes
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +36,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -69,6 +71,7 @@ import com.rout.air.encode.EncoderProbe
 import com.rout.air.encode.GameLoadBenchmark
 import com.rout.air.data.AudioMixer
 import com.rout.air.data.DiagLog
+import com.rout.air.data.AppLanguage
 import com.rout.air.data.SettingsStore
 import com.rout.air.live.RtmpTester
 import com.rout.air.live.RtmpTestResult
@@ -85,16 +88,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.rout.air.ui.theme.AccentChoice
+import com.rout.air.ui.theme.Appearance
 import kotlin.math.roundToInt
 
-private enum class SettingsPage(val title: String) {
-    Root("Setelan"),
-    General("Umum"),
-    Stream("Siaran"),
-    Output("Output"),
-    Audio("Audio"),
-    Video("Video"),
-    Advanced("Lanjutan"),
+private enum class SettingsPage(@StringRes val titleRes: Int) {
+    Root(R.string.tab_setelan),
+    General(R.string.settings_entry_umum),
+    Stream(R.string.settings_entry_siaran),
+    Output(R.string.settings_entry_output),
+    Audio(R.string.tab_audio),
+    Video(R.string.settings_entry_video),
+    Advanced(R.string.settings_entry_lanjutan),
 }
 
 /**
@@ -135,28 +140,34 @@ fun SettingsScreen(
             )
             Spacer(Modifier.height(16.dp))
 
-            SettingsEntry("Umum", "Bahasa, tema, dan konfirmasi") {
-                page = SettingsPage.General
-            }
-            SettingsEntry("Siaran", "Layanan, server, kunci stream, tes koneksi") {
-                page = SettingsPage.Stream
-            }
-            SettingsEntry("Output", "Siaran/rekaman, encoder, bitrate, format") {
-                page = SettingsPage.Output
-            }
-            SettingsEntry("Audio", "Laju sampel, kanal, perangkat, dan meter") {
-                page = SettingsPage.Audio
-            }
-            SettingsEntry("Video", "Kanvas, resolusi output, fps, dan warna") {
-                page = SettingsPage.Video
-            }
-            SettingsEntry("Lanjutan", "Performa, informasi teknis, dan diagnostik") {
-                page = SettingsPage.Advanced
-            }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_umum),
+                stringResource(R.string.settings_entry_umum_desc),
+            ) { page = SettingsPage.General }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_siaran),
+                stringResource(R.string.settings_entry_siaran_desc),
+            ) { page = SettingsPage.Stream }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_output),
+                stringResource(R.string.settings_entry_output_desc),
+            ) { page = SettingsPage.Output }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_audio),
+                stringResource(R.string.settings_entry_audio_desc),
+            ) { page = SettingsPage.Audio }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_video),
+                stringResource(R.string.settings_entry_video_desc),
+            ) { page = SettingsPage.Video }
+            SettingsEntry(
+                stringResource(R.string.settings_entry_lanjutan),
+                stringResource(R.string.settings_entry_lanjutan_desc),
+            ) { page = SettingsPage.Advanced }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { page = SettingsPage.Root }) { Text(stringResource(R.string.common_kembali_panah)) }
-                Text(page.title, style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(page.titleRes), style = MaterialTheme.typography.titleLarge)
             }
             Spacer(Modifier.height(8.dp))
 
@@ -247,9 +258,9 @@ private fun VideoSettings(
     SectionTitle(stringResource(R.string.settings_orientasi_video))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(
-            CanvasOrientation.Auto to "Auto",
-            CanvasOrientation.Portrait to "Vertikal",
-            CanvasOrientation.Landscape to "Horizontal",
+            CanvasOrientation.Auto to stringResource(R.string.settings_otomatis),
+            CanvasOrientation.Portrait to stringResource(R.string.common_vertikal),
+            CanvasOrientation.Landscape to stringResource(R.string.common_horizontal),
         ).forEach { (value, label) ->
             FilterChip(
                 selected = config.canvasOrientation == value,
@@ -258,18 +269,15 @@ private fun VideoSettings(
             )
         }
     }
-    Hint(
-        "Auto mengikuti orientasi HP saat rekaman dimulai. Vertikal/Horizontal " +
-            "mengunci bentuk video; layar tetap bebas diputar.",
-    )
+    Hint(stringResource(R.string.settings_orientation_hint))
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_mode_isi))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(
-            ContentMode.Fit to "Pas",
-            ContentMode.Crop to "Penuh",
-            ContentMode.Stretch to "Peregangan",
+            ContentMode.Fit to stringResource(R.string.common_pas_letterbox),
+            ContentMode.Crop to stringResource(R.string.common_penuh_crop),
+            ContentMode.Stretch to stringResource(R.string.common_peregangan),
         ).forEach { (value, label) ->
             FilterChip(
                 selected = config.contentMode == value,
@@ -278,10 +286,7 @@ private fun VideoSettings(
             )
         }
     }
-    Hint(
-        "Dipakai saat rasio layar beda dengan video: Pas = bar hitam, " +
-            "Penuh = dipotong, Peregangan = dipaksa penuh.",
-    )
+    Hint(stringResource(R.string.settings_content_mode_hint))
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_fps))
@@ -298,7 +303,7 @@ private fun VideoSettings(
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_output_resolution))
     InfoRow(
-        "Resolusi encoder",
+        stringResource(R.string.settings_encoder_resolution),
         if (config.rescaled) {
             "${config.encoderWidth}x${config.encoderHeight}"
         } else {
@@ -328,8 +333,10 @@ private fun VideoSettings(
                 label = {
                     Text(
                         when (mode) {
-                            ColorRangeMode.Limited -> "Terbatas (16–235)"
-                            ColorRangeMode.Full -> "Penuh (0–255)"
+                            ColorRangeMode.Limited ->
+                                stringResource(R.string.settings_color_range_limited)
+                            ColorRangeMode.Full ->
+                                stringResource(R.string.settings_color_range_full)
                         },
                     )
                 },
@@ -339,16 +346,22 @@ private fun VideoSettings(
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_kanvas_aktif))
-    InfoRow("Ukuran", "${canvasConfig.width}x${canvasConfig.height}")
-    InfoRow("Rasio", String.format("%.3f", canvasConfig.aspectRatio))
-    InfoRow("Mode isi", contentModeLabel(canvasConfig))
+    InfoRow(
+        stringResource(R.string.settings_size),
+        "${canvasConfig.width}x${canvasConfig.height}",
+    )
+    InfoRow(
+        stringResource(R.string.settings_ratio),
+        String.format("%.3f", canvasConfig.aspectRatio),
+    )
+    InfoRow(stringResource(R.string.settings_mode_isi), contentModeLabel(canvasConfig))
     Hint(stringResource(R.string.settings_output_scaled_resolution_saat_ini_sama_d))
 }
 
-private enum class OutputTab(val label: String) {
-    Streaming("Siaran"),
-    Recording("Rekaman"),
-    Audio("Audio"),
+private enum class OutputTab(@StringRes val labelRes: Int) {
+    Streaming(R.string.settings_entry_siaran),
+    Recording(R.string.tab_rekaman),
+    Audio(R.string.tab_audio),
 }
 
 /** Bitrate yang diatur blok setelan video pada tab yang sedang dibuka. */
@@ -378,7 +391,7 @@ private fun OutputSettings(
             FilterChip(
                 selected = tab == item,
                 onClick = { tab = item },
-                label = { Text(item.label) },
+                label = { Text(stringResource(item.labelRes)) },
             )
         }
     }
@@ -414,8 +427,13 @@ private fun StreamingTab(
 ) {
     Spacer(Modifier.height(12.dp))
     OutputSummary(
-        "Siaran • ${config.videoCodec.label} • ${bitrateText(config.videoBitrate)} • " +
-            "${config.bitrateMode.name} • track ${live.audioTrack}",
+        stringResource(
+            R.string.settings_summary_stream,
+            config.videoCodec.label,
+            bitrateText(config.videoBitrate),
+            config.bitrateMode.name,
+            live.audioTrack,
+        ),
     )
 
     Spacer(Modifier.height(16.dp))
@@ -443,13 +461,21 @@ private fun RecordingTab(
     val bitrate = config.recordVideoBitrate.takeIf { it > 0 } ?: config.videoBitrate
     Spacer(Modifier.height(12.dp))
     OutputSummary(
-        "Rekaman • MP4 • ${bitrateText(bitrate)} • ${saveLocationLabel(config.saveLocation)}",
+        stringResource(
+            R.string.settings_summary_recording,
+            bitrateText(bitrate),
+            saveLocationLabel(config.saveLocation),
+        ),
     )
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_format))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = true, onClick = {}, label = { Text("MP4") })
+        FilterChip(
+            selected = true,
+            onClick = {},
+            label = { Text(stringResource(R.string.settings_format_mp4)) },
+        )
     }
     Hint(stringResource(R.string.settings_format_hint))
 
@@ -509,16 +535,61 @@ private fun RecordingTab(
         }
     }
     Hint(
-        "Track 1 adalah campuran utama. Track tambahan menulis trek AAC terpisah " +
-            "di MP4; tidak semua player memutar track selain track pertama.",
+        stringResource(R.string.settings_track_hint),
     )
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_qs_tile))
     Hint(stringResource(R.string.settings_qs_tile_desc))
 
-    Spacer(Modifier.height(12.dp))
-    Hint(stringResource(R.string.settings_split_recording_dan_replay_buffer_menyus))
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_split_recording))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Satu pilihan saja: split karena durasi atau karena ukuran berkas.
+        listOf(0 to 0, 5 to 0, 10 to 0, 30 to 0, 0 to 1024, 0 to 2048).forEach { (minutes, sizeMb) ->
+            val selected = config.splitMinutes == minutes && config.splitSizeMb == sizeMb
+            FilterChip(
+                selected = selected,
+                onClick = {
+                    onConfigChange(config.copy(splitMinutes = minutes, splitSizeMb = sizeMb))
+                },
+                label = {
+                    Text(
+                        when {
+                            minutes > 0 -> stringResource(R.string.settings_split_menit_n, minutes)
+                            sizeMb > 0 -> stringResource(
+                                R.string.settings_split_ukuran_n,
+                                sizeMb / 1024,
+                            )
+
+                            else -> stringResource(R.string.settings_split_off)
+                        },
+                    )
+                },
+            )
+        }
+    }
+    Hint(stringResource(R.string.settings_split_hint))
+
+    Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_replay_buffer))
+    SettingSwitchRow(
+        title = stringResource(R.string.settings_replay_buffer),
+        subtitle = stringResource(R.string.settings_replay_desc),
+        checked = config.replayBufferEnabled,
+    ) { onConfigChange(config.copy(replayBufferEnabled = it)) }
+    if (config.replayBufferEnabled) {
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(30, 60, 120).forEach { seconds ->
+                FilterChip(
+                    selected = config.replaySeconds == seconds,
+                    onClick = { onConfigChange(config.copy(replaySeconds = seconds)) },
+                    label = { Text(stringResource(R.string.settings_replay_detik_n, seconds)) },
+                )
+            }
+        }
+    }
 
     VideoEncodeSection(
         config = config,
@@ -538,7 +609,9 @@ private fun AudioOutputTab(
     onConfigChange: (CaptureConfig) -> Unit,
 ) {
     Spacer(Modifier.height(12.dp))
-    OutputSummary("Audio Output • AAC-LC • ${config.audioBitrate / 1_000} kbps")
+    OutputSummary(
+        stringResource(R.string.settings_summary_audio, config.audioBitrate / 1_000),
+    )
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_audio_encoder))
@@ -659,7 +732,7 @@ private fun VideoEncodeSection(
                 )
             } else {
                 // Nilai hanya ditampilkan karena mengikuti setelan streaming.
-                InfoRow("Bitrate", bitrateText(config.videoBitrate))
+                InfoRow(stringResource(R.string.settings_bitrate), bitrateText(config.videoBitrate))
             }
             Hint(stringResource(R.string.settings_bitrate_rekaman_hint))
         }
@@ -687,7 +760,7 @@ private fun VideoEncodeSection(
             },
             valueRange = 0f..51f,
         )
-        InfoRow("Kualitas", "${config.cqLevel}")
+        InfoRow(stringResource(R.string.settings_quality), "${config.cqLevel}")
     }
     Hint(stringResource(R.string.settings_rate_control_hint))
     Hint(stringResource(R.string.settings_rate_control_cq_hint))
@@ -938,12 +1011,90 @@ private fun saveLocationLabel(location: SaveLocation): String = when (location) 
 
 @Composable
 private fun GeneralSettings() {
+    val accent by Appearance.accent.collectAsState()
+    val amoled by Appearance.amoled.collectAsState()
+
     SectionTitle(stringResource(R.string.settings_general))
-    InfoRow(stringResource(R.string.settings_language), "Indonesia")
-    InfoRow(stringResource(R.string.settings_theme), "Gelap (cyan)")
+    // Bahasa aplikasi hanya bisa diganti mulai Android 13 (LocaleManager).
+    val context = LocalContext.current
+    var language by remember { mutableStateOf(AppLanguage.current(context)) }
+    if (AppLanguage.supported(context)) {
+        Text(stringResource(R.string.settings_language))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AppLanguage.tags.forEach { tag ->
+                FilterChip(
+                    selected = language == tag,
+                    onClick = {
+                        AppLanguage.set(context, tag)
+                        language = tag
+                    },
+                    label = {
+                        Text(
+                            stringResource(
+                                if (tag == "en") R.string.settings_language_en
+                                else R.string.settings_language_id,
+                            ),
+                        )
+                    },
+                )
+            }
+        }
+    } else {
+        InfoRow(stringResource(R.string.settings_language), stringResource(R.string.settings_language_id))
+        Hint(stringResource(R.string.settings_language_android13))
+    }
+
+    Spacer(Modifier.height(12.dp))
+    SectionTitle(stringResource(R.string.settings_theme))
+    Hint(stringResource(R.string.settings_accent_hint))
+    Spacer(Modifier.height(8.dp))
+    // Enam pilihan aksen; dipecah dua baris supaya tetap muat di layar sempit.
+    val choices = AccentChoice.entries
+    choices.chunked(3).forEach { row ->
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
+        ) {
+            row.forEach { choice ->
+                FilterChip(
+                    selected = accent == choice,
+                    onClick = { Appearance.setAccent(choice) },
+                    label = { Text(accentLabel(choice)) },
+                )
+            }
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.settings_amoled))
+            Hint(stringResource(R.string.settings_amoled_hint))
+        }
+        Switch(
+            checked = amoled,
+            onCheckedChange = { Appearance.setAmoled(it) },
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
     InfoRow(stringResource(R.string.settings_confirm_exit), stringResource(R.string.settings_unsupported_android))
     Hint(stringResource(R.string.settings_general_hint))
 }
+
+/** Nama aksen mengikuti bahasa aplikasi. */
+@Composable
+private fun accentLabel(choice: AccentChoice): String = stringResource(
+    when (choice) {
+        AccentChoice.Cyan -> R.string.settings_accent_cyan
+        AccentChoice.Green -> R.string.settings_accent_green
+        AccentChoice.Blue -> R.string.settings_accent_blue
+        AccentChoice.Purple -> R.string.settings_accent_purple
+        AccentChoice.Amber -> R.string.settings_accent_amber
+        AccentChoice.Pink -> R.string.settings_accent_pink
+    },
+)
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1031,7 +1182,7 @@ private fun LiveSettings(
             value = live.serverUrl,
             onValueChange = { onLiveConfigChange(live.copy(serverUrl = it)) },
             label = { Text(stringResource(R.string.settings_live_server_url)) },
-            placeholder = { Text("rtmp://server/aplikasi") },
+            placeholder = { Text(stringResource(R.string.settings_live_placeholder)) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1238,20 +1389,20 @@ private fun YoutubeAccountSection(
     ) { result ->
         val data = result.data
         if (result.resultCode != android.app.Activity.RESULT_OK || data == null) {
-            status = "Login dibatalkan"
+            status = context.getString(R.string.settings_login_cancelled)
             busy = false
             return@rememberLauncherForActivityResult
         }
         val authorization = try {
             Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(data)
         } catch (error: ApiException) {
-            status = error.message ?: "Login gagal"
+            status = error.message ?: context.getString(R.string.settings_login_failed)
             busy = false
             return@rememberLauncherForActivityResult
         }
         val token = authorization.accessToken
         if (token.isNullOrBlank()) {
-            status = "Google tidak mengembalikan token"
+            status = context.getString(R.string.settings_login_no_token)
             busy = false
             return@rememberLauncherForActivityResult
         }
@@ -1276,7 +1427,7 @@ private fun YoutubeAccountSection(
                 }
                 val token = authorization.accessToken
                 if (token.isNullOrBlank()) {
-                    status = "Google tidak mengembalikan token"
+                    status = context.getString(R.string.settings_login_no_token)
                     busy = false
                 } else {
                     scope.launch {
@@ -1286,7 +1437,7 @@ private fun YoutubeAccountSection(
                 }
             }
             .addOnFailureListener { error ->
-                status = error.message ?: "Login gagal"
+                status = error.message ?: context.getString(R.string.settings_login_failed)
                 busy = false
             }
     }
@@ -1409,8 +1560,10 @@ private fun AudioSettings(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = when (channel.id) {
-                        AudioChannelId.Internal -> "Audio desktop"
-                        AudioChannelId.Microphone -> "Mic/Auxiliary Audio"
+                        AudioChannelId.Internal ->
+                            stringResource(R.string.settings_channel_internal)
+                        AudioChannelId.Microphone ->
+                            stringResource(R.string.settings_channel_mic)
                         else -> channel.name
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -1418,10 +1571,10 @@ private fun AudioSettings(
                 Text(
                     text = when (channel.capture) {
                         com.rout.air.core.AudioCaptureKind.Playback ->
-                            "AudioPlaybackCapture dari aplikasi lain"
+                            stringResource(R.string.settings_channel_internal_desc)
 
                         com.rout.air.core.AudioCaptureKind.Microphone ->
-                            "AudioRecord dari mikrofon perangkat"
+                            stringResource(R.string.settings_channel_mic_desc)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1472,7 +1625,7 @@ private fun AudioSettings(
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_meters))
     Text(
-        "Kecepatan turun meter",
+        stringResource(R.string.settings_meter_decay),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -1487,7 +1640,7 @@ private fun AudioSettings(
     }
     Spacer(Modifier.height(6.dp))
     Text(
-        "Tipe meter peak",
+        stringResource(R.string.settings_peak_type),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -1603,27 +1756,33 @@ private fun AdvancedSettings(
     SectionTitle(stringResource(R.string.settings_informasi))
     val caps = remember { EncoderProbe.all() }
     val encoder = EncoderProbe.select(caps, canvasConfig.videoCodec)
-    InfoRow("Versi", "1.0 (M4)")
-    InfoRow("Kanvas", "${canvasConfig.width}x${canvasConfig.height}")
-    InfoRow("Renderer", "OpenGL ES 3.0")
-    InfoRow("Codec", canvasConfig.videoCodec.label)
+    InfoRow(stringResource(R.string.settings_version), "1.0 (M4)")
     InfoRow(
-        "Encoder",
+        stringResource(R.string.settings_info_canvas),
+        "${canvasConfig.width}x${canvasConfig.height}",
+    )
+    InfoRow(stringResource(R.string.settings_renderer), "OpenGL ES 3.0")
+    InfoRow(stringResource(R.string.settings_codec), canvasConfig.videoCodec.label)
+    InfoRow(
+        stringResource(R.string.settings_encoder),
         encoder?.let {
             "${it.name} • ${if (it.hardware) "hardware" else "software"}"
-        } ?: "tidak tersedia",
+        } ?: stringResource(R.string.settings_encoder_missing),
     )
-    InfoRow("Audio", "AAC-LC + mixer aplikasi")
-    InfoRow("Kontrol bitrate", canvasConfig.bitrateMode.name)
+    InfoRow(
+        stringResource(R.string.settings_info_audio),
+        stringResource(R.string.settings_info_audio_value),
+    )
+    InfoRow(stringResource(R.string.settings_rate_control), canvasConfig.bitrateMode.name)
 
     Text(
-        "Encoder MediaCodec terdeteksi:",
+        stringResource(R.string.settings_encoder_scan),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (caps.isEmpty()) {
         Text(
-            "• pemindaian gagal atau tidak ada encoder",
+            stringResource(R.string.settings_encoder_scan_empty),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1636,9 +1795,12 @@ private fun AdvancedSettings(
             )
         }
     }
-    InfoRow("Profil", canvasConfig.videoProfile.name)
-    InfoRow("Warna", "${canvasConfig.colorSpace.name} • ${canvasConfig.colorRange.name}")
-    InfoRow("Jaringan", "RTMP/RTMPS • sambung ulang maks 8×")
+    InfoRow(stringResource(R.string.settings_profile), canvasConfig.videoProfile.name)
+    InfoRow(
+        stringResource(R.string.settings_color),
+        "${canvasConfig.colorSpace.name} • ${canvasConfig.colorRange.name}",
+    )
+    InfoRow(stringResource(R.string.settings_network), stringResource(R.string.settings_network_value))
 
     Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_performance))
@@ -1659,6 +1821,7 @@ private fun AdvancedSettings(
     Hint(stringResource(R.string.settings_encoder_test_hint))
 
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var testing by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf(emptyList<EncoderBenchmark.Result>()) }
     var runningCodec by remember { mutableStateOf<VideoCodec?>(null) }
@@ -1696,7 +1859,7 @@ private fun AdvancedSettings(
                         onResult = { results = results + it },
                     )
                 } catch (error: Throwable) {
-                    benchError = error.message ?: "Uji gagal"
+                    benchError = error.message ?: context.getString(R.string.settings_test_failed)
                 } finally {
                     // Tombol harus selalu aktif lagi, termasuk setelah gagal.
                     testing = false
@@ -1727,7 +1890,11 @@ private fun AdvancedSettings(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "${runningCodec?.label ?: "menyiapkan"} • sisa $secondsLeft detik",
+            text = stringResource(
+                R.string.settings_test_progress,
+                runningCodec?.label ?: stringResource(R.string.settings_test_preparing),
+                secondsLeft,
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1736,7 +1903,7 @@ private fun AdvancedSettings(
     benchError?.let { message ->
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "Uji gagal: $message",
+            text = stringResource(R.string.settings_test_failed_detail, message),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
@@ -1746,7 +1913,11 @@ private fun AdvancedSettings(
         Spacer(Modifier.height(4.dp))
         Text(
             text = if (result.error != null) {
-                "${result.codec.label}: gagal — ${result.error}"
+                stringResource(
+                    R.string.settings_test_codec_failed,
+                    result.codec.label,
+                    result.error ?: "",
+                )
             } else {
                 String.format(
                     java.util.Locale.US,
@@ -1780,17 +1951,16 @@ private fun AdvancedSettings(
     SectionTitle(stringResource(R.string.settings_diagnostik))
     Hint(stringResource(R.string.settings_setiap_rekaman_menulis_log_ke_download_r))
 
-    val context = LocalContext.current
     var exportMessage by remember { mutableStateOf<String?>(null) }
     Spacer(Modifier.height(8.dp))
     Button(
         onClick = {
             exportMessage = DiagLog.exportToDownloads(context)
-                ?.let { "Log diekspor ke $it" }
-                ?: "Gagal mengekspor log"
+                ?.let { exported -> context.getString(R.string.settings_log_exported, exported) }
+                ?: context.getString(R.string.settings_log_export_failed)
         },
     ) {
-        Text("Ekspor log ke Download")
+        Text(stringResource(R.string.settings_export_log))
     }
     exportMessage?.let { Hint(it) }
 }
@@ -1812,7 +1982,7 @@ private fun AutoConfigSection(
 
     SectionTitle(stringResource(R.string.settings_autoconfig_title))
     Hint(stringResource(R.string.settings_autoconfig_hint))
-    last?.let { Hint("Terakhir: $it") }
+    last?.let { Hint(stringResource(R.string.settings_last_result, it)) }
     Spacer(Modifier.height(8.dp))
     Button(onClick = { open = true }) {
         Text(stringResource(R.string.settings_autoconfig_start))
@@ -1879,7 +2049,7 @@ private fun GameLoadBenchmarkSection() {
     Hint(stringResource(R.string.settings_bench_overlay_hint))
 
     Spacer(Modifier.height(8.dp))
-    Text("Beban grafis", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_bench_graphic_load), style = MaterialTheme.typography.bodyMedium)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1890,13 +2060,13 @@ private fun GameLoadBenchmarkSection() {
             FilterChip(
                 selected = preset == item,
                 onClick = { preset = item },
-                label = { Text(item.label) },
+                label = { Text(stringResource(item.labelRes)) },
             )
         }
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Codec", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_codec), style = MaterialTheme.typography.bodyMedium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(VideoCodec.AVC, VideoCodec.HEVC).forEach { item ->
             FilterChip(
@@ -1908,7 +2078,7 @@ private fun GameLoadBenchmarkSection() {
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Resolusi", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_resolution), style = MaterialTheme.typography.bodyMedium)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1925,7 +2095,7 @@ private fun GameLoadBenchmarkSection() {
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("FPS", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_fps), style = MaterialTheme.typography.bodyMedium)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1936,23 +2106,23 @@ private fun GameLoadBenchmarkSection() {
             FilterChip(
                 selected = targetFps == item,
                 onClick = { targetFps = item },
-                label = { Text("$item fps") },
+                label = { Text(stringResource(R.string.settings_bench_fps_option, item)) },
             )
         }
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Bitrate", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_bitrate), style = MaterialTheme.typography.bodyMedium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(
             selected = !manualBitrate,
             onClick = { manualBitrate = false },
-            label = { Text("Otomatis") },
+            label = { Text(stringResource(R.string.settings_otomatis)) },
         )
         FilterChip(
             selected = manualBitrate,
             onClick = { manualBitrate = true },
-            label = { Text("Manual") },
+            label = { Text(stringResource(R.string.settings_bench_manual)) },
         )
     }
     val autoBitrate = GameLoadBenchmark.bitrateFor(
@@ -1975,29 +2145,28 @@ private fun GameLoadBenchmarkSection() {
         )
     } else {
         Hint(
-            "Otomatis: " + String.format(
-                java.util.Locale.US,
-                "%.1f Mbps",
-                effectiveBitrate / 1_000_000f,
-            ) + " untuk resolusi dan fps ini.",
+            stringResource(
+                R.string.settings_bench_auto_bitrate,
+                String.format(java.util.Locale.US, "%.1f Mbps", effectiveBitrate / 1_000_000f),
+            ),
         )
     }
 
     Spacer(Modifier.height(8.dp))
-    Text("Durasi", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_bench_duration), style = MaterialTheme.typography.bodyMedium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(1, 3, 5).forEach { item ->
             FilterChip(
                 selected = minutes == item,
                 onClick = { minutes = item },
-                label = { Text("$item menit") },
+                label = { Text(stringResource(R.string.settings_bench_minutes, item)) },
             )
         }
     }
 
     Spacer(Modifier.height(8.dp))
     Text(
-        "Traffic ${traffic.toInt()}% (kepadatan objek seperti setelan NTE)",
+        stringResource(R.string.settings_bench_traffic, traffic.toInt()),
         style = MaterialTheme.typography.bodyMedium,
     )
     Slider(
@@ -2014,17 +2183,18 @@ private fun GameLoadBenchmarkSection() {
     ) { keepAwake = it }
 
     SettingSwitchRow(
-        title = "Simpan rekaman MP4",
-        subtitle = "Ikut membebani penyimpanan; bisa ditonton untuk cek kualitas.",
+        title = stringResource(R.string.settings_bench_save_title),
+        subtitle = stringResource(R.string.settings_bench_save_desc),
         checked = saveVideo,
     ) { saveVideo = it }
     if (saveVideo) {
         val estimateMb = effectiveBitrate / 8L * (minutes * 60) / 1_000_000.0
         Hint(
-            "Perkiraan file: " +
-                String.format(java.util.Locale.US, "%.0f MB", estimateMb) +
-                " • " +
+            stringResource(
+                R.string.settings_bench_estimate,
+                String.format(java.util.Locale.US, "%.0f MB", estimateMb),
                 String.format(java.util.Locale.US, "%.1f Mbps", effectiveBitrate / 1_000_000f),
+            ),
         )
     }
 
@@ -2084,28 +2254,56 @@ private fun GameLoadBenchmarkSection() {
         )
         Spacer(Modifier.height(4.dp))
         Hint(
-            "fps detik terakhir: $fpsNow • ${resolution.width}x${resolution.height} @ $targetFps • " +
-                "${GameLoadBenchmark.effectiveObjects(preset, traffic.toInt())} objek",
+            stringResource(
+                R.string.settings_bench_live_line,
+                fpsNow,
+                resolution.width,
+                resolution.height,
+                targetFps,
+                GameLoadBenchmark.effectiveObjects(preset, traffic.toInt()),
+            ),
         )
     }
 
     failure?.let {
         Spacer(Modifier.height(4.dp))
-        Text("Benchmark gagal: $it", color = MaterialTheme.colorScheme.error)
+        Text(
+            stringResource(R.string.settings_bench_failed, it),
+            color = MaterialTheme.colorScheme.error,
+        )
     }
 
     result?.let { data ->
         Spacer(Modifier.height(8.dp))
         Text(
-            "${data.codec.label} • ${data.preset.label} • ${data.width}x${data.height}@${data.targetFps}",
+            stringResource(
+                R.string.settings_bench_result_line,
+                data.codec.label,
+                stringResource(data.preset.labelRes),
+                data.width,
+                data.height,
+                data.targetFps,
+            ),
             style = MaterialTheme.typography.bodyMedium,
         )
-        InfoRow("fps rata-rata", String.format(java.util.Locale.US, "%.1f", data.avgFps))
-        InfoRow("fps terburuk", String.format(java.util.Locale.US, "%.1f", data.worstFps))
-        InfoRow("frame / telat", "${data.frames} / ${data.lateFrames}")
-        InfoRow("bitrate", "${data.bitrateKbps} kbps")
-        InfoRow("termal tertinggi", data.thermalMax)
-        data.uri?.let { InfoRow("video", it) }
+        InfoRow(
+            stringResource(R.string.settings_bench_avg_fps),
+            String.format(java.util.Locale.US, "%.1f", data.avgFps),
+        )
+        InfoRow(
+            stringResource(R.string.settings_bench_worst_fps),
+            String.format(java.util.Locale.US, "%.1f", data.worstFps),
+        )
+        InfoRow(
+            stringResource(R.string.settings_bench_frames_late),
+            "${data.frames} / ${data.lateFrames}",
+        )
+        InfoRow(stringResource(R.string.settings_bench_bitrate), "${data.bitrateKbps} kbps")
+        InfoRow(
+            stringResource(R.string.settings_bench_thermal),
+            stringResource(data.thermalMax.labelRes),
+        )
+        data.uri?.let { InfoRow(stringResource(R.string.settings_bench_video), it) }
         Text(
             verdict(data),
             style = MaterialTheme.typography.bodyMedium,
@@ -2119,11 +2317,14 @@ private fun GameLoadBenchmarkSection() {
 }
 
 /** Kesimpulan singkat dari angka benchmark. */
+@Composable
 private fun verdict(result: GameLoadBenchmark.Result): String = when {
-    result.error != null -> "Gagal: ${result.error}"
-    result.avgFps >= result.targetFps * 0.95 -> "60 fps tercapai"
-    result.worstFps < result.targetFps * 0.6 -> "Tidak stabil; turunkan preset atau traffic"
-    else -> "Mendekati target; coba preset lebih rendah"
+    result.error != null -> stringResource(R.string.settings_bench_verdict_failed, result.error)
+    result.avgFps >= result.targetFps * 0.95 -> stringResource(R.string.settings_bench_verdict_ok)
+    result.worstFps < result.targetFps * 0.6 ->
+        stringResource(R.string.settings_bench_verdict_unstable)
+
+    else -> stringResource(R.string.settings_bench_verdict_close)
 }
 
 /** Template resolusi benchmark; semua sisi genap. */

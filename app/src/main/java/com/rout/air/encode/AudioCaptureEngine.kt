@@ -102,7 +102,7 @@ class AudioCaptureEngine(
 
             val tracks = mix.outputTracks and 0x3F
             val ids = (1..6).filter { tracks and (1 shl (it - 1)) != 0 }
-            if (ids.isEmpty()) error("Tidak ada track audio yang dipilih")
+            if (ids.isEmpty()) error(com.rout.air.data.Msg.get(com.rout.air.R.string.error_no_audio_track))
 
             val created = mutableListOf<TrackEncoder>()
             try {
@@ -625,7 +625,7 @@ class AudioCaptureEngine(
             channelMask,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        check(minBuffer > 0) { "Perangkat tidak mendukung audio $sampleRate Hz" }
+        check(minBuffer > 0) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_audio_device_rate, sampleRate) }
 
         val builder = AudioRecord.Builder()
             .setAudioFormat(
@@ -1065,7 +1065,7 @@ class AudioCaptureEngine(
                 channelMask,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
-            check(minBuffer > 0) { "AudioTrack tidak mendukung audio $sampleRate Hz" }
+            check(minBuffer > 0) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_audiotrack_rate, sampleRate) }
 
             AudioTrack.Builder()
                 .setAudioAttributes(

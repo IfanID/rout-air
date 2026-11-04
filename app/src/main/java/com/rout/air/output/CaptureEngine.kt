@@ -2,7 +2,10 @@ package com.rout.air.output
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
+import android.widget.Toast
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.LiveConfig
 import com.rout.air.core.LiveStats
@@ -56,6 +59,10 @@ object CaptureEngine {
     private var programHeight = 0
 
     private var pipeline: RecordingPipeline? = null
+
+    /** Konteks aplikasi untuk pesan singkat; diisi saat sesi dimulai. */
+    @Volatile
+    private var appContext: Context? = null
 
     /** Ukuran kanvas sesi aktif, dipakai overlay untuk rasio pratinjau. */
     @Volatile
@@ -136,6 +143,7 @@ object CaptureEngine {
         val programW: Int
         val programH: Int
 
+        appContext = context.applicationContext
         sessionWidth = config.width
         sessionHeight = config.height
         synchronized(lock) {
@@ -179,6 +187,16 @@ object CaptureEngine {
                     _liveStats.value = live.copy(fps = lastEncoderFps)
                 }
             },
+            onReplaySaved = { ok, detail ->
+                Handler(Looper.getMainLooper()).post {
+                    val message = if (ok) {
+                        context.getString(com.rout.air.R.string.replay_saved)
+                    } else {
+                        detail
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            },
             onLiveStats = { live ->
                 // Snapshot dari RtmpSink tidak memuat FPS; isi dari nilai
                 // encoder terakhir supaya label tidak berkedip ke 0.
@@ -213,6 +231,21 @@ object CaptureEngine {
 
     fun stopRecording() {
         synchronized(lock) { pipeline }?.stopRecording()
+    }
+
+    /** Menyimpan isi replay buffer saat ini (tombol di overlay rekaman). */
+    fun saveReplay() {
+        val active = synchronized(lock) { pipeline }
+        val message = if (active == null) {
+            appContext?.getString(com.rout.air.R.string.replay_not_active)
+        } else {
+            null
+        }
+        if (active != null) {
+            active.saveReplay()
+        } else {
+            appContext?.let { Toast.makeText(it, message, Toast.LENGTH_SHORT).show() }
+        }
     }
 
     fun startLive(config: LiveConfig) {
@@ -282,7 +315,8 @@ object CaptureEngine {
     fun reportPermissionCancelled() {
         if (!_sessionActive.value) {
             _state.value = RecordingState.Error(
-                "Izin tangkap layar dibatalkan • tekan ikon izin di kanan atas untuk mencoba lagi",
+                appContext?.getString(com.rout.air.R.string.capture_permission_cancelled)
+                    .orEmpty(),
             )
         }
     }

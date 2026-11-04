@@ -25,6 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.rout.air.core.AutoConfigPlan
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 import com.rout.air.data.DiagLog
 import com.rout.air.core.CaptureConfig
 import com.rout.air.core.LiveConfig
@@ -49,6 +51,7 @@ fun AutoConfigWizardDialog(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var target by remember { mutableStateOf(AutoConfigPlan.Target.Streaming) }
     var codec by remember { mutableStateOf(VideoCodec.AVC) }
     var preference by remember { mutableStateOf(AutoConfigPlan.FpsPreference.PreferHighFps) }
@@ -74,10 +77,17 @@ fun AutoConfigWizardDialog(
                 ).take(3)
                 val probes = mutableListOf<AutoConfigPlan.Probe>()
                 for ((index, candidate) in candidates.withIndex()) {
-                    log = log + "Menguji ${candidate.width}x${candidate.height}@${candidate.fps}…"
+                    log = log + context.getString(
+                        R.string.wizard_testing,
+                        candidate.width,
+                        candidate.height,
+                        candidate.fps,
+                    )
                     val probe = ConfigProbe.run(candidate, codec, seconds = 4)
                     probes += probe
-                    val status = if (probe.passes()) "lulus" else "kurang"
+                    val status = context.getString(
+                        if (probe.passes()) R.string.wizard_pass else R.string.wizard_fail,
+                    )
                     log = log.dropLast(1) + buildString {
                         append(candidate.width)
                         append('x')
@@ -105,7 +115,10 @@ fun AutoConfigWizardDialog(
                 var uploadKbps: Int? = null
                 if (target == AutoConfigPlan.Target.Streaming) {
                     if (live.isConfigured) {
-                        log = log + "Tes upload ${tentative.bitrateKbps / 1000} Mbps…"
+                        log = log + context.getString(
+                            R.string.wizard_upload_testing,
+                            tentative.bitrateKbps / 1000,
+                        )
                         val upload = UploadProbe.measure(live, tentative.bitrateKbps)
                         uploadKbps = upload.recommendedKbps.takeIf { it > 0 }
                         log = log.dropLast(1) + buildString {
@@ -115,7 +128,7 @@ fun AutoConfigWizardDialog(
                             upload.note?.let { append(" • ").append(it) }
                         }
                     } else {
-                        log = log + "Tes upload dilewati: stream key belum diisi"
+                        log = log + context.getString(R.string.wizard_upload_skipped)
                     }
                 }
 
@@ -128,12 +141,13 @@ fun AutoConfigWizardDialog(
                 ).also { data ->
                     DiagLog.line(
                         "setup: ${data.width}x${data.height}@${data.fps} " +
-                            "${data.codec.label} ${data.bitrateKbps}kbps • ${data.reason}",
+                            "${data.codec.label} ${data.bitrateKbps}kbps • " +
+                                reasonText(context, data),
                     )
                 }
                 progress = 1f
             } catch (error: Throwable) {
-                failure = error.message ?: "Diagnosa gagal"
+                failure = error.message ?: context.getString(R.string.wizard_failed)
             } finally {
                 running = false
             }
@@ -142,7 +156,7 @@ fun AutoConfigWizardDialog(
 
     AlertDialog(
         onDismissRequest = { if (!running) onDismiss() },
-        title = { Text("Setup otomatis") },
+        title = { Text(stringResource(R.string.settings_autoconfig_title)) },
         text = {
             Column(
                 modifier = Modifier
@@ -151,30 +165,32 @@ fun AutoConfigWizardDialog(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    "Pilih tujuan, lalu RoutAir menguji kemampuan HP dan " +
-                        "menyarankan resolusi, fps, dan bitrate.",
+                    stringResource(R.string.wizard_hint),
                     style = MaterialTheme.typography.bodySmall,
                 )
 
                 Spacer(Modifier.height(8.dp))
-                Text("Tujuan", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.wizard_target), style = MaterialTheme.typography.bodyMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = target == AutoConfigPlan.Target.Streaming,
                         onClick = { target = AutoConfigPlan.Target.Streaming },
                         enabled = !running,
-                        label = { Text("Siaran") },
+                        label = { Text(stringResource(R.string.wizard_streaming)) },
                     )
                     FilterChip(
                         selected = target == AutoConfigPlan.Target.Recording,
                         onClick = { target = AutoConfigPlan.Target.Recording },
                         enabled = !running,
-                        label = { Text("Rekaman") },
+                        label = { Text(stringResource(R.string.wizard_recording)) },
                     )
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("Codec", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.settings_codec),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(VideoCodec.AVC, VideoCodec.HEVC).forEach { item ->
                         FilterChip(
@@ -187,7 +203,10 @@ fun AutoConfigWizardDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                Text("Preferensi fps", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.wizard_fps_preference),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -199,7 +218,7 @@ fun AutoConfigWizardDialog(
                             selected = preference == item,
                             onClick = { preference = item },
                             enabled = !running,
-                            label = { Text(item.label) },
+                            label = { Text(fpsPreferenceLabel(item)) },
                         )
                     }
                 }
@@ -226,23 +245,38 @@ fun AutoConfigWizardDialog(
 
                 result?.let { data ->
                     Spacer(Modifier.height(12.dp))
-                    Text("Rekomendasi", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "${data.width}x${data.height} @ ${data.fps} fps • ${data.codec.label}",
+                        stringResource(R.string.wizard_recommendation),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        stringResource(
+                            R.string.wizard_result_line,
+                            data.width,
+                            data.height,
+                            data.fps,
+                            data.codec.label,
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "Bitrate ${data.bitrateKbps / 1000} Mbps • ${data.reason}",
+                        stringResource(
+                            R.string.wizard_result_bitrate,
+                            data.bitrateKbps / 1000,
+                            reasonText(context, data),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
-                        "Preferensi: ${preference.label}",
+                        stringResource(
+                            R.string.wizard_preference_line,
+                            fpsPreferenceLabel(preference),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Angka ini dari uji encoder. Bila rekaman game tersendat, " +
-                            "turunkan resolusi atau jalankan benchmark beban game.",
+                        stringResource(R.string.wizard_footer_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -267,14 +301,53 @@ fun AutoConfigWizardDialog(
                         ),
                     )
                     onDismiss()
-                }) { Text("Terapkan") }
+                }) { Text(stringResource(R.string.wizard_apply)) }
 
-                !running -> TextButton(onClick = { start() }) { Text("Mulai diagnosa") }
-                else -> TextButton(onClick = {}, enabled = false) { Text("Menguji…") }
+                !running -> TextButton(onClick = { start() }) {
+                    Text(stringResource(R.string.wizard_start))
+                }
+
+                else -> TextButton(onClick = {}, enabled = false) {
+                    Text(stringResource(R.string.wizard_testing_button))
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !running) { Text("Batal") }
+            TextButton(onClick = onDismiss, enabled = !running) {
+                Text(stringResource(R.string.common_batal))
+            }
         },
     )
+}
+
+/** Label preferensi fps mengikuti bahasa aplikasi. */
+@Composable
+private fun fpsPreferenceLabel(preference: AutoConfigPlan.FpsPreference): String =
+    stringResource(
+        when (preference) {
+            AutoConfigPlan.FpsPreference.PreferHighFps -> R.string.wizard_prefer_fps
+            AutoConfigPlan.FpsPreference.PreferHighRes -> R.string.wizard_prefer_res
+            AutoConfigPlan.FpsPreference.Force30 -> R.string.wizard_force_30
+            AutoConfigPlan.FpsPreference.Force60 -> R.string.wizard_force_60
+        },
+    )
+
+/** Alasan rekomendasi disusun di UI supaya bisa diterjemahkan. */
+private fun reasonText(
+    context: android.content.Context,
+    data: AutoConfigPlan.Recommendation,
+): String {
+    if (data.noCandidate) return context.getString(R.string.wizard_reason_no_candidate)
+    val label = "${data.height}p${data.fps}"
+    val fps = String.format(Locale.US, "%.1f", data.achievedFps)
+    val base = context.getString(
+        if (data.passed) R.string.wizard_reason_passed else R.string.wizard_reason_fallback,
+        label,
+        fps,
+    )
+    return base + if (data.uploadLimited) {
+        context.getString(R.string.wizard_reason_upload)
+    } else {
+        ""
+    }
 }

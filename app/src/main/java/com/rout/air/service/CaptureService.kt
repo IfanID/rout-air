@@ -212,19 +212,27 @@ class CaptureService : Service() {
         val recording = state as? RecordingState.Recording
         val liveOn = live.status == LiveStatus.Live
         val text = when (state) {
-            RecordingState.Preparing -> "Menyiapkan tangkap layar"
-            RecordingState.Previewing -> if (liveOn) "Live aktif" else "Pratinjau aktif, siap merekam"
-            is RecordingState.Recording -> when {
-                liveOn && state.isPaused -> "Rekaman dijeda • Live"
-                liveOn -> "Merekam + Live"
-                state.isPaused -> "Rekaman dijeda"
-                else -> "Merekam layar"
-            }
+            RecordingState.Preparing -> getString(R.string.notif_preparing)
+            RecordingState.Previewing -> getString(
+                if (liveOn) R.string.notif_live_active
+                else R.string.notif_preview_ready,
+            )
+
+            is RecordingState.Recording -> getString(
+                when {
+                    liveOn && state.isPaused -> R.string.notif_paused_live
+                    liveOn -> R.string.notif_recording_live
+                    state.isPaused -> R.string.notif_paused
+                    else -> R.string.notif_recording
+                },
+            )
 
             is RecordingState.Error -> state.message
-            RecordingState.Idle -> "Tidak ada rekaman"
+            RecordingState.Idle -> getString(R.string.notif_idle)
         }
-        val actionLabel = if (recording != null) "Hentikan" else "Tutup"
+        val actionLabel = getString(
+            if (recording != null) R.string.notif_action_stop else R.string.notif_action_close,
+        )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RoutAir")
@@ -235,7 +243,10 @@ class CaptureService : Service() {
         if (recording != null) {
             builder.addAction(
                 0,
-                if (recording.isPaused) "Lanjutkan" else "Jeda",
+                getString(
+                    if (recording.isPaused) R.string.notif_action_resume
+                    else R.string.notif_action_pause,
+                ),
                 pauseIntent,
             )
         }
@@ -248,10 +259,10 @@ class CaptureService : Service() {
     private fun createChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Perekaman layar",
+            getString(R.string.notif_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Notifikasi selama RoutAir merekam layar"
+            description = getString(R.string.notif_channel_desc)
             setShowBadge(false)
         }
         notificationManager().createNotificationChannel(channel)

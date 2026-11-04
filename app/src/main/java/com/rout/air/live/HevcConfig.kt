@@ -161,7 +161,7 @@ object HevcConfig {
             var zeros = 0
             while (bit() == 0) {
                 zeros++
-                require(zeros <= 31) { "Exp-Golomb tidak valid" }
+                require(zeros <= 31) { com.rout.air.data.Msg.get(com.rout.air.R.string.error_exp_golomb) }
             }
             if (zeros == 0) return 0
             return (1 shl zeros) - 1 + bits(zeros)

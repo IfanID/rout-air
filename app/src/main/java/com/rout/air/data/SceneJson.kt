@@ -57,6 +57,12 @@ internal object SceneJson {
                         put("audioDeviceType", s.settings.audioDeviceType)
                         put("audioScoEnabled", s.settings.audioScoEnabled)
                         s.settings.screenDisplay?.let { put("screenDisplay", it.name) }
+                        put("cameraFacing", s.settings.cameraFacing)
+                        s.settings.mediaPath?.let { put("mediaPath", it) }
+                        s.settings.browserUrl?.let { put("browserUrl", it) }
+                        s.settings.groupSceneId?.let { put("groupSceneId", it) }
+                        put("imagePaths", JSONArray(s.settings.imagePaths))
+                        put("slideIntervalSec", s.settings.slideIntervalSec)
                     })
                     put("filters", JSONArray().apply {
                         s.filters.forEach { filter ->
@@ -150,6 +156,14 @@ internal object SceneJson {
                     audioDeviceName = s.optString("audioDeviceName").takeIf { it.isNotBlank() },
                     audioDeviceType = s.optInt("audioDeviceType", 0),
                     audioScoEnabled = s.optBoolean("audioScoEnabled", false),
+                    cameraFacing = s.optInt("cameraFacing", 0),
+                    mediaPath = s.optString("mediaPath").takeIf { it.isNotBlank() },
+                    browserUrl = s.optString("browserUrl").takeIf { it.isNotBlank() },
+                    groupSceneId = s.optString("groupSceneId").takeIf { it.isNotBlank() },
+                    imagePaths = s.optJSONArray("imagePaths")
+                        ?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }
+                        .orEmpty(),
+                    slideIntervalSec = s.optInt("slideIntervalSec", 5),
                     screenDisplay = s.optString("screenDisplay")
                         .takeIf { it.isNotBlank() }
                         ?.let { name ->

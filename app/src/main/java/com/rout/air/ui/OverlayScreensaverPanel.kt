@@ -58,12 +58,13 @@ internal fun OverlayScreensaverPanel() {
         )
         if (entries.isEmpty()) {
             Text(
-                text = "Belum ada tampilan jeda. Tambahkan gambar di halaman Adegan.",
+                text = stringResource(R.string.overlay_saver_empty),
                 color = Color(0xFFB8C2CC),
                 fontSize = 10.sp,
             )
             return@Column
         }
+        val failText = stringResource(R.string.overlay_saver_failed)
         entries.forEach { entry ->
             val shown = shown(entry.id, activeId)
             Row(
@@ -77,7 +78,7 @@ internal fun OverlayScreensaverPanel() {
                             error = null
                             activeId = entry.id
                         } else {
-                            error = "Gagal menampilkan layar jeda"
+                            error = failText
                         }
                     }
                     .padding(vertical = 5.dp),
@@ -122,7 +123,7 @@ internal fun OverlayScreensaverPanel() {
                 activeId = null
             }) {
                 Text(
-                    text = "Matikan layar jeda",
+                    text = stringResource(R.string.overlay_saver_off),
                     style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFFFF8A8A),
                 )

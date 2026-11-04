@@ -222,7 +222,9 @@ private fun shareRecording(context: Context, uri: Uri) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     try {
-        context.startActivity(Intent.createChooser(intent, "Bagikan rekaman"))
+        context.startActivity(
+            Intent.createChooser(intent, context.getString(R.string.recordings_bagikan_rekaman)),
+        )
     } catch (_: ActivityNotFoundException) {
         Log.w("RoutAirRecordings", "Tidak ada aplikasi untuk membagikan")
     }

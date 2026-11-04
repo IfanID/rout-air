@@ -72,8 +72,7 @@ internal fun ApplicationAudioPickerDialog(
             Column(Modifier.padding(14.dp)) {
                 Text(stringResource(R.string.audio_application_audio_capture), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Pilih aplikasi yang suaranya ingin direkam. Hanya aplikasi yang " +
-                        "mengizinkan AudioPlaybackCapture yang akan menghasilkan suara.",
+                    stringResource(R.string.audio_app_picker_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -95,7 +94,7 @@ internal fun ApplicationAudioPickerDialog(
                 ) {
                     if (filtered.isEmpty()) {
                         Text(
-                            "Tidak ada aplikasi yang cocok.",
+                            stringResource(R.string.audio_app_picker_empty),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(8.dp),

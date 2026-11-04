@@ -196,7 +196,11 @@ class VideoEncoder(
         }
 
         throw IllegalStateException(
-            "Encoder ${requestedCodec.label} tidak bisa disiapkan: ${lastError?.message}",
+            com.rout.air.data.Msg.get(
+                com.rout.air.R.string.error_encoder_setup,
+                requestedCodec.label,
+                lastError?.message ?: "",
+            ),
             lastError,
         )
     }

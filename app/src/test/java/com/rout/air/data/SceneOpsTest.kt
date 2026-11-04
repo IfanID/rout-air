@@ -199,7 +199,7 @@ class SceneOpsTest {
     fun defaultScene_allowsMovingScreen() {
         // Layar tidak dikunci supaya posisi bisa diatur saat kanvas berbeda
         // orientasi dengan tangkapan.
-        val collection = SceneCollection.default(1920, 1080)
+        val collection = SceneCollection.default(1920, 1080, "Layar", "Adegan 1")
 
         assertFalse(collection.scenes.first().items.first().locked)
     }

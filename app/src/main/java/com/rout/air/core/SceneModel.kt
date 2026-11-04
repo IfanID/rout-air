@@ -20,6 +20,21 @@ enum class SourceType {
 
     /** Sumber audio output/desktop seperti OBS. */
     AudioOutput,
+
+    /** Kamera perangkat; hanya tampil saat sesi tangkap aktif. */
+    Camera,
+
+    /** Video lokal yang diputar berulang sebagai sumber. */
+    Media,
+
+    /** Halaman web yang diambil sebagai gambar berkala. */
+    Browser,
+
+    /** Grup: adegan lain yang digambar sebagai satu lapisan. */
+    Group,
+
+    /** Beberapa gambar bergantian sesuai interval. */
+    SlideShow,
 }
 
 /**
@@ -146,6 +161,18 @@ data class SourceSettings(
     val audioScoEnabled: Boolean = false,
     /** Arah tampil sumber Layar; null/`Auto` mengikuti tangkapan. */
     val screenDisplay: ScreenDisplay? = null,
+    /** 0 = kamera belakang, 1 = depan. */
+    val cameraFacing: Int = 0,
+    /** Path video lokal untuk sumber [SourceType.Media]. */
+    val mediaPath: String? = null,
+    /** URL halaman untuk sumber [SourceType.Browser]. */
+    val browserUrl: String? = null,
+    /** Scene yang dipakai sumber [SourceType.Group]. */
+    val groupSceneId: String? = null,
+    /** Daftar gambar untuk [SourceType.SlideShow]. */
+    val imagePaths: List<String> = emptyList(),
+    /** Detik per gambar pada slide show. */
+    val slideIntervalSec: Int = 5,
 )
 
 /** Sumber (source) yang bisa dipakai banyak item. */
@@ -188,10 +215,15 @@ data class SceneCollection(
          * Adegan awal: satu sumber layar penuh. Ukuran asli sumber layar
          * mengikuti kanvas, jadi transform identitas sudah memenuhi bidikan.
          */
-        fun default(canvasWidth: Int, canvasHeight: Int): SceneCollection {
-            val screen = SceneSource(type = SourceType.Screen, name = "Layar")
+        fun default(
+            canvasWidth: Int,
+            canvasHeight: Int,
+            screenName: String,
+            sceneName: String,
+        ): SceneCollection {
+            val screen = SceneSource(type = SourceType.Screen, name = screenName)
             val scene = Scene(
-                name = "Adegan 1",
+                name = sceneName,
                 // Layar dikunci default supaya komposisi tidak bergeser saat
                 // mengatur item lain. Buka lewat ikon gembok bila perlu digeser.
                 // Tidak dikunci: posisi layar perlu bisa diatur, mis. saat

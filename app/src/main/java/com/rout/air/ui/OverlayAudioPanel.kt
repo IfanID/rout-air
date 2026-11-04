@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import com.rout.air.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,7 +50,10 @@ internal fun OverlayAudioPanel() {
         ) {
             MixerIconButton(
                 onClick = { AudioMixer.setMasterEnabled(!mix.masterEnabled) },
-                description = if (mix.masterEnabled) "Matikan audio" else "Aktifkan audio",
+                description = stringResource(
+                    if (mix.masterEnabled) R.string.overlay_audio_off
+                    else R.string.overlay_audio_on,
+                ),
                 active = !mix.masterEnabled,
                 activeColor = Color(0xFFFF4C4C),
             ) { color -> SpeakerIcon(!mix.masterEnabled, color, 14.dp) }
@@ -88,7 +93,9 @@ internal fun OverlayAudioPanel() {
                             val current = AudioMixer.mix.value.channel(channel.id)
                             AudioMixer.update(current.copy(muted = !current.muted))
                         },
-                        description = if (channel.muted) "Aktifkan suara" else "Bisukan",
+                        description = stringResource(
+                            if (channel.muted) R.string.audio_unmute else R.string.audio_mute,
+                        ),
                         active = channel.muted,
                         activeColor = Color(0xFFFF4C4C),
                     ) { color -> SpeakerIcon(channel.muted, color, 14.dp) }

@@ -326,7 +326,11 @@ object ChatMonitor {
         var failures = 0
         while (currentCoroutineContext().isActive) {
             if (!GoogleAuth.available(context)) {
-                publish(ChatState(status = "Google Play Services tidak tersedia"))
+                publish(
+                    ChatState(
+                        status = context.getString(com.rout.air.R.string.error_play_services),
+                    ),
+                )
                 delay(30_000)
                 continue
             }
@@ -376,7 +380,9 @@ object ChatMonitor {
                     info = null
                     failures = 0
                 }
-                state.update { it.copy(status = "Gagal memuat chat") }
+                state.update {
+                    it.copy(status = context.getString(com.rout.air.R.string.error_chat_load))
+                }
                 delay(10_000)
                 continue
             }

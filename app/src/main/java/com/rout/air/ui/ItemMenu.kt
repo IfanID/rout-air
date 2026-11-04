@@ -128,7 +128,11 @@ internal fun ItemContextMenu(
                     DropdownMenuItem(
                         text = {
                             Text(
-                                "Filter" + if (source.filters.isNotEmpty()) " (aktif)" else "",
+                                if (source.filters.isNotEmpty()) {
+                                    stringResource(R.string.item_filter_active)
+                                } else {
+                                    stringResource(R.string.item_filter)
+                                },
                             )
                         },
                         onClick = { page = MenuPage.Filters },
@@ -150,11 +154,25 @@ internal fun ItemContextMenu(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text(if (item.locked) "Buka kunci" else "Kunci") },
+                    text = {
+                        Text(
+                            stringResource(
+                                if (item.locked) R.string.item_unlock
+                                else R.string.item_lock,
+                            ),
+                        )
+                    },
                     onClick = { applyItem(item.copy(locked = !item.locked)) },
                 )
                 DropdownMenuItem(
-                    text = { Text(if (item.visible) "Sembunyikan" else "Tampilkan") },
+                    text = {
+                        Text(
+                            stringResource(
+                                if (item.visible) R.string.icon_hide
+                                else R.string.icon_show,
+                            ),
+                        )
+                    },
                     onClick = { applyItem(item.copy(visible = !item.visible)) },
                 )
                 DropdownMenuItem(
@@ -293,7 +311,7 @@ internal fun ItemContextMenu(
                 val currentSource = source
                 if (currentSource == null) {
                     DropdownMenuItem(
-                        text = { Text("Sumber tidak ditemukan") },
+                        text = { Text(stringResource(R.string.item_source_missing)) },
                         onClick = { page = MenuPage.Main },
                     )
                 } else {
@@ -319,7 +337,10 @@ internal fun ItemContextMenu(
                             .width(300.dp)
                             .padding(horizontal = 14.dp, vertical = 4.dp),
                     ) {
-                        Text("Chroma Key", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            stringResource(R.string.item_chroma_key),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
                         FilterChip(
                             selected = chroma != null,
                             onClick = {
@@ -329,11 +350,21 @@ internal fun ItemContextMenu(
                                     setFilters(currentSource.filters - chroma)
                                 }
                             },
-                            label = { Text(if (chroma == null) "Nonaktif" else "Aktif") },
+                            label = {
+                            Text(
+                                stringResource(
+                                    if (chroma == null) R.string.common_nonaktif
+                                    else R.string.common_aktif,
+                                ),
+                            )
+                        },
                         )
                         if (chroma != null) {
                             Text(
-                                "Kemiripan ${"%.2f".format(java.util.Locale.US, chroma.similarity)}",
+                                stringResource(
+                                    R.string.item_chroma_similarity,
+                                    "%.2f".format(java.util.Locale.US, chroma.similarity),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(
@@ -350,7 +381,10 @@ internal fun ItemContextMenu(
                                 valueRange = 0f..1f,
                             )
                             Text(
-                                "Kelembutan ${"%.2f".format(java.util.Locale.US, chroma.smoothness)}",
+                                stringResource(
+                                    R.string.item_chroma_smoothness,
+                                    "%.2f".format(java.util.Locale.US, chroma.smoothness),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(
@@ -367,7 +401,10 @@ internal fun ItemContextMenu(
                                 valueRange = 0f..0.5f,
                             )
                             Text(
-                                "Kurangi pantulan ${"%.2f".format(java.util.Locale.US, chroma.spill)}",
+                                stringResource(
+                                    R.string.item_chroma_spill,
+                                    "%.2f".format(java.util.Locale.US, chroma.spill),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(
@@ -385,7 +422,10 @@ internal fun ItemContextMenu(
                             )
                         }
 
-                        Text("Koreksi warna", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            stringResource(R.string.item_color_correction),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
                         FilterChip(
                             selected = color != null,
                             onClick = {
@@ -397,11 +437,21 @@ internal fun ItemContextMenu(
                                     setFilters(currentSource.filters - color)
                                 }
                             },
-                            label = { Text(if (color == null) "Nonaktif" else "Aktif") },
+                            label = {
+                            Text(
+                                stringResource(
+                                    if (color == null) R.string.common_nonaktif
+                                    else R.string.common_aktif,
+                                ),
+                            )
+                        },
                         )
                         if (color != null) {
                             Text(
-                                "Kecerahan ${"%.2f".format(java.util.Locale.US, color.brightness)}",
+                                stringResource(
+                                    R.string.item_brightness,
+                                    "%.2f".format(java.util.Locale.US, color.brightness),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(
@@ -418,7 +468,10 @@ internal fun ItemContextMenu(
                                 valueRange = 0.5f..2f,
                             )
                             Text(
-                                "Kontras ${"%.2f".format(java.util.Locale.US, color.contrast)}",
+                                stringResource(
+                                    R.string.item_contrast,
+                                    "%.2f".format(java.util.Locale.US, color.contrast),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(
@@ -435,7 +488,10 @@ internal fun ItemContextMenu(
                                 valueRange = 0.5f..2f,
                             )
                             Text(
-                                "Saturasi ${"%.2f".format(java.util.Locale.US, color.saturation)}",
+                                stringResource(
+                                    R.string.item_saturation,
+                                    "%.2f".format(java.util.Locale.US, color.saturation),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Slider(

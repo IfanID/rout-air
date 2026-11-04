@@ -20,12 +20,17 @@ import java.util.Locale
  * dihapus bila perekaman gagal supaya tidak menyisakan file rusak.
  */
 class OutputTarget private constructor(
+    private val context: Context,
     val uri: Uri,
     private val descriptor: ParcelFileDescriptor,
-) {
-    val fileDescriptor get() = descriptor.fileDescriptor
+    override val displayName: String,
+) : MuxTarget {
+    override val fileDescriptor get() = descriptor.fileDescriptor
 
-    fun finish(context: Context, success: Boolean) {
+    /** Versi lama dengan context eksplisit; tetap dipakai pemanggil lain. */
+    fun finish(context: Context, success: Boolean) = finish(success)
+
+    override fun finish(success: Boolean) {
         try {
             descriptor.close()
         } catch (_: IOException) {
@@ -51,17 +56,22 @@ class OutputTarget private constructor(
             timestampMs: Long = System.currentTimeMillis(),
             nameTemplate: String = "RoutAir_{date}_{time}",
             noSpaceFileName: Boolean = false,
+            /** >1 dipakai split recording: nama diberi akhiran `_partN`. */
+            part: Int = 1,
+            /** Nama dasar part pertama, supaya semua part memakai cap waktu sama. */
+            baseName: String? = null,
         ): OutputTarget {
             val resolver = context.contentResolver
             val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestampMs))
             val time = SimpleDateFormat("HH-mm-ss", Locale.US).format(Date(timestampMs))
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
-            var name = nameTemplate
+            var name = baseName ?: nameTemplate
                 .replace("{date}", date)
                 .replace("{time}", time)
                 .replace("{datetime}", stamp)
                 .ifBlank { "RoutAir_$stamp" }
-            if (!name.contains(stamp) &&
+            if (baseName == null &&
+                !name.contains(stamp) &&
                 !nameTemplate.contains("{date}") &&
                 !nameTemplate.contains("{time}") &&
                 !nameTemplate.contains("{datetime}")
@@ -69,19 +79,25 @@ class OutputTarget private constructor(
                 name = "${name}_$stamp"
             }
             if (noSpaceFileName) name = name.replace(' ', '_')
+            val finalName = if (part > 1) "${name}_part$part" else name
             val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
+                put(MediaStore.Video.Media.DISPLAY_NAME, "$finalName.mp4")
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                 put(MediaStore.Video.Media.RELATIVE_PATH, location.relativePath)
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
 
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("Tidak bisa membuat berkas di ${location.relativePath}")
+                ?: throw IOException(
+                    context.getString(
+                        com.rout.air.R.string.error_create_file,
+                        location.relativePath,
+                    ),
+                )
             val descriptor = resolver.openFileDescriptor(uri, "w")
-                ?: throw IOException("Tidak bisa membuka berkas tujuan")
+                ?: throw IOException(context.getString(com.rout.air.R.string.error_open_file))
 
-            return OutputTarget(uri, descriptor)
+            return OutputTarget(context.applicationContext, uri, descriptor, finalName)
         }
 
         /**

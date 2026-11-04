@@ -162,7 +162,7 @@ class RtmpSink(
                     updateStatus(LiveStatus.Error, force = true)
                     break
                 } else {
-                    lastError = "Gagal terhubung ke server"
+                    lastError = com.rout.air.data.Msg.get(com.rout.air.R.string.error_server_connect)
                     attempt++
                     reconnects++
                     val delay = if (config.autoReconnect) ReconnectPolicy.delayMs(attempt) else null
@@ -239,7 +239,7 @@ class RtmpSink(
             val item = synchronized(lock) { queue.pollFirst() } ?: break
             runCatching { sendDirect(target, item.type, item.tag) }
                 .onFailure { error ->
-                    lastError = error.message ?: "Gagal mengirim data live"
+                    lastError = error.message ?: com.rout.air.data.Msg.get(com.rout.air.R.string.error_live_send)
                     connection = null
                     target.close()
                     synchronized(lock) { queue.addFirst(item) }

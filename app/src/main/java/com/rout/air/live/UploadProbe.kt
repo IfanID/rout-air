@@ -33,15 +33,20 @@ object UploadProbe {
         seconds: Int = 10,
     ): Result = withContext(Dispatchers.IO) {
         if (!config.isConfigured) {
-            return@withContext Result(0, 0, stable = false, note = "Stream key belum diisi")
+            return@withContext Result(0, 0, stable = false, note = com.rout.air.data.Msg.get(com.rout.air.R.string.error_stream_key_empty))
         }
         val endpoint = runCatching { RtmpEndpoint.parse(config.serverUrl, config.streamKey) }
-            .getOrElse { return@withContext Result(0, 0, false, it.message ?: "URL tidak valid") }
+            .getOrElse { return@withContext Result(0, 0, false, it.message ?: com.rout.air.data.Msg.get(com.rout.air.R.string.error_url_invalid)) }
 
         val connection = RtmpConnection(endpoint, config.username, config.password) { }
         try {
             if (!connection.connect(12_000L)) {
-                return@withContext Result(0, 0, false, "Gagal terhubung ke server")
+                return@withContext Result(
+                    0,
+                    0,
+                    false,
+                    com.rout.air.data.Msg.get(com.rout.air.R.string.error_server_connect),
+                )
             }
 
             // Sequence header minimal agar server mengenali stream video.
@@ -101,7 +106,7 @@ object UploadProbe {
                 stable = stable,
                 note = when {
                     framesSent == 0 -> "Tidak ada data terkirim"
-                    !stable -> "Upload tidak stabil; bitrate diturunkan"
+                    !stable -> com.rout.air.data.Msg.get(com.rout.air.R.string.error_upload_unstable)
                     else -> null
                 },
             )

@@ -87,6 +87,13 @@ data class CaptureConfig(
     /** Default mati: selalu fps penuh seperti OBS. */
     val staticThrottleEnabled: Boolean = false,
     val thermalThrottleEnabled: Boolean = false,
+    /** 0 = tanpa split; nilai lain = satu berkas baru tiap N menit. */
+    val splitMinutes: Int = 0,
+    /** >0 = split juga saat ukuran segmen mencapai N MB. */
+    val splitSizeMb: Int = 0,
+    /** Menahan N detik terakhir selama merekam untuk disimpan kapan saja. */
+    val replayBufferEnabled: Boolean = false,
+    val replaySeconds: Int = 60,
 ) {
     val aspectRatio: Float get() = width.toFloat() / height.toFloat()
 

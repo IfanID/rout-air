@@ -37,8 +37,8 @@ internal fun UrlSourceDialog(
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("URL") },
-                    placeholder = { Text("https://contoh.com/gambar.png") },
+                    label = { Text(stringResource(R.string.scenes_url_label)) },
+                    placeholder = { Text(stringResource(R.string.scenes_url_placeholder)) },
                     singleLine = true,
                     enabled = !loading,
                     modifier = Modifier.fillMaxWidth(),

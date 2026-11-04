@@ -443,7 +443,7 @@ class OverlayRecordingService : Service() {
         }
 
         // 1. Rekam/Stop, 2. Jeda/Lanjut, 3. kotak isi mata (pratinjau),
-        // 4. VU meter audio, 5-8 kosong, 9. buka Studio.
+        // 4. VU meter audio, 5. simpan replay, 6-8 kosong, 9. buka Studio.
         addCell(action, dp(32))
         addCell(pauseAction)
         addCell(
@@ -456,7 +456,11 @@ class OverlayRecordingService : Service() {
                 showContent(ContentMode.Vu)
             },
         )
-        addEmptyCell()
+        addCell(
+            toolButton(R.drawable.ic_replay, getString(R.string.overlay_replay)) {
+                CaptureEngine.saveReplay()
+            },
+        )
         addEmptyCell()
         addEmptyCell()
         addEmptyCell()

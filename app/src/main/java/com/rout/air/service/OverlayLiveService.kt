@@ -1538,7 +1538,7 @@ class OverlayLiveService : Service() {
                                                 hideLiveSetupOverlay()
                                                 startLiveNow()
                                             }.onFailure {
-                                                error = it.message ?: "Gagal membuat siaran."
+                                                error = it.message ?: getString(R.string.live_setup_failed)
                                             }
                                         }
                                     },

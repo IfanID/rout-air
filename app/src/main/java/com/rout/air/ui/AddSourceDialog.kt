@@ -48,6 +48,12 @@ internal fun AddSourceDialog(
     onText: () -> Unit,
     onColor: () -> Unit,
     onApplicationAudio: () -> Unit,
+    onCamera: () -> Unit,
+    onMedia: () -> Unit,
+    onBrowser: () -> Unit,
+    onGroup: () -> Unit,
+    onScene: () -> Unit,
+    onSlideshow: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -62,7 +68,7 @@ internal fun AddSourceDialog(
             Column(Modifier.padding(14.dp)) {
                 Text(stringResource(R.string.scenes_tambah_sumber), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Pilih jenis sumber yang ingin ditambahkan",
+                    stringResource(R.string.src_pick_type),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -73,8 +79,20 @@ internal fun AddSourceDialog(
                         .heightIn(max = 460.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    SourceOption("▣", "Layar", "Tangkap seluruh layar perangkat", !hasScreen, onScreen)
-                    SourceOption("▤", "Gambar", "File gambar dari galeri", true, onImage)
+                    SourceOption(
+                        "▣",
+                        stringResource(R.string.src_layar),
+                        stringResource(R.string.src_layar_desc),
+                        !hasScreen,
+                        onScreen,
+                    )
+                    SourceOption(
+                        "▤",
+                        stringResource(R.string.src_gambar),
+                        stringResource(R.string.src_gambar_desc),
+                        true,
+                        onImage,
+                    )
                     SourceOption(
                         "⛓",
                         stringResource(R.string.scenes_image_url),
@@ -82,34 +100,89 @@ internal fun AddSourceDialog(
                         true,
                         onImageUrl,
                     )
-                    SourceOption("T", "Teks", "Teks yang bisa diubah", true, onText)
-                    SourceOption("■", "Warna", "Latar warna solid", true, onColor)
+                    SourceOption(
+                        "T",
+                        stringResource(R.string.src_teks),
+                        stringResource(R.string.src_teks_desc),
+                        true,
+                        onText,
+                    )
+                    SourceOption(
+                        "■",
+                        stringResource(R.string.src_warna),
+                        stringResource(R.string.src_warna_desc),
+                        true,
+                        onColor,
+                    )
                     SourceOption(
                         "◉",
-                        "Tangkap audio aplikasi",
-                        "Suara satu aplikasi; kanal masuk ke tab Audio",
+                        stringResource(R.string.src_app_audio),
+                        stringResource(R.string.src_app_audio_desc),
                         true,
                         onApplicationAudio,
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Audio mikrofon dan audio internal dikelola di tab Audio.",
+                        stringResource(R.string.src_audio_note),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
+                    SourceOption(
+                        "▶",
+                        stringResource(R.string.src_media),
+                        stringResource(R.string.src_media_desc),
+                        true,
+                        onMedia,
+                    )
+                    SourceOption(
+                        "◨",
+                        stringResource(R.string.src_kamera),
+                        stringResource(R.string.src_kamera_desc),
+                        true,
+                        onCamera,
+                    )
+                    SourceOption(
+                        "◍",
+                        stringResource(R.string.src_browser),
+                        stringResource(R.string.src_browser_desc),
+                        true,
+                        onBrowser,
+                    )
+                    SourceOption(
+                        "▥",
+                        stringResource(R.string.src_grup),
+                        stringResource(R.string.src_grup_desc),
+                        true,
+                        onGroup,
+                    )
+                    SourceOption(
+                        "▦",
+                        stringResource(R.string.src_adegan),
+                        stringResource(R.string.src_adegan_desc),
+                        true,
+                        onScene,
+                    )
+                    SourceOption(
+                        "▤",
+                        stringResource(R.string.src_slideshow),
+                        stringResource(R.string.src_slideshow_desc),
+                        true,
+                        onSlideshow,
+                    )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Belum tersedia di Android",
+                        stringResource(R.string.src_belum_tersedia),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
-                    SourceOption("▶", "Sumber media", "File video/audio lokal", false) {}
-                    SourceOption("◨", "Kamera", "Perangkat tangkap video", false) {}
-                    SourceOption("▦", "Aplikasi", "Tangkap audio/jendela aplikasi", false) {}
-                    SourceOption("◍", "Browser", "Sumber browser", false) {}
-                    SourceOption("▥", "Grup", "Kelompokkan sumber", false) {}
+                    SourceOption(
+                        "▦",
+                        stringResource(R.string.src_aplikasi),
+                        stringResource(R.string.src_aplikasi_desc),
+                        false,
+                    ) {}
                 }
 
                 Spacer(Modifier.height(6.dp))
@@ -186,15 +259,17 @@ private val INPUT_TYPE_PRIORITY = listOf(
     AudioDeviceInfo.TYPE_LINE_DIGITAL,
 )
 
-private fun inputTypeLabel(type: Int): String = when (type) {
-    AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Mikrofon bawaan"
-    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth / TWS (SCO)"
-    AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Headset kabel"
+private fun inputTypeLabel(context: android.content.Context, type: Int): String = when (type) {
+    AudioDeviceInfo.TYPE_BUILTIN_MIC -> context.getString(R.string.audio_device_builtin)
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> context.getString(R.string.audio_device_bt)
+    AudioDeviceInfo.TYPE_WIRED_HEADSET -> context.getString(R.string.audio_device_wired)
     AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE,
-    AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB"
-    AudioDeviceInfo.TYPE_DOCK -> "Dock"
-    AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Line in"
-    else -> "Masukan audio"
+    AudioDeviceInfo.TYPE_USB_ACCESSORY -> context.getString(R.string.audio_device_usb)
+    AudioDeviceInfo.TYPE_DOCK -> context.getString(R.string.audio_device_dock)
+    AudioDeviceInfo.TYPE_LINE_ANALOG, AudioDeviceInfo.TYPE_LINE_DIGITAL ->
+        context.getString(R.string.audio_device_line)
+
+    else -> context.getString(R.string.audio_device_input_generic)
 }
 
 /**
@@ -216,7 +291,7 @@ internal fun loadAudioInputOptions(context: android.content.Context): List<Audio
             AudioInputOption(
                 id = it.id,
                 name = it.productName?.toString().orEmpty().ifEmpty { "Audio device ${it.id}" },
-                typeLabel = inputTypeLabel(it.type),
+                typeLabel = inputTypeLabel(context, it.type),
                 type = it.type,
             )
         }
@@ -251,7 +326,10 @@ internal fun AudioSourceSetupDialog(
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.padding(16.dp)) {
                 Text(
-                    if (audioInput) "Tambah input audio" else "Tambah output audio",
+                    stringResource(
+                        if (audioInput) R.string.src_add_audio_input
+                        else R.string.src_add_audio_output,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -266,7 +344,7 @@ internal fun AudioSourceSetupDialog(
                 if (audioInput) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Perangkat input",
+                        stringResource(R.string.src_input_device),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -296,12 +374,11 @@ internal fun AudioSourceSetupDialog(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    "Aktifkan SCO (mic Bluetooth)",
+                                    stringResource(R.string.scenes_aktifkan_sco_mic_bluetooth),
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Text(
-                                    "TWS memakai profil headset. Musik A2DP bisa berhenti " +
-                                        "atau turun kualitas selama mic TWS dipakai.",
+                                    stringResource(R.string.src_sco_hint),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -315,8 +392,7 @@ internal fun AudioSourceSetupDialog(
                 } else {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Menangkap audio playback dari aplikasi lain yang mengizinkan " +
-                            "AudioPlaybackCapture.",
+                        stringResource(R.string.src_playback_capture_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

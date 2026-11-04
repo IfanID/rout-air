@@ -85,7 +85,7 @@ class ScreensaverTest {
 
     @Test
     fun `nama layar jeda berikutnya memakai nomor`() {
-        val base = SceneCollection.default(1080, 2400)
+        val base = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
         val (once, _) = base.withScreensaverScene(1080, 2400, measure)
         val (twice, id) = once.addScreensaverScene(1080, 2400, measure)
         assertEquals("Layar Jeda 2", twice.scenes.first { it.id == id }.name)
@@ -94,7 +94,7 @@ class ScreensaverTest {
 
     @Test
     fun `scene layar jeda dikenali dari awalan nama`() {
-        val (next, _) = SceneCollection.default(1080, 2400)
+        val (next, _) = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
             .withScreensaverScene(1080, 2400, measure)
         val renamed = next.copy(
             scenes = next.scenes.map {
@@ -108,9 +108,9 @@ class ScreensaverTest {
     @Test
     fun `scene lama 1920x1080 digeser ke tengah kanvas portrait`() {
         val lama = buildScreensaverScene(1920, 1080, measure)
-        val collection = SceneCollection.default(1920, 1080).copy(
-            scenes = SceneCollection.default(1920, 1080).scenes + lama.scene,
-            sources = SceneCollection.default(1920, 1080).sources + lama.sources,
+        val collection = SceneCollection.default(1920, 1080, "Layar", "Adegan 1").copy(
+            scenes = SceneCollection.default(1920, 1080, "Layar", "Adegan 1").scenes + lama.scene,
+            sources = SceneCollection.default(1920, 1080, "Layar", "Adegan 1").sources + lama.sources,
         )
         val next = collection.upgradeScreensaverScenes(1080, 2400, measure)
         val scene = next.scenes.first { it.name == SCREENSAVER_SCENE_NAME }
@@ -125,7 +125,7 @@ class ScreensaverTest {
 
     @Test
     fun `sumber gambar tambahan tidak diubah saat penyesuaian`() {
-        val base = SceneCollection.default(1080, 2400)
+        val base = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
         val (withJeda, id) = base.withScreensaverScene(1080, 2400, measure)
         val scene = withJeda.scenes.first { it.id == id }
         val foto = com.rout.air.core.SceneSource(
@@ -146,7 +146,7 @@ class ScreensaverTest {
 
     @Test
     fun `collection tanpa layar jeda mendapat scene baru`() {
-        val base = SceneCollection.default(1080, 2400)
+        val base = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
         val (next, id) = base.withScreensaverScene(1080, 2400, measure)
         assertEquals(base.scenes.size + 1, next.scenes.size)
         assertTrue(next.scenes.any { it.id == id && it.name == SCREENSAVER_SCENE_NAME })
@@ -155,7 +155,7 @@ class ScreensaverTest {
 
     @Test
     fun `scene layar jeda yang sudah ada tidak diduplikasi`() {
-        val base = SceneCollection.default(1080, 2400)
+        val base = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
         val (once, id) = base.withScreensaverScene(1080, 2400, measure)
         val (twice, againId) = once.withScreensaverScene(1080, 2400, measure)
         assertEquals(id, againId)

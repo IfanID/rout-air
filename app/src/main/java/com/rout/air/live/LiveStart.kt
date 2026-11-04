@@ -27,24 +27,24 @@ suspend fun prepareYouTubeBroadcast(
     val token = GoogleAuthStore(app).freshAccessToken()
     if (token.isNullOrBlank()) {
         return@withContext Result.failure(
-            IllegalStateException("Sesi Google berakhir. Hubungkan akun lagi di Setelan > Stream."),
+            IllegalStateException(context.getString(com.rout.air.R.string.error_google_session)),
         )
     }
     val api = YouTubeApi(token)
     val target = runCatching { api.streamTarget() }.getOrNull()
         ?: return@withContext Result.failure(
-            IllegalStateException("Stream key tidak ditemukan di akun ini."),
+            IllegalStateException(context.getString(com.rout.air.R.string.error_stream_key_missing)),
         )
     val broadcastId = runCatching { api.createBroadcast(title, description, privacy) }
         .getOrNull()
         ?: return@withContext Result.failure(
-            IllegalStateException("Gagal membuat siaran. Periksa koneksi atau log."),
+            IllegalStateException(context.getString(com.rout.air.R.string.error_broadcast_create)),
         )
     val bound = runCatching { api.bindBroadcast(broadcastId, target.streamId) }
         .getOrDefault(false)
     if (!bound) {
         return@withContext Result.failure(
-            IllegalStateException("Gagal mengikat siaran ke stream."),
+            IllegalStateException(context.getString(com.rout.air.R.string.error_broadcast_bind)),
         )
     }
     Result.success(LiveTarget(target.server, target.key, broadcastId))

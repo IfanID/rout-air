@@ -92,6 +92,12 @@ fun ScenePreview(
                         maxHeight = canvas.height,
                     )
 
+                    SourceType.SlideShow -> SourceBitmap.loadImage(
+                        path = source.settings.imagePaths.firstOrNull(),
+                        maxWidth = canvas.width,
+                        maxHeight = canvas.height,
+                    )
+
                     SourceType.Text -> SourceBitmap.renderText(
                         text = source.settings.text,
                         textSizeSp = source.settings.textSize,
@@ -232,7 +238,34 @@ fun ScenePreview(
                                     )
                                 }
 
-                                SourceType.AudioInput, SourceType.AudioOutput -> Unit
+                                SourceType.SlideShow -> layer.bitmap?.let { image ->
+                                    val w = image.width
+                                    val h = image.height
+                                    drawImage(
+                                        image = image,
+                                        srcOffset = IntOffset.Zero,
+                                        srcSize = IntSize(w, h),
+                                        dstOffset = IntOffset.Zero,
+                                        dstSize = IntSize(
+                                            width.roundToInt().coerceAtLeast(1),
+                                            height.roundToInt().coerceAtLeast(1),
+                                        ),
+                                        alpha = opacity,
+                                        blendMode = layer.blend,
+                                    )
+                                }
+
+                                SourceType.Media, SourceType.Camera, SourceType.Browser -> {
+                                    // Editor hanya menggambar bingkai; gambar
+                                    // kamera hidup baru ada saat sesi aktif.
+                                    drawRect(
+                                        color = Color(0xFF2A2A2A),
+                                        size = Size(width, height),
+                                        alpha = opacity,
+                                    )
+                                }
+
+                                SourceType.AudioInput, SourceType.AudioOutput, SourceType.Group -> Unit
                             }
 
                             if (layer.item.id == selectedItemId) {
@@ -475,6 +508,31 @@ private fun buildPreviewLayers(
                     naturalWidth = source.settings.width.coerceAtLeast(1).toFloat(),
                     naturalHeight = source.settings.height.coerceAtLeast(1).toFloat(),
                     colorArgb = source.settings.color,
+                    blend = item.blend.toComposeBlendMode(),
+                    bitmap = null,
+                )
+
+                SourceType.Group -> null
+
+                SourceType.SlideShow -> {
+                    val bitmap = bitmaps[source.id] ?: return@mapNotNull null
+                    PreviewLayer(
+                        item = item,
+                        type = source.type,
+                        naturalWidth = bitmap.width.toFloat(),
+                        naturalHeight = bitmap.height.toFloat(),
+                        colorArgb = 0,
+                        blend = item.blend.toComposeBlendMode(),
+                        bitmap = bitmap,
+                    )
+                }
+
+                SourceType.Media, SourceType.Camera, SourceType.Browser -> PreviewLayer(
+                    item = item,
+                    type = source.type,
+                    naturalWidth = source.settings.width.coerceAtLeast(1280).toFloat(),
+                    naturalHeight = source.settings.height.coerceAtLeast(720).toFloat(),
+                    colorArgb = 0,
                     blend = item.blend.toComposeBlendMode(),
                     bitmap = null,
                 )

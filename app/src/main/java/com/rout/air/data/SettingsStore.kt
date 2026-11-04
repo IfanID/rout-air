@@ -73,6 +73,10 @@ class SettingsStore(context: Context) {
             noSpaceFileName = prefs.getBoolean(KEY_NO_SPACE, false),
             staticThrottleEnabled = prefs.getBoolean(KEY_STATIC_THROTTLE, false),
             thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
+            splitMinutes = prefs.getInt(KEY_SPLIT_MINUTES, 0).coerceIn(0, 240),
+            splitSizeMb = prefs.getInt(KEY_SPLIT_SIZE_MB, 0).coerceAtLeast(0),
+            replayBufferEnabled = prefs.getBoolean(KEY_REPLAY_ENABLED, false),
+            replaySeconds = prefs.getInt(KEY_REPLAY_SECONDS, 60).coerceIn(10, 300),
         )
     }
 
@@ -117,6 +121,10 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_NO_SPACE, config.noSpaceFileName)
             .putBoolean(KEY_STATIC_THROTTLE, config.staticThrottleEnabled)
             .putBoolean(KEY_THERMAL_THROTTLE, config.thermalThrottleEnabled)
+            .putInt(KEY_SPLIT_MINUTES, config.splitMinutes)
+            .putInt(KEY_SPLIT_SIZE_MB, config.splitSizeMb)
+            .putBoolean(KEY_REPLAY_ENABLED, config.replayBufferEnabled)
+            .putInt(KEY_REPLAY_SECONDS, config.replaySeconds)
             .putInt(KEY_SETTINGS_VERSION, SETTINGS_VERSION)
             .apply()
     }
@@ -135,9 +143,36 @@ class SettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_WIZARD_DONE, true).apply()
     }
 
+    /** Pengenalan singkat sebelum aplikasi dipakai pertama kali. */
+    fun isOnboardingDone(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
+
+    fun setOnboardingDone() {
+        prefs.edit().putBoolean(KEY_ONBOARDING_DONE, true).apply()
+    }
+
     /** Hasil setup otomatis terakhir, mis. "1080p60 · H.264 · 8800 kbps". */
     fun lastAutoConfig(): String? = prefs.getString(KEY_WIZARD_RESULT, null)
 
+    /** Kunci aksen tema, mis. "cyan". */
+    fun accentKey(): String? = prefs.getString(KEY_ACCENT, null)
+
+    fun setAccentKey(key: String) {
+        prefs.edit().putString(KEY_ACCENT, key).apply()
+    }
+
+    /** Bahasa pilihan pengguna: "in" atau "en". */
+    fun languageTag(): String = prefs.getString(KEY_LANGUAGE, null) ?: "in"
+
+    fun setLanguageTag(tag: String) {
+        prefs.edit().putString(KEY_LANGUAGE, tag).apply()
+    }
+
+    /** Latar benar-benar hitam untuk layar AMOLED. */
+    fun amoledBlack(): Boolean = prefs.getBoolean(KEY_AMOLED, false)
+
+    fun setAmoledBlack(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AMOLED, enabled).apply()
+    }
     fun setLastAutoConfig(text: String) {
         prefs.edit().putString(KEY_WIZARD_RESULT, text).apply()
     }
@@ -208,6 +243,10 @@ class SettingsStore(context: Context) {
         const val KEY_SETTINGS_VERSION = "settings_version"
         const val KEY_WIZARD_DONE = "auto_config_done"
         const val KEY_WIZARD_RESULT = "auto_config_result"
+        const val KEY_ONBOARDING_DONE = "onboarding_done"
+        const val KEY_ACCENT = "theme_accent"
+        const val KEY_AMOLED = "theme_amoled"
+        const val KEY_LANGUAGE = "app_language"
         const val SETTINGS_VERSION = 1
         const val KEY_PROFILE = "video_profile"
         const val KEY_COLOR_SPACE = "color_space"
@@ -216,6 +255,10 @@ class SettingsStore(context: Context) {
         const val KEY_NO_SPACE = "no_space_filename"
         const val KEY_STATIC_THROTTLE = "static_throttle"
         const val KEY_THERMAL_THROTTLE = "thermal_throttle"
+        const val KEY_SPLIT_MINUTES = "split_minutes"
+        const val KEY_SPLIT_SIZE_MB = "split_size_mb"
+        const val KEY_REPLAY_ENABLED = "replay_enabled"
+        const val KEY_REPLAY_SECONDS = "replay_seconds"
 
         inline fun <reified T : Enum<T>> enumValue(name: String?, fallback: T): T =
             runCatching { enumValueOf<T>(name ?: fallback.name) }.getOrDefault(fallback)

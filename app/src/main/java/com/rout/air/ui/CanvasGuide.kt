@@ -12,7 +12,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.rout.air.R
 
 /**
  * Menggambar panduan kanvas: kotak-kotak gelap dan garis tepi. Dipakai
@@ -79,7 +81,7 @@ internal fun CanvasGuideBackground(
         }
         if (showEmptyLabel) {
             Text(
-                text = "Belum ada sumber",
+                text = stringResource(R.string.scenes_belum_ada_sumber),
                 color = Color(0xFFB8C2CC),
                 textAlign = TextAlign.Center,
             )

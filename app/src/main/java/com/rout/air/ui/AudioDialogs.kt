@@ -492,7 +492,7 @@ internal fun FiltersDialog(
                             }
                             if (channel.filters.isEmpty()) {
                                 Text(
-                                    "Belum ada filter.",
+                                    stringResource(R.string.audio_no_filter),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextTertiary,
                                     modifier = Modifier.padding(8.dp),
@@ -528,7 +528,7 @@ internal fun FiltersDialog(
                     Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) {
                         if (selected == null) {
                             Text(
-                                "Pilih filter untuk mengatur parameternya.",
+                                stringResource(R.string.audio_select_filter_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextTertiary,
                             )
@@ -750,19 +750,16 @@ internal fun SourcePropertiesDialog(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = when {
-                        channel.appUid != 0 -> {
-                            "Application Audio Capture: ${channel.appPackage ?: "aplikasi"}."
-                        }
+                        channel.appUid != 0 -> stringResource(
+                            R.string.audio_source_app,
+                            channel.appPackage
+                                ?: stringResource(R.string.audio_source_app_generic),
+                        )
 
-                        channel.capture == com.rout.air.core.AudioCaptureKind.Playback -> {
-                            "Sumber: AudioPlaybackCapture. Hanya aplikasi yang mengizinkan " +
-                                "tangkapan audio yang akan terdengar."
-                        }
+                        channel.capture == com.rout.air.core.AudioCaptureKind.Playback ->
+                            stringResource(R.string.audio_source_playback)
 
-                        else -> {
-                            "Sumber: AudioRecord (UNPROCESSED, fallback MIC). " +
-                                "Izin mikrofon diberikan saat sesi dimulai."
-                        }
+                        else -> stringResource(R.string.audio_source_record)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = TextTertiary,

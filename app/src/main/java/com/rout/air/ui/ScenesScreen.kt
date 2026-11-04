@@ -74,6 +74,7 @@ import com.rout.air.core.SceneSource
 import com.rout.air.core.SourceSettings
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
+import com.rout.air.data.ObsImport
 import com.rout.air.data.SceneStore
 import com.rout.air.data.addScene
 import com.rout.air.data.addScreenItem
@@ -128,6 +129,15 @@ fun ScenesScreen(
     var showScreensaverPage by remember { mutableStateOf(false) }
     var showAppAudioPicker by remember { mutableStateOf(false) }
     var replaceSourceId by remember { mutableStateOf<String?>(null) }
+    var replaceMediaSourceId by remember { mutableStateOf<String?>(null) }
+    var showGroupDialog by remember { mutableStateOf(false) }
+    var groupAsScene by remember { mutableStateOf(false) }
+    var slideTargetId by remember { mutableStateOf<String?>(null) }
+    var slideCreating by remember { mutableStateOf(false) }
+    var showBrowserDialog by remember { mutableStateOf(false) }
+    var browserEditSourceId by remember { mutableStateOf<String?>(null) }
+    var browserUrl by remember { mutableStateOf("") }
+    var importReport by remember { mutableStateOf<ObsImport.Report?>(null) }
 
     val activeScene = collection.activeScene()
     val hasScreenInActiveScene = activeScene?.items?.any { item ->
@@ -135,6 +145,18 @@ fun ScenesScreen(
     } == true
     val selectedItem = collection.item(selectedItemId)
     val selectedSource = selectedItem?.let { collection.source(it.sourceId) }
+
+    // Nama bawaan sumber harus dibaca di sini: callback launcher bukan
+    // fungsi composable sehingga stringResource tidak bisa dipanggil di sana.
+    val nameImage = stringResource(R.string.src_gambar)
+    val nameSlideShow = stringResource(R.string.src_slideshow)
+    val nameMedia = stringResource(R.string.src_media)
+    val nameCamera = stringResource(R.string.src_kamera)
+    val nameBrowser = stringResource(R.string.src_browser)
+    val nameText = stringResource(R.string.src_teks)
+    val nameColor = stringResource(R.string.src_warna)
+    val nameGroup = stringResource(R.string.src_grup)
+    val nameScene = stringResource(R.string.src_adegan)
 
     var showUrlDialog by remember { mutableStateOf(false) }
     var urlError by remember { mutableStateOf<String?>(null) }
@@ -163,7 +185,7 @@ fun ScenesScreen(
         } else {
             val source = SceneSource(
                 type = SourceType.Image,
-                name = uniqueSourceName(collection, "Gambar"),
+                name = uniqueSourceName(collection, nameImage),
                 settings = SourceSettings(
                     imagePath = path,
                     width = size.first,
@@ -190,6 +212,175 @@ fun ScenesScreen(
         }
         val path = store.importImage(uri) ?: return@rememberLauncherForActivityResult
         applyImagePath(path)
+    }
+
+    // Slide show: banyak gambar sekaligus, disalin ke penyimpanan aplikasi.
+    val slidePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(),
+    ) { uris ->
+        if (uris.isEmpty()) {
+            slideTargetId = null
+            slideCreating = false
+            return@rememberLauncherForActivityResult
+        }
+        val paths = uris.mapNotNull { store.importImage(it) }
+        if (paths.isEmpty()) {
+            slideTargetId = null
+            slideCreating = false
+            return@rememberLauncherForActivityResult
+        }
+        val size = SourceBitmap.probeSize(paths.first(), canvasConfig.width, canvasConfig.height)
+            ?: (canvasConfig.width to canvasConfig.height)
+        val target = collection.source(slideTargetId.orEmpty())
+        when {
+            slideCreating -> {
+                val source = SceneSource(
+                    type = SourceType.SlideShow,
+                    name = uniqueSourceName(collection, nameSlideShow),
+                    settings = SourceSettings(
+                        imagePaths = paths,
+                        width = size.first,
+                        height = size.second,
+                    ),
+                )
+                val item = SceneItem(
+                    sourceId = source.id,
+                    transform = fitTransform(size.first, size.second, canvasConfig),
+                )
+                onCollectionChange(collection.addSource(source, item))
+                onSelectItem(item.id)
+            }
+
+            target != null -> onCollectionChange(
+                collection.updateSource(
+                    target.copy(
+                        settings = target.settings.copy(
+                            imagePaths = target.settings.imagePaths + paths,
+                        ),
+                    ),
+                ),
+            )
+        }
+        slideTargetId = null
+        slideCreating = false
+    }
+
+    // Izin kamera diminta sekali; sumber baru dibuat setelah disetujui.
+    // Pemilih video untuk sumber Media (baru atau mengganti yang lama).
+    val mediaPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) {
+            replaceMediaSourceId = null
+            return@rememberLauncherForActivityResult
+        }
+        val retriever = android.media.MediaMetadataRetriever()
+        var width = 1280
+        var height = 720
+        runCatching {
+            retriever.setDataSource(context, uri)
+            val w = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+            )?.toIntOrNull() ?: 1280
+            val h = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+            )?.toIntOrNull() ?: 720
+            val rotation = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION,
+            )?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) {
+                width = h
+                height = w
+            } else {
+                width = w
+                height = h
+            }
+        }
+        runCatching { retriever.release() }
+        val path = store.importMedia(uri) ?: return@rememberLauncherForActivityResult
+
+        val replacing = collection.source(replaceMediaSourceId.orEmpty())
+        replaceMediaSourceId = null
+        if (replacing != null) {
+            onCollectionChange(
+                collection.updateSource(
+                    replacing.copy(
+                        settings = replacing.settings.copy(
+                            mediaPath = path,
+                            width = width,
+                            height = height,
+                        ),
+                    ),
+                ),
+            )
+        } else {
+            val source = SceneSource(
+                type = SourceType.Media,
+                name = uniqueSourceName(collection, nameMedia),
+                settings = SourceSettings(mediaPath = path, width = width, height = height),
+            )
+            val item = SceneItem(
+                sourceId = source.id,
+                transform = fitTransform(width, height, canvasConfig),
+            )
+            onCollectionChange(collection.addSource(source, item))
+            onSelectItem(item.id)
+        }
+    }
+
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            android.widget.Toast.makeText(
+                context,
+                context.getString(R.string.scenes_kamera_izin),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            return@rememberLauncherForActivityResult
+        }
+        val source = SceneSource(
+            type = SourceType.Camera,
+            name = uniqueSourceName(collection, nameCamera),
+            settings = SourceSettings(width = 1280, height = 720),
+        )
+        val item = SceneItem(
+            sourceId = source.id,
+            transform = fitTransform(1280, 720, canvasConfig),
+        )
+        onCollectionChange(collection.addSource(source, item))
+        onSelectItem(item.id)
+    }
+
+    // Impor scene-collection OBS: pengguna memilih berkas JSON dari HP.
+    val obsPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val text = runCatching {
+            context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+        if (text == null) {
+            importReport = ObsImport.Report(
+                collection = null,
+                error = ObsImport.ParseError.UNREADABLE,
+            )
+            return@rememberLauncherForActivityResult
+        }
+        val report = ObsImport.parse(text, canvasConfig.width, canvasConfig.height)
+        val imported = report.collection
+        if (imported != null) {
+            val merged = ObsImport.merge(collection, imported)
+            // Langsung buka adegan yang aktif di OBS agar pengguna tidak
+            // perlu mencari hasil impor di daftar Adegan.
+            val target = merged.scenes.firstOrNull { it.id == imported.activeSceneId }
+                ?: merged.scenes.lastOrNull()
+            onCollectionChange(
+                if (target != null) merged.copy(activeSceneId = target.id) else merged,
+            )
+            onSelectItem(null)
+        }
+        importReport = report
     }
 
     BackHandler(enabled = selectedItem != null) { onSelectItem(null) }
@@ -231,6 +422,22 @@ fun ScenesScreen(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                 )
             },
+            onPickMedia = {
+                replaceMediaSourceId = selectedSource.id
+                mediaPicker.launch(arrayOf("video/*"))
+            },
+            onAddSlides = {
+                slideTargetId = selectedSource.id
+                slideCreating = false
+                slidePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            onEditBrowser = {
+                browserEditSourceId = selectedSource.id
+                browserUrl = selectedSource.settings.browserUrl.orEmpty()
+                showBrowserDialog = true
+            },
         )
         return
     }
@@ -252,6 +459,9 @@ fun ScenesScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.scenes_scene), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.weight(1f))
+            TextButton(onClick = { obsPicker.launch(arrayOf("application/json", "text/plain", "*/*")) }) {
+                Text(stringResource(R.string.scenes_import_obs))
+            }
             TextButton(onClick = { showAddScene = true }) { Text(stringResource(R.string.scenes_tambah_2)) }
         }
 
@@ -397,9 +607,7 @@ fun ScenesScreen(
 
         Spacer(Modifier.height(16.dp))
         Hint(
-            "Urutan atas = paling depan. Geser pegangan ☰ pada baris sumber " +
-                "untuk memindahkan lapisan. Geser/putar/crop sumber langsung " +
-                "di panel Pratinjau pada halaman Studio.",
+            stringResource(R.string.scenes_hint_order),
         )
 
         // Layar jeda punya bagian sendiri, terpisah dari daftar scene.
@@ -531,7 +739,7 @@ fun ScenesScreen(
                 )
                 val source = SceneSource(
                     type = SourceType.Text,
-                    name = uniqueSourceName(collection, "Teks"),
+                    name = uniqueSourceName(collection, nameText),
                     settings = settings,
                 )
                 val item = SceneItem(
@@ -554,7 +762,7 @@ fun ScenesScreen(
                 )
                 val source = SceneSource(
                     type = SourceType.Color,
-                    name = uniqueSourceName(collection, "Warna"),
+                    name = uniqueSourceName(collection, nameColor),
                     settings = settings,
                 )
                 val item = SceneItem(
@@ -567,6 +775,39 @@ fun ScenesScreen(
             onApplicationAudio = {
                 showAddSource = false
                 showAppAudioPicker = true
+            },
+            onCamera = {
+                showAddSource = false
+                cameraPermission.launch(android.Manifest.permission.CAMERA)
+            },
+            onMedia = {
+                showAddSource = false
+                replaceMediaSourceId = null
+                mediaPicker.launch(arrayOf("video/*"))
+            },
+            onBrowser = {
+                showAddSource = false
+                browserEditSourceId = null
+                browserUrl = "https://"
+                showBrowserDialog = true
+            },
+            onGroup = {
+                showAddSource = false
+                groupAsScene = false
+                showGroupDialog = true
+            },
+            onScene = {
+                showAddSource = false
+                groupAsScene = true
+                showGroupDialog = true
+            },
+            onSlideshow = {
+                showAddSource = false
+                slideTargetId = null
+                slideCreating = true
+                slidePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
             },
             onDismiss = { showAddSource = false },
         )
@@ -588,6 +829,146 @@ fun ScenesScreen(
                 showAppAudioPicker = false
             },
             onDismiss = { showAppAudioPicker = false },
+        )
+    }
+
+    if (showGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showGroupDialog = false },
+            title = { Text(stringResource(R.string.scenes_grup_pilih)) },
+            text = {
+                Column {
+                    collection.scenes.filterNot { it.isScreensaverScene() }.forEach { scene ->
+                        TextButton(
+                            onClick = {
+                                val prefix = if (groupAsScene) nameScene else nameGroup
+                                val source = SceneSource(
+                                    type = SourceType.Group,
+                                    name = uniqueSourceName(
+                                        collection,
+                                        context.getString(
+                                            R.string.source_name_with_scene,
+                                            prefix,
+                                            scene.name,
+                                        ),
+                                    ),
+                                    settings = SourceSettings(
+                                        groupSceneId = scene.id,
+                                        width = canvasConfig.width,
+                                        height = canvasConfig.height,
+                                    ),
+                                )
+                                val item = SceneItem(sourceId = source.id, transform = Transform())
+                                onCollectionChange(collection.addSource(source, item))
+                                onSelectItem(item.id)
+                                showGroupDialog = false
+                            },
+                        ) { Text(scene.name) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showGroupDialog = false }) { Text(stringResource(R.string.common_batal)) }
+            },
+        )
+    }
+
+    if (showBrowserDialog) {
+        AlertDialog(
+            onDismissRequest = { showBrowserDialog = false },
+            title = { Text(stringResource(R.string.scenes_tipe_browser)) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = browserUrl,
+                        onValueChange = { browserUrl = it },
+                        label = { Text(stringResource(R.string.scenes_browser_url)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Hint(stringResource(R.string.scenes_browser_hint))
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val url = browserUrl.trim()
+                        if (url.isNotBlank()) {
+                            val editing = collection.source(browserEditSourceId.orEmpty())
+                            if (editing != null) {
+                                onCollectionChange(
+                                    collection.updateSource(
+                                        editing.copy(
+                                            settings = editing.settings.copy(browserUrl = url),
+                                        ),
+                                    ),
+                                )
+                            } else {
+                                val source = SceneSource(
+                                    type = SourceType.Browser,
+                                    name = uniqueSourceName(collection, nameBrowser),
+                                    settings = SourceSettings(
+                                        browserUrl = url,
+                                        width = canvasConfig.width,
+                                        height = canvasConfig.height,
+                                    ),
+                                )
+                                val item = SceneItem(
+                                    sourceId = source.id,
+                                    transform = Transform(),
+                                )
+                                onCollectionChange(collection.addSource(source, item))
+                                onSelectItem(item.id)
+                            }
+                        }
+                        showBrowserDialog = false
+                    },
+                ) { Text(stringResource(R.string.common_simpan)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBrowserDialog = false }) {
+                    Text(stringResource(R.string.common_batal))
+                }
+            },
+        )
+    }
+
+    importReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = { importReport = null },
+            title = { Text(stringResource(R.string.scenes_import_obs)) },
+            text = {
+                Column {
+                    val error = report.error
+                    if (error != null) {
+                        Text(obsErrorText(error))
+                    } else {
+                        Text(
+                            stringResource(
+                                R.string.scenes_import_obs_hasil,
+                                report.scenes,
+                                report.sources,
+                            ),
+                        )
+                        if (report.skipped.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(stringResource(R.string.scenes_import_obs_dilewati))
+                            report.skipped.forEach { item ->
+                                Text("• ${obsSkippedText(item)}")
+                            }
+                        }
+                        report.notes.forEach { note ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(obsNoteText(note))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { importReport = null }) {
+                    Text(stringResource(R.string.common_ok))
+                }
+            },
         )
     }
 }
@@ -797,11 +1178,9 @@ private fun SourceRow(
                             painter = painterResource(
                                 if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
                             ),
-                            contentDescription = if (item.locked) {
-                                "Buka kunci"
-                            } else {
-                                "Kunci posisi"
-                            },
+                            contentDescription = stringResource(
+                                if (item.locked) R.string.icon_unlock else R.string.icon_lock,
+                            ),
                             tint = if (item.locked) {
                                 MaterialTheme.colorScheme.primary
                             } else {
@@ -854,6 +1233,9 @@ private fun SourceEditor(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     onPickImage: () -> Unit,
+    onPickMedia: () -> Unit,
+    onEditBrowser: () -> Unit,
+    onAddSlides: () -> Unit,
 ) {
     var name by remember(source.id) { mutableStateOf(source.name) }
     var text by remember(source.id) { mutableStateOf(source.settings.text) }
@@ -916,7 +1298,9 @@ private fun SourceEditor(
                     painter = painterResource(
                         if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
                     ),
-                    contentDescription = if (item.locked) "Buka kunci" else "Kunci posisi",
+                    contentDescription = stringResource(
+                        if (item.locked) R.string.icon_unlock else R.string.icon_lock,
+                    ),
                     tint = if (item.locked) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -1064,22 +1448,119 @@ private fun SourceEditor(
                 }
             }
 
+            SourceType.SlideShow -> {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(
+                        R.string.scenes_slideshow_n_gambar,
+                        source.settings.imagePaths.size,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onAddSlides) {
+                    Text(stringResource(R.string.scenes_slideshow_tambah))
+                }
+                Text(stringResource(R.string.scenes_slideshow_interval))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(3, 5, 10).forEach { seconds ->
+                        FilterChip(
+                            selected = source.settings.slideIntervalSec == seconds,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(
+                                            slideIntervalSec = seconds,
+                                        ),
+                                    ),
+                                )
+                            },
+                            label = { Text("$seconds s") },
+                        )
+                    }
+                }
+            }
+
             SourceType.Image -> {
                 Spacer(Modifier.height(12.dp))
                 TextButton(onClick = onPickImage) { Text(stringResource(R.string.scenes_ganti_gambar)) }
             }
 
+            SourceType.Group -> {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.scenes_tipe_grup), style = MaterialTheme.typography.titleSmall)
+                val nestedName = collection.scenes
+                    .firstOrNull { it.id == source.settings.groupSceneId }?.name
+                Text(
+                    text = nestedName ?: stringResource(R.string.scenes_grup_pilih),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Hint(stringResource(R.string.scenes_grup_hint))
+            }
+
+            SourceType.Browser -> {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.scenes_tipe_browser), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = source.settings.browserUrl.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onEditBrowser) {
+                    Text(stringResource(R.string.scenes_browser_buka))
+                }
+                Hint(stringResource(R.string.scenes_browser_hint))
+            }
+
+            SourceType.Media -> {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.scenes_tipe_media), style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = onPickMedia) { Text(stringResource(R.string.scenes_media_ganti)) }
+                Hint(stringResource(R.string.scenes_media_hint))
+            }
+
+            SourceType.Camera -> {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.scenes_tipe_camera), style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        0 to stringResource(R.string.scenes_kamera_belakang),
+                        1 to stringResource(R.string.scenes_kamera_depan),
+                    ).forEach { (facing, label) ->
+                        FilterChip(
+                            selected = source.settings.cameraFacing == facing,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(cameraFacing = facing),
+                                    ),
+                                )
+                            },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+                Hint(stringResource(R.string.scenes_kamera_hint))
+            }
+
             SourceType.Screen -> {
                 Spacer(Modifier.height(8.dp))
-                Text("Template layar", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(R.string.scenes_template),
+                    style = MaterialTheme.typography.titleSmall,
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     listOf(
-                        com.rout.air.core.ScreenDisplay.Auto to "Otomatis",
-                        com.rout.air.core.ScreenDisplay.Portrait to "Vertikal",
-                        com.rout.air.core.ScreenDisplay.Landscape to "Horizontal",
+                        com.rout.air.core.ScreenDisplay.Auto to
+                            stringResource(R.string.settings_otomatis),
+                        com.rout.air.core.ScreenDisplay.Portrait to
+                            stringResource(R.string.common_vertikal),
+                        com.rout.air.core.ScreenDisplay.Landscape to
+                            stringResource(R.string.common_horizontal),
                     ).forEach { (display, label) ->
                         FilterChip(
                             selected = (source.settings.screenDisplay
@@ -1129,11 +1610,7 @@ private fun SourceEditor(
                         )
                     }
                 }
-                Hint(
-                    "Vertikal/Horizontal memaksa arah tampil: gambar diputar 90° bila " +
-                        "perlu dan selalu dimuat penuh tanpa terpotong. Otomatis " +
-                        "mengikuti orientasi tangkapan. Atur Posisi/Skala di bawah.",
-                )
+                Hint(stringResource(R.string.scenes_template_hint))
             }
 
             SourceType.AudioInput -> {
@@ -1145,11 +1622,12 @@ private fun SourceEditor(
                 Text(
                     text = when (source.settings.audioDeviceType) {
                         android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
-                            "Bluetooth / TWS. Mic TWS memakai profil SCO; musik A2DP " +
-                                "bisa berhenti selama mic dipakai."
+                            stringResource(R.string.scenes_audio_bt_hint)
 
-                        android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Mikrofon bawaan perangkat"
-                        else -> "Volume, mute, filter, dan monitor diatur di halaman Audio."
+                        android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC ->
+                            stringResource(R.string.scenes_audio_builtin)
+
+                        else -> stringResource(R.string.scenes_audio_common_hint)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1164,7 +1642,7 @@ private fun SourceEditor(
                         Column(Modifier.weight(1f)) {
                             Text(stringResource(R.string.scenes_aktifkan_sco_mic_bluetooth))
                             Text(
-                                "Coba aktifkan profil headset agar mic TWS bisa dipakai.",
+                                stringResource(R.string.scenes_audio_sco_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1185,10 +1663,7 @@ private fun SourceEditor(
 
             SourceType.AudioOutput -> {
                 Spacer(Modifier.height(8.dp))
-                Hint(
-                    "Audio Output Capture: audio dari aplikasi lain (AudioPlaybackCapture). " +
-                        "Volume dan filter diatur di halaman Audio.",
-                )
+                Hint(stringResource(R.string.scenes_audio_output_hint))
             }
         }
 
@@ -1199,7 +1674,7 @@ private fun SourceEditor(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "Transformasi",
+                stringResource(R.string.scenes_transformasi_title),
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f),
             )
@@ -1238,7 +1713,10 @@ private fun SourceEditor(
         val uniformScale = (item.transform.scaleX + item.transform.scaleY) / 2f
         val uniformDiffers = abs(item.transform.scaleX - item.transform.scaleY) > 0.005f
         LabeledSlider(
-            label = if (uniformDiffers) "Skala seragam (X ≠ Y)" else "Skala seragam",
+            label = stringResource(
+                if (uniformDiffers) R.string.scenes_scale_uniform_mixed
+                else R.string.scenes_scale_uniform,
+            ),
             value = uniformScale,
             range = 0.05f..4f,
             format = { "%.2f×".format(it) },
@@ -1401,11 +1879,11 @@ private fun AudioSourceEditor(
     fun updateItem(next: SceneItem) = onCollectionChange(collection.updateItem(next))
 
     val statusText = when {
-        !channel.enabled -> "Nonaktif"
-        !runtime.running -> "Sesi belum aktif"
-        !ready -> "Gagal dibuka — cek izin mikrofon/perangkat"
-        channel.muted -> "Aktif (muted)"
-        else -> "Aktif — mic mengirim suara"
+        !channel.enabled -> stringResource(R.string.audio_status_off)
+        !runtime.running -> stringResource(R.string.audio_status_no_session)
+        !ready -> stringResource(R.string.audio_status_failed)
+        channel.muted -> stringResource(R.string.audio_status_muted)
+        else -> stringResource(R.string.audio_status_on)
     }
     val statusColor = when {
         !channel.enabled || !runtime.running -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -1442,7 +1920,9 @@ private fun AudioSourceEditor(
                     painter = painterResource(
                         if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
                     ),
-                    contentDescription = if (item.locked) "Buka kunci" else "Kunci posisi",
+                    contentDescription = stringResource(
+                        if (item.locked) R.string.icon_unlock else R.string.icon_lock,
+                    ),
                     tint = if (item.locked) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -1471,9 +1951,9 @@ private fun AudioSourceEditor(
                 )
                 Text(
                     text = if (source.type == SourceType.AudioInput) {
-                        "Sumber audio dari mikrofon / perangkat input. Tidak tampil di kanvas."
+                        stringResource(R.string.scenes_audio_input_desc)
                     } else {
-                        "Sumber audio playback dari aplikasi lain (AudioPlaybackCapture)."
+                        stringResource(R.string.scenes_audio_output_desc)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1499,15 +1979,20 @@ private fun AudioSourceEditor(
                     )
                     Text(
                         text = when (source.settings.audioDeviceType) {
-                            android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Mikrofon bawaan"
-                            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth / TWS (SCO)"
-                            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Headset kabel"
+                            android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC ->
+                                stringResource(R.string.audio_device_builtin)
+                            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
+                                stringResource(R.string.audio_device_bt)
+                            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ->
+                                stringResource(R.string.audio_device_wired)
                             android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
                             android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
-                            android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB"
+                            android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY ->
+                                stringResource(R.string.audio_device_usb)
                             android.media.AudioDeviceInfo.TYPE_LINE_ANALOG,
-                            android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Line in"
-                            0 -> "Mengikuti perangkat input sistem"
+                            android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL ->
+                                stringResource(R.string.audio_device_line)
+                            0 -> stringResource(R.string.audio_device_follow)
                             else -> stringResource(R.string.scenes_tipe_audio_input)
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -1541,8 +2026,7 @@ private fun AudioSourceEditor(
 
         Spacer(Modifier.height(12.dp))
         Text(
-            "Volume, mute, filter, balance, sync offset, track, dan monitoring " +
-                "diatur di tab Audio.",
+            stringResource(R.string.audio_volume_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1778,6 +2262,48 @@ internal fun defaultTransform(source: SceneSource, canvas: CaptureConfig): Trans
     }
 
 
+/** Pesan kesalahan impor OBS. */
+@Composable
+private fun obsErrorText(error: ObsImport.ParseError): String = stringResource(
+    when (error) {
+        ObsImport.ParseError.NOT_JSON -> R.string.obs_error_not_json
+        ObsImport.ParseError.NO_SOURCES -> R.string.obs_error_no_sources
+        ObsImport.ParseError.NO_SCENES -> R.string.obs_error_no_scenes
+        ObsImport.ParseError.UNREADABLE -> R.string.scenes_import_unreadable
+    },
+)
+
+/** Satu baris daftar sumber yang dilewati saat impor OBS. */
+@Composable
+private fun obsSkippedText(item: ObsImport.Skipped): String {
+    val id = item.obsId
+        ?: return stringResource(R.string.obs_skipped_not_found, item.name)
+    return stringResource(R.string.obs_skipped_unsupported, item.name, obsKindLabel(id))
+}
+
+/** Jenis sumber OBS dalam bahasa aplikasi. */
+@Composable
+private fun obsKindLabel(obsId: String): String = stringResource(
+    when {
+        obsId.startsWith("dshow") || obsId.startsWith("v4l2") ||
+            obsId.startsWith("av_capture") -> R.string.obs_kind_camera
+        obsId.startsWith("browser") -> R.string.obs_kind_browser
+        obsId == "group" -> R.string.obs_kind_group
+        obsId.contains("media") || obsId.startsWith("ffmpeg") -> R.string.obs_kind_media
+        obsId.startsWith("ndi") -> R.string.obs_kind_ndi
+        else -> R.string.obs_kind_unknown
+    },
+)
+
+/** Catatan hasil impor OBS. */
+@Composable
+private fun obsNoteText(note: ObsImport.Note): String = when (note.kind) {
+    ObsImport.NoteKind.SCREEN_FALLBACK ->
+        stringResource(R.string.obs_note_screen_fallback, note.name)
+    ObsImport.NoteKind.IMAGE_REPICK ->
+        stringResource(R.string.obs_note_image_repick, note.name)
+}
+
 @Composable
 private fun typeLabel(type: SourceType): String = when (type) {
     SourceType.Screen -> stringResource(R.string.scenes_tipe_screen)
@@ -1786,6 +2312,11 @@ private fun typeLabel(type: SourceType): String = when (type) {
     SourceType.Color -> stringResource(R.string.scenes_tipe_color)
     SourceType.AudioInput -> stringResource(R.string.scenes_tipe_audio_input)
     SourceType.AudioOutput -> stringResource(R.string.scenes_tipe_audio_output)
+    SourceType.Camera -> stringResource(R.string.scenes_tipe_camera)
+    SourceType.Media -> stringResource(R.string.scenes_tipe_media)
+    SourceType.Browser -> stringResource(R.string.scenes_tipe_browser)
+    SourceType.Group -> stringResource(R.string.scenes_tipe_grup)
+    SourceType.SlideShow -> stringResource(R.string.scenes_tipe_slideshow)
 }
 
 private fun typeSymbol(type: SourceType): String = when (type) {
@@ -1795,6 +2326,11 @@ private fun typeSymbol(type: SourceType): String = when (type) {
     SourceType.Color -> "■"
     SourceType.AudioInput -> "◉"
     SourceType.AudioOutput -> "◎"
+    SourceType.Camera -> "◨"
+    SourceType.Media -> "▶"
+    SourceType.Browser -> "◍"
+    SourceType.Group -> "▥"
+    SourceType.SlideShow -> "▤"
 }
 
 @Composable
