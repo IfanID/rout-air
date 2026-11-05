@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -34,6 +35,7 @@ import android.util.Log
 import android.view.Display
 import android.view.Surface
 import android.view.View
+import android.widget.Toast
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.content.ContextCompat
@@ -53,6 +55,7 @@ import com.rout.air.core.RecordingStats
 import com.rout.air.core.RecordingClock
 import com.rout.air.core.SceneCollection
 import com.rout.air.core.SceneSource
+import com.rout.air.core.SourceSettings
 import com.rout.air.core.SourceType
 import com.rout.air.core.Transform
 import com.rout.air.core.VideoCodec
@@ -176,6 +179,8 @@ class RecordingPipeline(
     /** Semua tujuan keluaran aktif: MP4 dan/atau RTMP. */
     private val sinks = TeeSink()
     private var target: OutputTarget? = null
+    /** Folder segmen rekaman aman yang sedang berjalan. */
+    private var safeSession: SafeRecordingStore.Session? = null
     private var encoderEglSurface: EGLSurface? = null
     private var outputUri: String? = null
     private var audioActive = false
@@ -192,6 +197,9 @@ class RecordingPipeline(
     /** Cache tekstur 2D per sumber (gambar/teks). */
     private val textureCache = mutableMapOf<String, CachedTexture>()
     private val retiredTextures = mutableListOf<Int>()
+    /** Tekstur slide sebelumnya yang masih dipakai animasi fade. */
+    private val slidePreviousTextures = mutableMapOf<String, Int>()
+    private val slideFadeStartNs = mutableMapOf<String, Long>()
 
     /** Kamera aktif per sumber; hanya disentuh thread GL. */
     private val cameraSources = mutableMapOf<String, CameraTexture>()
@@ -888,41 +896,66 @@ class RecordingPipeline(
             error("Penyimpanan hampir penuh ($freeMb MB tersisa, minimal 200 MB)")
         }
 
-        val output = OutputTarget.create(
-            context = context,
-            location = config.saveLocation,
-            nameTemplate = config.fileNameTemplate,
-            noSpaceFileName = config.noSpaceFileName,
-        )
-        target = output
-        outputUri = output.uri.toString()
-
         // Split recording dan replay memakai rotasi segmen yang sama; nama
         // part pertama dipakai sebagai dasar supaya cap waktunya seragam.
         val splitActive = config.splitMinutes > 0 || config.splitSizeMb > 0
-        val baseName = output.displayName
-        val segmentSpec = if (splitActive) {
-            Mp4Writer.SegmentSpec(
-                maxDurationUs = config.splitMinutes * 60_000_000L,
-                maxBytes = config.splitSizeMb.toLong() * 1024L * 1024L,
-                next = { part ->
-                    runCatching {
-                        OutputTarget.create(
-                            context = context,
-                            location = config.saveLocation,
-                            nameTemplate = config.fileNameTemplate,
-                            noSpaceFileName = config.noSpaceFileName,
-                            part = part,
-                            baseName = baseName,
-                        )
-                    }.getOrNull()
-                },
-            )
-        } else {
-            null
+        // Rekaman aman menulis segmen ke folder aplikasi dulu, lalu digabung
+        // saat berhenti. Split eksplisit tidak memakai mode ini karena setiap
+        // part-nya memang sudah berkas final sendiri.
+        val safeActive = config.safeRecording && !splitActive
+        if (safeActive) {
+            val session = runCatching { SafeRecordingStore.begin(context, config) }.getOrNull()
+            if (session != null) {
+                safeSession = session
+                val minutes = config.safeSegmentMinutes.coerceIn(1, 30)
+                val spec = Mp4Writer.SegmentSpec(
+                    maxDurationUs = minutes * 60_000_000L,
+                    maxBytes = 0L,
+                    next = { part -> SafeRecordingStore.segmentTarget(session, part) },
+                )
+                muxer = Mp4Writer(SafeRecordingStore.segmentTarget(session, 1), spec)
+                target = null
+                outputUri = null
+                diag("rekam: aman segmen=$minutes menit folder=${session.directory.name}")
+            } else {
+                diag("rekam: folder segmen gagal dibuat, memakai MP4 biasa")
+            }
         }
-        val writer = Mp4Writer(output, segmentSpec)
-        muxer = writer
+        if (muxer == null) {
+            val output = OutputTarget.create(
+                context = context,
+                location = config.saveLocation,
+                nameTemplate = config.fileNameTemplate,
+                noSpaceFileName = config.noSpaceFileName,
+            )
+            target = output
+            outputUri = output.uri.toString()
+            val baseName = output.displayName
+            val segmentSpec = if (splitActive) {
+                Mp4Writer.SegmentSpec(
+                    maxDurationUs = config.splitMinutes * 60_000_000L,
+                    maxBytes = config.splitSizeMb.toLong() * 1024L * 1024L,
+                    next = { part ->
+                        runCatching {
+                            OutputTarget.create(
+                                context = context,
+                                location = config.saveLocation,
+                                nameTemplate = config.fileNameTemplate,
+                                noSpaceFileName = config.noSpaceFileName,
+                                part = part,
+                                baseName = baseName,
+                            )
+                        }.getOrNull()
+                    },
+                )
+            } else {
+                null
+            }
+            muxer = Mp4Writer(output, segmentSpec)
+        }
+        val writer = muxer ?: error(
+            com.rout.air.data.Msg.get(com.rout.air.R.string.error_create_file, config.saveLocation.relativePath),
+        )
 
         val mixSnapshot = AudioMixer.snapshot()
         val wantsAudio = audioEncoder != null && mixSnapshot.masterEnabled &&
@@ -1072,6 +1105,20 @@ class RecordingPipeline(
         }
         audioActive = audioStarted
 
+        // Rekaman tanpa live boleh memakai HEVC (file lebih kecil) bila
+        // encodernya hardware. Live tetap memakai codec yang dipilih karena
+        // server RTMP umumnya hanya menerima H.264.
+        val recordingOnly = !forLive && !liveActive
+        val requestedCodec = if (recordingOnly && config.preferHevcRecording &&
+            EncoderProbe.select(VideoCodec.HEVC)?.hardware == true
+        ) {
+            VideoCodec.HEVC
+        } else {
+            config.videoCodec
+        }
+        if (requestedCodec != config.videoCodec) {
+            diag("encoder: HEVC (HW) untuk rekaman, live tetap ${config.videoCodec.label}")
+        }
         val encoder = VideoEncoder(
             width = config.encoderWidth,
             height = config.encoderHeight,
@@ -1085,8 +1132,8 @@ class RecordingPipeline(
             profile = config.videoProfile,
             colorSpace = config.colorSpace,
             colorRange = config.colorRange,
-            requestedCodec = config.videoCodec,
-            encoderName = EncoderProbe.select(config.videoCodec)?.name,
+            requestedCodec = requestedCodec,
+            encoderName = EncoderProbe.select(requestedCodec)?.name,
             sink = sinks,
             onFallback = { actual, message ->
                 diag("encoder: $message (dipakai ${actual.label})")
@@ -1157,6 +1204,20 @@ class RecordingPipeline(
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
         target = null
+        val finishedSafe = safeSession
+        safeSession = null
+        if (finishedSafe != null) {
+            // Penanda aktif dilepas dulu supaya sesi ini boleh ditawarkan
+            // untuk dipulihkan bila penggabungan gagal.
+            SafeRecordingStore.endActive(finishedSafe)
+            if (saved) {
+                mergeSafeRecording(finishedSafe)
+            } else {
+                // Segmen yang sudah difinalisasi tetap disimpan supaya bisa
+                // dipulihkan lewat dialog saat aplikasi dibuka lagi.
+                diag("rekam: segmen disimpan untuk dipulihkan (${finishedSafe.directory.name})")
+            }
+        }
 
         liveSink?.let { sinks.remove(it, finish = true) }
         liveSink = null
@@ -1190,20 +1251,46 @@ class RecordingPipeline(
             if (reason != null) Log.i(TAG, "Rekaman berhenti lebih awal: $reason")
         } else {
             val detail = reason?.let { " • $it" }.orEmpty()
-            onState(
-                RecordingState.Error(
-                    context.getString(
-                        R.string.error_record_not_saved,
-                        capturedFrames,
-                        encodedOutputs,
-                        detail,
-                    ),
-                ),
-            )
+            // Rekaman aman sudah menyimpan segmen, jadi pesannya mengarahkan
+            // ke pemulihan, bukan sekadar "gagal disimpan".
+            val message = if (finishedSafe != null) {
+                context.getString(R.string.error_record_recoverable)
+            } else {
+                context.getString(
+                    R.string.error_record_not_saved,
+                    capturedFrames,
+                    encodedOutputs,
+                    detail,
+                )
+            }
+            onState(RecordingState.Error(message))
         }
         // Sesi pratinjau masih hidup: pacer wajib jalan lagi, kalau tidak
         // panel Program (dan Pratinjau) membeku di frame terakhir.
         restartPacerIfRunning()
+    }
+
+    /**
+     * Menggabungkan segmen rekaman aman menjadi satu MP4 di galeri.
+     * Dijalankan di thread sendiri supaya thread GL tidak tertahan.
+     */
+    private fun mergeSafeRecording(session: SafeRecordingStore.Session) {
+        Thread({
+            val segmentCount = session.segments.size
+            val uri = SafeRecordingStore.merge(context, session)
+            DiagLog.line(
+                "gabung: ${if (uri != null) "ok" else "gagal"} " +
+                    "segmen=$segmentCount folder=${session.directory.name}",
+            )
+            Handler(Looper.getMainLooper()).post {
+                if (uri != null) outputUri = uri.toString()
+                val text = context.getString(
+                    if (uri != null) R.string.recording_saved
+                    else R.string.recording_kept_segments,
+                )
+                Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+            }
+        }, "rout-safe-merge").start()
     }
 
     /**
@@ -1323,6 +1410,8 @@ class RecordingPipeline(
         muxer = null
         runCatching { target?.finish(false) }
         target = null
+        safeSession?.let { SafeRecordingStore.discard(it) }
+        safeSession = null
         sinks.finishAll()
         liveSink = null
         encodersRunning = false
@@ -1472,9 +1561,12 @@ class RecordingPipeline(
 
                 SourceType.Image, SourceType.Text, SourceType.SlideShow -> {
                     val cached = ensureTexture(source) ?: continue
+                    val fade = slideFadeState(source)
                     layers += RenderLayer(
                         type = source.type,
                         textureId = cached.textureId,
+                        fadeTextureId = fade?.first ?: 0,
+                        fadeOpacity = fade?.second ?: 1f,
                         naturalWidth = cached.width,
                         naturalHeight = cached.height,
                         transform = transform,
@@ -1574,8 +1666,19 @@ class RecordingPipeline(
     /** Halaman web yang digambar berkala menjadi tekstur 2D. */
     private fun ensureBrowser(source: SceneSource): BrowserTexture? {
         val url = source.settings.browserUrl ?: return null
+        val zoom = source.settings.browserZoom.coerceIn(0.5f, 2f)
         val existing = browserSources[source.id]
-        if (existing != null && existing.url == url) return existing
+        if (existing != null && existing.url == url && existing.zoom == zoom &&
+            existing.desktop == source.settings.browserDesktop
+        ) {
+            existing.refreshSec = source.settings.browserRefreshSec.coerceIn(0.5f, 10f)
+            if (existing.reloadToken != source.settings.browserReloadToken) {
+                existing.reloadToken = source.settings.browserReloadToken
+                val view = existing.webView
+                if (view != null) mainHandler.post { runCatching { view.reload() } }
+            }
+            return existing
+        }
         if (existing != null) releaseBrowser(source.id)
 
         val width = source.settings.width.takeIf { it > 0 } ?: config.width
@@ -1604,7 +1707,17 @@ class RecordingPipeline(
             GLES20.GL_CLAMP_TO_EDGE,
         )
 
-        val entry = BrowserTexture(ids[0], width, height, url)
+        val entry = BrowserTexture(
+            textureId = ids[0],
+            width = width,
+            height = height,
+            url = url,
+            zoom = zoom,
+            desktop = source.settings.browserDesktop,
+        ).apply {
+            refreshSec = source.settings.browserRefreshSec.coerceIn(0.5f, 10f)
+            reloadToken = source.settings.browserReloadToken
+        }
         browserSources[source.id] = entry
         mainHandler.post { createBrowserView(entry) }
         diag("browser: $url ${width}x$height")
@@ -1617,9 +1730,22 @@ class RecordingPipeline(
             val web = WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = entry.zoom <= 1f
+                if (entry.desktop) settings.userAgentString = DESKTOP_USER_AGENT
                 setBackgroundColor(android.graphics.Color.BLACK)
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String?) {
+                        // Zoom halaman lewat CSS; API setInitialScale sudah
+                        // tidak tersedia di SDK terbaru.
+                        if (entry.zoom != 1f) {
+                            runCatching {
+                                view.evaluateJavascript(
+                                    "document.body.style.zoom='${entry.zoom}'",
+                                    null,
+                                )
+                            }
+                        }
                         renderBrowserView(entry, view)
                     }
                 }
@@ -1658,7 +1784,9 @@ class RecordingPipeline(
         height: Float,
     ) {
         val now = System.nanoTime()
-        if (now - browser.lastRefreshNs > 1_000_000_000L) {
+        val intervalNs = (browser.refreshSec * 1_000_000_000L).toLong()
+            .coerceAtLeast(100_000_000L)
+        if (now - browser.lastRefreshNs > intervalNs) {
             browser.lastRefreshNs = now
             val view = browser.webView
             if (view != null) mainHandler.post { renderBrowserView(browser, view) }
@@ -1705,7 +1833,13 @@ class RecordingPipeline(
         val width: Int,
         val height: Int,
         val url: String,
+        val zoom: Float = 1f,
+        val desktop: Boolean = false,
     ) {
+        @Volatile
+        var refreshSec: Float = 1f
+        @Volatile
+        var reloadToken: Int = 0
         @Volatile
         var bitmap: Bitmap? = null
         @Volatile
@@ -1720,7 +1854,14 @@ class RecordingPipeline(
     /** Kamera untuk sumber ini; dibuat sekali lalu dipakai ulang. */
     private fun ensureCamera(source: SceneSource): CameraTexture? {
         val existing = cameraSources[source.id]
-        if (existing != null && existing.facing == source.settings.cameraFacing) return existing
+        if (existing != null &&
+            existing.facing == source.settings.cameraFacing &&
+            existing.targetHeight == source.settings.cameraHeight &&
+            existing.cameraId == source.settings.cameraId
+        ) {
+            updateCameraControls(existing, source.settings)
+            return existing
+        }
         if (existing != null) releaseCamera(source.id)
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) !=
@@ -1730,14 +1871,23 @@ class RecordingPipeline(
             return null
         }
         val manager = context.getSystemService(CameraManager::class.java) ?: return null
-        val id = cameraIdFor(manager, source.settings.cameraFacing) ?: return null
+        val id = cameraIdFor(
+            manager,
+            source.settings.cameraFacing,
+            source.settings.cameraId,
+        ) ?: return null
         val characteristics = runCatching { manager.getCameraCharacteristics(id) }.getOrNull()
             ?: return null
         val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return null
         val sizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
         if (sizes.isEmpty()) return null
-        val chosen = chooseCameraSize(sizes, config.width, config.height)
+        val chosen = chooseCameraSize(
+            sizes,
+            config.width,
+            config.height,
+            source.settings.cameraHeight,
+        )
 
         val texture = GlUtil.createExternalTexture()
         val surfaceTexture = SurfaceTexture(texture).apply {
@@ -1751,6 +1901,8 @@ class RecordingPipeline(
             width = chosen.width,
             height = chosen.height,
             facing = source.settings.cameraFacing,
+            targetHeight = source.settings.cameraHeight,
+            cameraId = source.settings.cameraId,
         )
         surfaceTexture.setOnFrameAvailableListener({ entry.frameAvailable = true }, cameraHandler)
         cameraSources[source.id] = entry
@@ -1759,29 +1911,20 @@ class RecordingPipeline(
             manager.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(device: CameraDevice) {
                     entry.device = device
-                    val request = runCatching {
-                        device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                            addTarget(surface)
-                            set(
-                                CaptureRequest.CONTROL_AF_MODE,
-                                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE,
-                            )
-                        }
-                    }.getOrNull()
+                    entry.sensorRect = characteristics.get(
+                        CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE,
+                    )
+                    entry.maxZoom = characteristics.get(
+                        CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM,
+                    ) ?: 1f
                     device.createCaptureSession(
                         listOf(surface),
                         object : CameraCaptureSession.StateCallback() {
                             override fun onConfigured(session: CameraCaptureSession) {
                                 entry.session = session
-                                if (request != null) {
-                                    runCatching {
-                                        session.setRepeatingRequest(
-                                            request.build(),
-                                            null,
-                                            cameraHandler,
-                                        )
-                                    }
-                                }
+                                entry.zoom = source.settings.cameraZoom
+                                entry.torch = source.settings.cameraTorch
+                                refreshCameraRequest(entry)
                             }
 
                             override fun onConfigureFailed(session: CameraCaptureSession) {
@@ -1809,7 +1952,9 @@ class RecordingPipeline(
         return entry
     }
 
-    private fun cameraIdFor(manager: CameraManager, facing: Int): String? {
+    private fun cameraIdFor(manager: CameraManager, facing: Int, preferred: String? = null): String? {
+        // Pilihan lensa eksplisit menang selama id-nya masih ada.
+        if (!preferred.isNullOrBlank() && preferred in manager.cameraIdList) return preferred
         val wanted = if (facing == 1) {
             CameraCharacteristics.LENS_FACING_FRONT
         } else {
@@ -1823,10 +1968,68 @@ class RecordingPipeline(
         } ?: manager.cameraIdList.firstOrNull()
     }
 
+    /** Menerapkan zoom/senter tanpa membuat ulang sesi kamera. */
+    private fun updateCameraControls(entry: CameraTexture, settings: SourceSettings) {
+        val zoom = settings.cameraZoom.coerceIn(1f, entry.maxZoom.coerceAtLeast(1f))
+        if (zoom == entry.zoom && settings.cameraTorch == entry.torch) return
+        entry.zoom = zoom
+        entry.torch = settings.cameraTorch
+        refreshCameraRequest(entry)
+    }
+
+    /** Menyusun ulang repeating request sesuai zoom dan senter saat ini. */
+    private fun refreshCameraRequest(entry: CameraTexture) {
+        cameraHandler.post {
+            val device = entry.device ?: return@post
+            val session = entry.session ?: return@post
+            runCatching {
+                val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                    addTarget(entry.surface)
+                    set(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE,
+                    )
+                    val rect = entry.sensorRect
+                    if (rect != null && entry.zoom > 1.001f) {
+                        val cropWidth = (rect.width() / entry.zoom).toInt().coerceAtLeast(2)
+                        val cropHeight = (rect.height() / entry.zoom).toInt().coerceAtLeast(2)
+                        val cx = rect.centerX()
+                        val cy = rect.centerY()
+                        set(
+                            CaptureRequest.SCALER_CROP_REGION,
+                            Rect(
+                                cx - cropWidth / 2,
+                                cy - cropHeight / 2,
+                                cx + cropWidth / 2,
+                                cy + cropHeight / 2,
+                            ),
+                        )
+                    }
+                    if (entry.torch) {
+                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                        set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
+                    }
+                }
+                session.setRepeatingRequest(request.build(), null, cameraHandler)
+            }.onFailure { diag("kamera: kontrol gagal (${it.message})") }
+        }
+    }
+
     /** Ukuran keluaran kamera terdekat ke kanvas, dibatasi 1920 px. */
-    private fun chooseCameraSize(sizes: Array<out Size>, width: Int, height: Int): Size {
+    private fun chooseCameraSize(
+        sizes: Array<out Size>,
+        width: Int,
+        height: Int,
+        targetHeight: Int = 0,
+    ): Size {
         val targetAspect = width.toFloat() / height.toFloat()
-        val capped = sizes.filter { it.width <= 1920 && it.height <= 1080 }
+        val capped = sizes.filter { size ->
+            if (targetHeight > 0) {
+                size.height <= targetHeight && size.width <= 1920
+            } else {
+                size.width <= 1920 && size.height <= 1080
+            }
+        }
         val pool = capped.ifEmpty { sizes.toList() }
         return pool.minByOrNull { size ->
             kotlin.math.abs(size.width.toFloat() / size.height - targetAspect)
@@ -1899,6 +2102,10 @@ class RecordingPipeline(
         val height: Int,
         val facing: Int,
         val mediaPath: String? = null,
+        /** Tinggi kamera yang diminta; berubah berarti sesi dibuat ulang. */
+        val targetHeight: Int = 0,
+        /** Lensa spesifik; berubah berarti sesi dibuat ulang. */
+        val cameraId: String? = null,
     ) {
         val lock = Any()
         val texMatrix = FloatArray(16)
@@ -1907,13 +2114,30 @@ class RecordingPipeline(
         var device: CameraDevice? = null
         var session: CameraCaptureSession? = null
         var player: MediaPlayer? = null
+        // Kontrol kamera
+        var sensorRect: Rect? = null
+        var maxZoom: Float = 1f
+        var zoom: Float = 1f
+        var torch: Boolean = false
+        // Kontrol media
+        var prepared = false
+        var paused = false
+        var speed = 1f
+        var looping = true
+        var restartToken = 0
+        var seekToken = 0
+        var latestSettings: SourceSettings? = null
     }
 
     /** Video lokal sebagai sumber; diputar berulang tanpa audio. */
     private fun ensureMedia(source: SceneSource): CameraTexture? {
         val path = source.settings.mediaPath ?: return null
         val existing = mediaSources[source.id]
-        if (existing != null && existing.mediaPath == path) return existing
+        if (existing != null && existing.mediaPath == path) {
+            existing.latestSettings = source.settings
+            applyMediaControls(existing, source.settings)
+            return existing
+        }
         if (existing != null) releaseMedia(source.id)
         if (!File(path).exists()) {
             diag("media: berkas tidak ditemukan ($path)")
@@ -1933,6 +2157,7 @@ class RecordingPipeline(
             facing = 0,
             mediaPath = path,
         )
+        entry.latestSettings = source.settings
         surfaceTexture.setOnFrameAvailableListener({ entry.frameAvailable = true }, cameraHandler)
         val player = MediaPlayer()
         runCatching {
@@ -1942,7 +2167,11 @@ class RecordingPipeline(
             // Audio media tidak masuk mixer rekaman; bisukan agar tidak
             // terdengar ganda saat pratinjau.
             player.setVolume(0f, 0f)
-            player.setOnPreparedListener { runCatching { it.start() } }
+            player.setOnPreparedListener { ready ->
+                entry.prepared = true
+                runCatching { ready.start() }
+                entry.latestSettings?.let { applyMediaControls(entry, it) }
+            }
             player.setOnErrorListener { _, what, extra ->
                 diag("media: error $what/$extra")
                 true
@@ -1953,6 +2182,43 @@ class RecordingPipeline(
         mediaSources[source.id] = entry
         diag("media: $path ${width}x$height")
         return entry
+    }
+
+    /** Menerapkan jeda, kecepatan, ulangan, dan lompatan ke MediaPlayer. */
+    private fun applyMediaControls(entry: CameraTexture, settings: SourceSettings) {
+        val player = entry.player ?: return
+        if (!entry.prepared) return
+        val speed = settings.mediaSpeed.coerceIn(0.25f, 4f)
+        if (speed != entry.speed) {
+            entry.speed = speed
+            runCatching {
+                player.playbackParams = player.playbackParams.setSpeed(speed)
+            }.onFailure { diag("media: kecepatan gagal (${it.message})") }
+        }
+        if (settings.mediaLoop != entry.looping) {
+            entry.looping = settings.mediaLoop
+            player.isLooping = settings.mediaLoop
+        }
+        if (settings.mediaRestartToken != entry.restartToken) {
+            entry.restartToken = settings.mediaRestartToken
+            runCatching { player.seekTo(0) }
+        }
+        if (settings.mediaSeekToken != entry.seekToken) {
+            entry.seekToken = settings.mediaSeekToken
+            val duration = runCatching { player.duration }.getOrDefault(0)
+            if (duration > 0) {
+                val target = (duration * settings.mediaSeekPercent.coerceIn(0f, 100f) / 100f)
+                runCatching { player.seekTo(target.toInt()) }
+            }
+        }
+        if (settings.mediaPaused != entry.paused) {
+            entry.paused = settings.mediaPaused
+            if (settings.mediaPaused) {
+                runCatching { player.pause() }
+            } else {
+                runCatching { player.start() }
+            }
+        }
     }
 
     private fun releaseMedia(sourceId: String) {
@@ -1978,6 +2244,10 @@ class RecordingPipeline(
         cameraSources.keys.filter { it !in keep }.forEach { releaseCamera(it) }
         mediaSources.keys.filter { it !in keep }.forEach { releaseMedia(it) }
         browserSources.keys.filter { it !in keep }.forEach { releaseBrowser(it) }
+        slidePreviousTextures.keys.filter { it !in keep }.forEach { sourceId ->
+            slidePreviousTextures.remove(sourceId)?.let { retiredTextures += it }
+            slideFadeStartNs.remove(sourceId)
+        }
         flushRetiredTextures()
     }
 
@@ -2003,7 +2273,15 @@ class RecordingPipeline(
                 -1
             } else {
                 val interval = source.settings.slideIntervalSec.coerceAtLeast(1).toLong()
-                ((System.nanoTime() / 1_000_000_000L) / interval % paths.size).toInt()
+                val raw = ((System.nanoTime() / 1_000_000_000L) / interval % paths.size).toInt()
+                if (source.settings.slideShuffle) {
+                    // Urutan acak tetap sama tiap putaran karena benihnya id sumber.
+                    paths.indices
+                        .shuffled(kotlin.random.Random(source.id.hashCode()))
+                        .getOrElse(raw) { raw }
+                } else {
+                    raw
+                }
             }
         } else {
             0
@@ -2055,9 +2333,44 @@ class RecordingPipeline(
         val cached = CachedTexture(signature, texture, bitmap.width, bitmap.height)
         bitmap.recycle()
 
-        textureCache[source.id]?.let { retiredTextures += it.textureId }
+        textureCache[source.id]?.let { old ->
+            if (source.type == SourceType.SlideShow &&
+                source.settings.slideFade &&
+                old.signature != signature
+            ) {
+                // Tahan tekstur lama sampai fade selesai, jangan langsung buang.
+                slidePreviousTextures.put(source.id, old.textureId)?.let {
+                    retiredTextures += it
+                }
+                slideFadeStartNs[source.id] = System.nanoTime()
+            } else {
+                retiredTextures += old.textureId
+            }
+        }
         textureCache[source.id] = cached
         return cached
+    }
+
+    /** Tekstur slide lama + progres fade, selama animasinya masih berjalan. */
+    private fun slideFadeState(source: SceneSource): Pair<Int, Float>? {
+        if (source.type != SourceType.SlideShow) return null
+        if (!source.settings.slideFade) {
+            // Fade dimatikan: buang tekstur lama yang mungkin masih tertahan.
+            slidePreviousTextures.remove(source.id)?.let { retiredTextures += it }
+            slideFadeStartNs.remove(source.id)
+            return null
+        }
+        val previous = slidePreviousTextures[source.id] ?: return null
+        val start = slideFadeStartNs[source.id] ?: return null
+        val progress = ((System.nanoTime() - start).toFloat() / SLIDE_FADE_NS)
+            .coerceIn(0f, 1f)
+        if (progress >= 1f) {
+            slidePreviousTextures.remove(source.id)
+            slideFadeStartNs.remove(source.id)
+            retiredTextures += previous
+            return null
+        }
+        return previous to progress
     }
 
     private fun sourceSignature(source: SceneSource): String = buildString {
@@ -2071,6 +2384,7 @@ class RecordingPipeline(
         append('|').append(source.settings.cameraFacing)
         append('|').append(source.settings.imagePaths.joinToString(","))
         append('|').append(source.settings.slideIntervalSec)
+        append('|').append(source.settings.slideShuffle)
     }
 
     /** Menggambar semua layer kanvas pada konteks yang sedang aktif. */
@@ -2239,7 +2553,7 @@ class RecordingPipeline(
                 filters = layer.filters,
             )
 
-            SourceType.Image, SourceType.Text, SourceType.SlideShow -> painter.drawTexture2D(
+            SourceType.Image, SourceType.Text -> painter.drawTexture2D(
                 textureId = layer.textureId,
                 left = left,
                 bottom = bottom,
@@ -2256,6 +2570,34 @@ class RecordingPipeline(
                 opacity = layer.opacity,
                 filters = layer.filters,
             )
+
+            SourceType.SlideShow -> {
+                fun drawSlide(textureId: Int, alpha: Float) = painter.drawTexture2D(
+                    textureId = textureId,
+                    left = left,
+                    bottom = bottom,
+                    width = drawWidth,
+                    height = drawHeight,
+                    rotation = layer.transform.rotation,
+                    cropLeft = cLeft,
+                    cropTop = cTop,
+                    cropRight = cRight,
+                    cropBottom = cBottom,
+                    flipH = layer.transform.flipH,
+                    flipV = layer.transform.flipV,
+                    blend = layer.blend,
+                    opacity = alpha,
+                    filters = layer.filters,
+                )
+                // Crossfade: gambar lama penuh, gambar baru ditimpa dengan
+                // alfa sesuai progres. Tanpa fade, cukup satu gambar.
+                if (layer.fadeTextureId != 0) {
+                    drawSlide(layer.fadeTextureId, layer.opacity)
+                    drawSlide(layer.textureId, layer.opacity * layer.fadeOpacity)
+                } else {
+                    drawSlide(layer.textureId, layer.opacity)
+                }
+            }
 
             SourceType.Camera, SourceType.Media -> {
                 val external = layer.camera ?: return
@@ -2641,6 +2983,9 @@ class RecordingPipeline(
         releaseAllCameras()
         mediaSources.keys.toList().forEach { releaseMedia(it) }
         browserSources.keys.toList().forEach { releaseBrowser(it) }
+        slidePreviousTextures.values.forEach { retiredTextures += it }
+        slidePreviousTextures.clear()
+        slideFadeStartNs.clear()
         textureCache.clear()
         retiredTextures.clear()
 
@@ -2659,6 +3004,24 @@ class RecordingPipeline(
         encodersRunning = false
         val saved = runCatching { muxer?.finish() ?: false }.getOrDefault(false)
         muxer = null
+        val finishedSafe = safeSession
+        safeSession = null
+        if (finishedSafe != null) {
+            SafeRecordingStore.endActive(finishedSafe)
+            if (saved) {
+                mergeSafeRecording(finishedSafe)
+            } else {
+                // Sesi berakhir paksa (mis. izin tangkap layar dicabut):
+                // beri tahu bahwa segmen masih bisa dipulihkan.
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.error_record_recoverable),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
         runCatching { audioEncoder?.shutdown() }
         audioEncoder = null
         AudioMixer.clearRuntime()
@@ -2958,6 +3321,9 @@ class RecordingPipeline(
         val filters: com.rout.air.engine.FilterState = com.rout.air.engine.FilterState.NONE,
         val camera: CameraTexture? = null,
         val browser: BrowserTexture? = null,
+        /** Tekstur slide sebelumnya untuk crossfade; 0 = tanpa fade. */
+        val fadeTextureId: Int = 0,
+        val fadeOpacity: Float = 1f,
     )
 
     private data class CachedTexture(
@@ -2969,12 +3335,19 @@ class RecordingPipeline(
 
     private companion object {
         const val TAG = "RoutAirPipeline"
+        /** UA desktop untuk sumber Browser. */
+        const val DESKTOP_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
         const val STALL_TIMEOUT_NS = 5_000_000_000L
         const val PREVIEW_STALL_NS = 3_000_000_000L
         const val WATCHDOG_INTERVAL_MS = 1_000L
 
         /** Durasi total transisi fade ke hitam. */
         const val TRANSITION_NS = 500_000_000L
+
+        /** Lama crossfade antar gambar slide show. */
+        const val SLIDE_FADE_NS = 500_000_000f
 
         /** Letterbox kanvas ke dalam surface (pratinjau). */
         fun computeViewport(

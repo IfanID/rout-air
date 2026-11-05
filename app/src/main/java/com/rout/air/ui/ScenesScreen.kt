@@ -1242,6 +1242,7 @@ private fun SourceEditor(
     var textSize by remember(source.id) { mutableStateOf(source.settings.textSize) }
     var showDevicePicker by remember(source.id) { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
+    val context = LocalContext.current
     val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val previewHeight = if (portrait) {
         (configuration.screenHeightDp * 0.46f).dp.coerceIn(300.dp, 440.dp)
@@ -1479,6 +1480,38 @@ private fun SourceEditor(
                         )
                     }
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.scenes_slideshow_acak),
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = source.settings.slideShuffle,
+                        onCheckedChange = { enabled ->
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(slideShuffle = enabled),
+                                ),
+                            )
+                        },
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.scenes_slideshow_fade),
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = source.settings.slideFade,
+                        onCheckedChange = { enabled ->
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(slideFade = enabled),
+                                ),
+                            )
+                        },
+                    )
+                }
             }
 
             SourceType.Image -> {
@@ -1510,6 +1543,83 @@ private fun SourceEditor(
                 TextButton(onClick = onEditBrowser) {
                     Text(stringResource(R.string.scenes_browser_buka))
                 }
+                Text(
+                    stringResource(R.string.scenes_browser_refresh),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0.5f, 1f, 2f, 5f).forEach { seconds ->
+                        FilterChip(
+                            selected = source.settings.browserRefreshSec == seconds,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(
+                                            browserRefreshSec = seconds,
+                                        ),
+                                    ),
+                                )
+                            },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        R.string.scenes_browser_interval_n,
+                                        seconds,
+                                    ),
+                                )
+                            },
+                        )
+                    }
+                }
+                Text(
+                    stringResource(R.string.scenes_browser_zoom),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0.75f, 1f, 1.25f, 1.5f).forEach { zoom ->
+                        FilterChip(
+                            selected = source.settings.browserZoom == zoom,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(browserZoom = zoom),
+                                    ),
+                                )
+                            },
+                            label = { Text("%.0f%%".format(zoom * 100f)) },
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.scenes_browser_desktop),
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = source.settings.browserDesktop,
+                        onCheckedChange = { enabled ->
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(browserDesktop = enabled),
+                                ),
+                            )
+                        },
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        updateSource(
+                            source.copy(
+                                settings = source.settings.copy(
+                                    browserReloadToken =
+                                        source.settings.browserReloadToken + 1,
+                                ),
+                            ),
+                        )
+                    },
+                ) {
+                    Text(stringResource(R.string.scenes_browser_reload))
+                }
                 Hint(stringResource(R.string.scenes_browser_hint))
             }
 
@@ -1517,6 +1627,100 @@ private fun SourceEditor(
                 Spacer(Modifier.height(8.dp))
                 Text(stringResource(R.string.scenes_tipe_media), style = MaterialTheme.typography.titleSmall)
                 TextButton(onClick = onPickMedia) { Text(stringResource(R.string.scenes_media_ganti)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(
+                        false to stringResource(R.string.scenes_media_play),
+                        true to stringResource(R.string.scenes_media_pause),
+                    ).forEach { (paused, label) ->
+                        FilterChip(
+                            selected = source.settings.mediaPaused == paused,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(mediaPaused = paused),
+                                    ),
+                                )
+                            },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+                Text(
+                    stringResource(R.string.scenes_media_speed),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0.5f, 1f, 1.5f, 2f).forEach { speed ->
+                        FilterChip(
+                            selected = source.settings.mediaSpeed == speed,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(mediaSpeed = speed),
+                                    ),
+                                )
+                            },
+                            label = {
+                                Text(stringResource(R.string.scenes_media_speed_n, speed))
+                            },
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.scenes_media_loop),
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = source.settings.mediaLoop,
+                        onCheckedChange = { enabled ->
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(mediaLoop = enabled),
+                                ),
+                            )
+                        },
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        updateSource(
+                            source.copy(
+                                settings = source.settings.copy(
+                                    mediaRestartToken =
+                                        source.settings.mediaRestartToken + 1,
+                                ),
+                            ),
+                        )
+                    },
+                ) {
+                    Text(stringResource(R.string.scenes_media_restart))
+                }
+                var seekPercent by remember(source.id) { mutableFloatStateOf(0f) }
+                Text(
+                    stringResource(
+                        R.string.scenes_media_seek,
+                        "${seekPercent.roundToInt()}%",
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Slider(
+                    value = seekPercent,
+                    onValueChange = { seekPercent = it },
+                    onValueChangeFinished = {
+                        // Seek hanya saat jari dilepas supaya MediaPlayer
+                        // tidak dibanjiri permintaan posisi.
+                        updateSource(
+                            source.copy(
+                                settings = source.settings.copy(
+                                    mediaSeekPercent = seekPercent,
+                                    mediaSeekToken = source.settings.mediaSeekToken + 1,
+                                ),
+                            ),
+                        )
+                    },
+                    valueRange = 0f..100f,
+                )
                 Hint(stringResource(R.string.scenes_media_hint))
             }
 
@@ -1531,15 +1735,139 @@ private fun SourceEditor(
                         FilterChip(
                             selected = source.settings.cameraFacing == facing,
                             onClick = {
+                                // Ganti menghadap juga melepas pilihan lensa
+                                // supaya tidak tertahan di lensa arah lama.
                                 updateSource(
                                     source.copy(
-                                        settings = source.settings.copy(cameraFacing = facing),
+                                        settings = source.settings.copy(
+                                            cameraFacing = facing,
+                                            cameraId = null,
+                                        ),
                                     ),
                                 )
                             },
                             label = { Text(label) },
                         )
                     }
+                }
+                val lenses = remember {
+                    val manager = context.getSystemService(
+                        android.hardware.camera2.CameraManager::class.java,
+                    )
+                    manager?.cameraIdList?.mapNotNull { id ->
+                        val info = runCatching {
+                            manager.getCameraCharacteristics(id)
+                        }.getOrNull() ?: return@mapNotNull null
+                        val front = info.get(
+                            android.hardware.camera2.CameraCharacteristics.LENS_FACING,
+                        ) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+                        val focal = info.get(
+                            android.hardware.camera2.CameraCharacteristics
+                                .LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
+                        )?.firstOrNull()
+                        Triple(id, front, focal)
+                    }.orEmpty()
+                }
+                if (lenses.size > 1) {
+                    Text(
+                        stringResource(R.string.scenes_kamera_lensa),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        FilterChip(
+                            selected = source.settings.cameraId == null,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(cameraId = null),
+                                    ),
+                                )
+                            },
+                            label = { Text(stringResource(R.string.settings_otomatis)) },
+                        )
+                        lenses.forEach { (id, front, focal) ->
+                            val prefix = stringResource(
+                                if (front) R.string.scenes_kamera_depan
+                                else R.string.scenes_kamera_belakang,
+                            )
+                            FilterChip(
+                                selected = source.settings.cameraId == id,
+                                onClick = {
+                                    updateSource(
+                                        source.copy(
+                                            settings = source.settings.copy(cameraId = id),
+                                        ),
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        if (focal != null) {
+                                            "$prefix ${"%.0f".format(focal)} mm"
+                                        } else {
+                                            prefix
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                Text(
+                    stringResource(R.string.scenes_kamera_resolusi),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(
+                        0 to stringResource(R.string.settings_otomatis),
+                        720 to "720p",
+                        1080 to "1080p",
+                    ).forEach { (height, label) ->
+                        FilterChip(
+                            selected = source.settings.cameraHeight == height,
+                            onClick = {
+                                updateSource(
+                                    source.copy(
+                                        settings = source.settings.copy(cameraHeight = height),
+                                    ),
+                                )
+                            },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+                LabeledSlider(
+                    label = stringResource(R.string.scenes_kamera_zoom),
+                    value = source.settings.cameraZoom,
+                    range = 1f..3f,
+                    format = { "%.1f×".format(it) },
+                    onReset = {
+                        updateSource(
+                            source.copy(settings = source.settings.copy(cameraZoom = 1f)),
+                        )
+                    },
+                ) { value ->
+                    updateSource(
+                        source.copy(settings = source.settings.copy(cameraZoom = value)),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.scenes_kamera_torch),
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.Switch(
+                        checked = source.settings.cameraTorch,
+                        onCheckedChange = { enabled ->
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(cameraTorch = enabled),
+                                ),
+                            )
+                        },
+                    )
                 }
                 Hint(stringResource(R.string.scenes_kamera_hint))
             }

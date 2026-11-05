@@ -79,6 +79,8 @@ data class CaptureConfig(
     val recordVideoBitrate: Int = 0,
     /** Codec yang diminta; encoder bisa turun ke AVC bila tidak tersedia. */
     val videoCodec: VideoCodec = VideoCodec.AVC,
+    /** Saat merekam tanpa live, pakai HEVC bila encoder hardware tersedia. */
+    val preferHevcRecording: Boolean = false,
     val videoProfile: VideoProfile = VideoProfile.Auto,
     val colorSpace: ColorSpaceMode = ColorSpaceMode.BT709,
     val colorRange: ColorRangeMode = ColorRangeMode.Limited,
@@ -91,6 +93,14 @@ data class CaptureConfig(
     val splitMinutes: Int = 0,
     /** >0 = split juga saat ukuran segmen mencapai N MB. */
     val splitSizeMb: Int = 0,
+    /**
+     * Menulis rekaman sebagai segmen yang sudah difinalisasi, lalu
+     * menggabungkannya saat berhenti. Bila aplikasi mati di tengah rekaman,
+     * segmen terakhir yang selesai masih bisa dipulihkan.
+     */
+    val safeRecording: Boolean = true,
+    /** Panjang tiap segmen rekaman aman; 0 dianggap 5 menit. */
+    val safeSegmentMinutes: Int = 5,
     /** Menahan N detik terakhir selama merekam untuk disimpan kapan saja. */
     val replayBufferEnabled: Boolean = false,
     val replaySeconds: Int = 60,

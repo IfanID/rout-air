@@ -14,7 +14,7 @@ enum class VideoCodec(
     val fourCcId: Double,
 ) {
     AVC("H.264", "video/avc", "avc1", 1635141631.0),
-    HEVC("HEVC", "video/hevc", "hvc1", 1752589105.0),
+    HEVC("H.265", "video/hevc", "hvc1", 1752589105.0),
     AV1("AV1", "video/av01", "av01", 1635135537.0),
     ;
 

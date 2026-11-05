@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.annotation.StringRes
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
@@ -30,6 +31,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -40,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,6 +75,7 @@ import com.rout.air.encode.GameLoadBenchmark
 import com.rout.air.data.AudioMixer
 import com.rout.air.data.DiagLog
 import com.rout.air.data.AppLanguage
+import com.rout.air.data.SceneManager
 import com.rout.air.data.SettingsStore
 import com.rout.air.live.RtmpTester
 import com.rout.air.live.RtmpTestResult
@@ -99,6 +103,7 @@ private enum class SettingsPage(@StringRes val titleRes: Int) {
     Output(R.string.settings_entry_output),
     Audio(R.string.tab_audio),
     Video(R.string.settings_entry_video),
+    Collections(R.string.settings_entry_adegan),
     Advanced(R.string.settings_entry_lanjutan),
 }
 
@@ -161,6 +166,10 @@ fun SettingsScreen(
                 stringResource(R.string.settings_entry_video_desc),
             ) { page = SettingsPage.Video }
             SettingsEntry(
+                stringResource(R.string.settings_entry_adegan),
+                stringResource(R.string.settings_entry_adegan_desc),
+            ) { page = SettingsPage.Collections }
+            SettingsEntry(
                 stringResource(R.string.settings_entry_lanjutan),
                 stringResource(R.string.settings_entry_lanjutan_desc),
             ) { page = SettingsPage.Advanced }
@@ -173,6 +182,7 @@ fun SettingsScreen(
 
             when (page) {
                 SettingsPage.Video -> VideoSettings(config, canvasConfig, onConfigChange)
+                SettingsPage.Collections -> SceneCollectionsSettings()
                 SettingsPage.Output -> OutputSettings(
                     config = config,
                     mix = mix,
@@ -572,6 +582,29 @@ private fun RecordingTab(
     Hint(stringResource(R.string.settings_split_hint))
 
     Spacer(Modifier.height(16.dp))
+    SectionTitle(stringResource(R.string.settings_safe_recording))
+    SettingSwitchRow(
+        title = stringResource(R.string.settings_safe_recording),
+        subtitle = stringResource(R.string.settings_safe_recording_desc),
+        checked = config.safeRecording,
+    ) { onConfigChange(config.copy(safeRecording = it)) }
+    if (config.safeRecording) {
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(2, 5, 10).forEach { minutes ->
+                FilterChip(
+                    selected = config.safeSegmentMinutes == minutes,
+                    onClick = { onConfigChange(config.copy(safeSegmentMinutes = minutes)) },
+                    label = {
+                        Text(stringResource(R.string.settings_safe_segment_n, minutes))
+                    },
+                )
+            }
+        }
+        Hint(stringResource(R.string.settings_safe_recording_hint))
+    }
+
+    Spacer(Modifier.height(16.dp))
     SectionTitle(stringResource(R.string.settings_replay_buffer))
     SettingSwitchRow(
         title = stringResource(R.string.settings_replay_buffer),
@@ -844,7 +877,7 @@ private fun CodecPicker(
                 selected = config.videoCodec == codec,
                 enabled = !known || available != null,
                 onClick = { onConfigChange(config.copy(videoCodec = codec)) },
-                label = { Text(codec.label) },
+                label = { Text(codecChipLabel(codec)) },
             )
         }
     }
@@ -872,6 +905,24 @@ private fun CodecPicker(
             )
         }
         Hint(stringResource(R.string.settings_codec_probe_hint))
+        Text(
+            codecDescription(config.videoCodec),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (config.videoCodec != VideoCodec.AVC) {
+            Hint(stringResource(R.string.settings_codec_live_h264_only))
+        }
+        val hevcHardware = EncoderProbe.select(caps, VideoCodec.HEVC)?.hardware == true
+        if (hevcHardware) {
+            SettingSwitchRow(
+                title = stringResource(R.string.settings_prefer_hevc),
+                subtitle = stringResource(R.string.settings_prefer_hevc_desc),
+                checked = config.preferHevcRecording,
+            ) { onConfigChange(config.copy(preferHevcRecording = it)) }
+        } else {
+            Hint(stringResource(R.string.settings_prefer_hevc_unavailable))
+        }
     }
 
     if (config.videoCodec == VideoCodec.AV1 && Build.VERSION.SDK_INT < 34) {
@@ -884,6 +935,26 @@ private fun CodecPicker(
         Hint(stringResource(R.string.settings_codec_av1_hint))
     }
 }
+
+/** Nama codec yang mudah dibedakan di pemilih. */
+@Composable
+private fun codecChipLabel(codec: VideoCodec): String = stringResource(
+    when (codec) {
+        VideoCodec.AVC -> R.string.settings_codec_avc_label
+        VideoCodec.HEVC -> R.string.settings_codec_hevc_label
+        VideoCodec.AV1 -> R.string.settings_codec_av1_label
+    },
+)
+
+/** Keterangan singkat codec yang sedang dipilih. */
+@Composable
+private fun codecDescription(codec: VideoCodec): String = stringResource(
+    when (codec) {
+        VideoCodec.AVC -> R.string.settings_codec_desc_avc
+        VideoCodec.HEVC -> R.string.settings_codec_desc_hevc
+        VideoCodec.AV1 -> R.string.settings_codec_desc_av1
+    },
+)
 
 /** Slider bitrate 1–50 Mbps dengan langkah 0,5 Mbps seperti spinbox OBS. */
 @Composable
@@ -2361,5 +2432,174 @@ private fun InfoRow(label: String, value: String) {
             modifier = Modifier.weight(1f),
         )
         Text(text = value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Kelola beberapa koleksi scene (proyek) beserta ekspor/impor JSON.
+ * Kanvas video tetap global; yang berpindah hanya susunan adegan dan sumber.
+ */
+@Composable
+private fun SceneCollectionsSettings() {
+    val context = LocalContext.current
+    var version by remember { mutableIntStateOf(0) }
+    val collections = remember(version) { SceneManager.collections() }
+    val active = collections.firstOrNull { it.active } ?: collections.firstOrNull()
+    var message by remember { mutableStateOf<String?>(null) }
+    var renameId by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var deleteId by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            val ok = SceneManager.exportActive(uri)
+            message = context.getString(
+                if (ok) R.string.collections_export_done else R.string.collections_export_failed,
+            )
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val imported = SceneManager.importCollection(
+                uri,
+                context.getString(R.string.collections_imported_name),
+            )
+            message = context.getString(
+                if (imported != null) R.string.collections_import_done
+                else R.string.collections_import_failed,
+            )
+            if (imported != null) version++
+        }
+    }
+
+    SectionTitle(stringResource(R.string.settings_entry_adegan))
+    Hint(stringResource(R.string.collections_hint))
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        collections.forEach { info ->
+            FilterChip(
+                selected = info.active,
+                onClick = {
+                    if (!info.active && SceneManager.switchCollection(info.id)) version++
+                },
+                label = {
+                    Text(
+                        info.title.ifBlank { stringResource(R.string.collections_untitled) },
+                    )
+                },
+            )
+        }
+    }
+
+    val activeTitle = active?.title?.ifBlank {
+        context.getString(R.string.collections_untitled)
+    }.orEmpty()
+    val copyName = stringResource(R.string.collections_copy_name, activeTitle)
+
+    Spacer(Modifier.height(8.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedButton(
+            onClick = {
+                SceneManager.duplicateCollection(newTitle = copyName)
+                version++
+            },
+        ) { Text(stringResource(R.string.collections_duplicate)) }
+        OutlinedButton(
+            onClick = {
+                active?.let {
+                    renameId = it.id
+                    renameText = it.title
+                }
+            },
+            enabled = active != null,
+        ) { Text(stringResource(R.string.collections_rename)) }
+        OutlinedButton(
+            onClick = { deleteId = active?.id },
+            enabled = collections.size > 1 && active != null,
+        ) { Text(stringResource(R.string.common_hapus)) }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedButton(onClick = { exportLauncher.launch("RoutAir_scenes.json") }) {
+            Text(stringResource(R.string.collections_export))
+        }
+        OutlinedButton(
+            onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+        ) {
+            Text(stringResource(R.string.collections_import))
+        }
+    }
+
+    message?.let {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    renameId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { renameId = null },
+            title = { Text(stringResource(R.string.collections_rename)) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.collections_name)) },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (renameText.isNotBlank()) {
+                            SceneManager.renameCollection(id, renameText.trim())
+                            version++
+                        }
+                        renameId = null
+                    },
+                ) { Text(stringResource(R.string.common_simpan)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameId = null }) {
+                    Text(stringResource(R.string.common_batal))
+                }
+            },
+        )
+    }
+
+    deleteId?.let { id ->
+        AlertDialog(
+            onDismissRequest = { deleteId = null },
+            title = { Text(stringResource(R.string.collections_delete_title)) },
+            text = { Text(stringResource(R.string.collections_delete_desc)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        SceneManager.deleteCollection(id)
+                        version++
+                        deleteId = null
+                    },
+                ) { Text(stringResource(R.string.common_hapus)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteId = null }) {
+                    Text(stringResource(R.string.common_batal))
+                }
+            },
+        )
     }
 }

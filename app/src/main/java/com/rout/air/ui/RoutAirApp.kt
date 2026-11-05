@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.provider.Settings
+import android.text.format.Formatter
 import android.os.Build
 import android.os.PowerManager
 import android.util.DisplayMetrics
@@ -18,9 +19,14 @@ import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -40,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.rout.air.core.LiveService
 import com.rout.air.live.GoogleAuthStore
 import com.rout.air.live.prepareYouTubeBroadcast
@@ -62,10 +69,13 @@ import com.rout.air.data.ScreensaverStore
 import com.rout.air.data.SettingsStore
 import com.rout.air.data.updateItem
 import com.rout.air.output.CaptureEngine
+import com.rout.air.output.SafeRecordingStore
 import com.rout.air.service.CaptureService
 import com.rout.air.service.OverlayLiveService
 import com.rout.air.service.OverlayRecordingService
 import kotlinx.coroutines.delay
+import java.text.DateFormat
+import java.util.Date
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
@@ -118,6 +128,17 @@ fun RoutAirApp(
     val audioMix by AudioMixer.mix.collectAsState()
 
     var config by remember { mutableStateOf(store.load()) }
+
+    // Rekaman aman yang terputus karena proses mati ditawarkan untuk dipulihkan.
+    var pendingRecordings by remember {
+        mutableStateOf<List<SafeRecordingStore.Session>>(emptyList())
+    }
+    var recovering by remember { mutableStateOf(false) }
+    var recoverFailed by remember { mutableStateOf(false) }
+    // Sesi yang sudah ditutup pengguna tidak ditawarkan lagi pada sesi
+    // aplikasi ini; proses baru akan menawarkannya kembali.
+    var dismissedRecoveries by remember { mutableStateOf(emptySet<String>()) }
+
     // Setup otomatis muncul sendiri sekali saat aplikasi pertama dipakai.
     var showAutoConfig by remember { mutableStateOf(!store.isWizardDone()) }
     var liveConfig by remember { mutableStateOf(store.loadLive()) }
@@ -149,6 +170,22 @@ fun RoutAirApp(
 
     val state by CaptureEngine.state.collectAsState()
     val stats by CaptureEngine.stats.collectAsState()
+
+    // Sesi pemulihan hanya dipindai saat tidak ada rekaman berjalan supaya
+    // dialog tidak pernah menawarkan berkas yang masih ditulis.
+    val recordingInProgress = state is RecordingState.Recording
+    LaunchedEffect(recordingInProgress) {
+        if (recordingInProgress) {
+            pendingRecordings = emptyList()
+            return@LaunchedEffect
+        }
+        // Beri waktu penulis menutup segmen terakhir setelah tombol Stop.
+        delay(600)
+        pendingRecordings = withContext(Dispatchers.IO) {
+            SafeRecordingStore.pending(context)
+        }.filterNot { it.directory.name in dismissedRecoveries }
+    }
+
     val liveStats by CaptureEngine.liveStats.collectAsState()
 
     // Kanvas = orientasi video. Selama rekaman berjalan nilainya dibekukan
@@ -681,6 +718,133 @@ fun RoutAirApp(
                     onLiveConfigChange = { liveConfig = it },
                 )
             }
+        }
+
+        if (pendingRecordings.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (!recovering) {
+                        dismissedRecoveries = dismissedRecoveries + pendingRecordings.map {
+                            it.directory.name
+                        }
+                        pendingRecordings = emptyList()
+                        recoverFailed = false
+                    }
+                },
+                title = { Text(stringResource(R.string.recover_title)) },
+                text = {
+                    Column {
+                        Text(stringResource(R.string.recover_desc))
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            stringResource(R.string.recover_action_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        pendingRecordings.forEach { session ->
+                            val date = DateFormat.getDateTimeInstance(
+                                DateFormat.SHORT,
+                                DateFormat.SHORT,
+                            ).format(Date(session.meta.startedAtMs))
+                            Text(session.meta.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                stringResource(
+                                    R.string.recover_item,
+                                    session.segments.size,
+                                    Formatter.formatShortFileSize(context, session.sizeBytes),
+                                    date,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (recoverFailed) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                stringResource(R.string.recover_failed),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !recovering,
+                        onClick = {
+                            scope.launch {
+                                recovering = true
+                                recoverFailed = false
+                                val finished = pendingRecordings.map { it.directory.name }.toSet()
+                                withContext(Dispatchers.IO) {
+                                    pendingRecordings.forEach {
+                                        SafeRecordingStore.merge(context, it)
+                                    }
+                                }
+                                val remaining = withContext(Dispatchers.IO) {
+                                    SafeRecordingStore.pending(context)
+                                }
+                                // Sesi yang gagal digabung tetap ditawarkan;
+                                // yang sudah berhasil tidak muncul lagi.
+                                pendingRecordings = remaining.filterNot {
+                                    it.directory.name in dismissedRecoveries
+                                }
+                                recoverFailed = remaining.any {
+                                    it.directory.name in finished
+                                }
+                                recovering = false
+                            }
+                        },
+                    ) {
+                        Text(
+                            stringResource(
+                                if (recovering) R.string.recover_working
+                                else R.string.recover_restore,
+                            ),
+                        )
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(
+                            enabled = !recovering,
+                            onClick = {
+                                dismissedRecoveries =
+                                    dismissedRecoveries + pendingRecordings.map {
+                                        it.directory.name
+                                    }
+                                scope.launch {
+                                    recovering = true
+                                    withContext(Dispatchers.IO) {
+                                        pendingRecordings.forEach {
+                                            SafeRecordingStore.discard(it)
+                                        }
+                                    }
+                                    pendingRecordings = emptyList()
+                                    recoverFailed = false
+                                    recovering = false
+                                }
+                            },
+                        ) {
+                            Text(stringResource(R.string.recover_delete))
+                        }
+                        TextButton(
+                            enabled = !recovering,
+                            onClick = {
+                                dismissedRecoveries =
+                                    dismissedRecoveries + pendingRecordings.map {
+                                        it.directory.name
+                                    }
+                                pendingRecordings = emptyList()
+                                recoverFailed = false
+                            },
+                        ) {
+                            Text(stringResource(R.string.recover_later))
+                        }
+                    }
+                },
+            )
         }
 
         if (showAutoConfig) {

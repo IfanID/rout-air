@@ -163,6 +163,37 @@ data class SourceSettings(
     val screenDisplay: ScreenDisplay? = null,
     /** 0 = kamera belakang, 1 = depan. */
     val cameraFacing: Int = 0,
+    /** Id kamera tertentu (mis. lensa ultrawide); null = otomatis. */
+    val cameraId: String? = null,
+    /** Tinggi target kamera: 0 = otomatis, 720/1080 = pilihan pengguna. */
+    val cameraHeight: Int = 0,
+    /** Zoom kamera 1..5 (dibatasi kemampuan perangkat). */
+    val cameraZoom: Float = 1f,
+    /** Senter kamera menyala terus selama sumber dipakai. */
+    val cameraTorch: Boolean = false,
+    /** Video Media dijeda tanpa melepas sumber. */
+    val mediaPaused: Boolean = false,
+    /** Kecepatan putar Media 0,5–2×. */
+    val mediaSpeed: Float = 1f,
+    /** Putar ulang otomatis saat habis. */
+    val mediaLoop: Boolean = true,
+    /** Dinaikkan untuk memutar video dari awal lagi. */
+    val mediaRestartToken: Int = 0,
+    /** Posisi tujuan 0–100% dan token pemicu seek. */
+    val mediaSeekPercent: Float = 0f,
+    val mediaSeekToken: Int = 0,
+    /** Detik antar tangkapan Browser. */
+    val browserRefreshSec: Float = 1f,
+    /** Perbesaran halaman Browser 0,5–2×. */
+    val browserZoom: Float = 1f,
+    /** Pakai user agent desktop. */
+    val browserDesktop: Boolean = false,
+    /** Dinaikkan untuk memuat ulang halaman. */
+    val browserReloadToken: Int = 0,
+    /** Urutan gambar slide show diacak tetapi tetap sama tiap putaran. */
+    val slideShuffle: Boolean = false,
+    /** Fade singkat saat gambar slide show berganti. */
+    val slideFade: Boolean = false,
     /** Path video lokal untuk sumber [SourceType.Media]. */
     val mediaPath: String? = null,
     /** URL halaman untuk sumber [SourceType.Browser]. */
@@ -198,6 +229,8 @@ data class SceneCollection(
     val activeSceneId: String,
     val scenes: List<Scene>,
     val sources: List<SceneSource>,
+    /** Nama koleksi/proyek; kosong berarti memakai nama bawaan di UI. */
+    val title: String = "",
 ) {
     fun activeScene(): Scene? =
         scenes.firstOrNull { it.id == activeSceneId } ?: scenes.firstOrNull()

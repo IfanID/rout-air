@@ -1,8 +1,6 @@
 package com.rout.air.output
 
 import android.content.Context
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
 import android.util.Log
@@ -12,7 +10,6 @@ import com.rout.air.encode.MediaSink
 import com.rout.air.encode.Mp4Writer
 import com.rout.air.encode.OutputTarget
 import java.io.File
-import java.nio.ByteBuffer
 import java.util.ArrayDeque
 
 /**
@@ -120,7 +117,7 @@ class ReplayBuffer(
 
         var success = false
         try {
-            success = remux(snapshot, muxer)
+            success = com.rout.air.encode.Mp4Concat.concat(snapshot.map { it.file }, muxer)
         } catch (error: Throwable) {
             Log.w(TAG, "Gagal menggabungkan replay: ${error.message}")
         } finally {
@@ -129,63 +126,6 @@ class ReplayBuffer(
         }
         target.finish(success)
         return if (success) target.uri else null
-    }
-
-    private fun remux(snapshot: List<Segment>, muxer: MediaMuxer): Boolean {
-        val muxerTrackBySource = HashMap<Int, Int>()
-        var started = false
-        var trackCount = 0
-        var timeOffsetUs = 0L
-        val buffer = ByteBuffer.allocateDirect(BUFFER_BYTES)
-        val info = android.media.MediaCodec.BufferInfo()
-
-        for (segment in snapshot) {
-            val extractor = MediaExtractor()
-            try {
-                extractor.setDataSource(segment.file.absolutePath)
-                val trackIndexes = (0 until extractor.trackCount).filter { index ->
-                    val mime = extractor.getTrackFormat(index).getString(MediaFormat.KEY_MIME)
-                    mime?.startsWith("video/") == true || mime?.startsWith("audio/") == true
-                }
-                if (trackIndexes.isEmpty()) continue
-
-                if (!started) {
-                    trackIndexes.forEach { index ->
-                        muxerTrackBySource[index] = muxer.addTrack(extractor.getTrackFormat(index))
-                        trackCount++
-                    }
-                    if (trackCount == 0) return false
-                    muxer.start()
-                    started = true
-                }
-
-                var maxEndUs = 0L
-                trackIndexes.forEach { index ->
-                    val muxerTrack = muxerTrackBySource[index] ?: return@forEach
-                    extractor.selectTrack(index)
-                    while (true) {
-                        buffer.clear()
-                        val size = extractor.readSampleData(buffer, 0)
-                        if (size < 0) break
-                        info.set(
-                            0,
-                            size,
-                            extractor.sampleTime.coerceAtLeast(0L) + timeOffsetUs,
-                            extractor.sampleFlags and SAMPLE_FLAG_MASK,
-                        )
-                        runCatching { muxer.writeSampleData(muxerTrack, buffer, info) }
-                        maxEndUs = maxOf(maxEndUs, info.presentationTimeUs)
-                        extractor.advance()
-                    }
-                    extractor.unselectTrack(index)
-                }
-                // Jeda kecil antar segmen menjaga PTS tetap naik monoton.
-                timeOffsetUs = maxEndUs + SEGMENT_GAP_US
-            } finally {
-                runCatching { extractor.release() }
-            }
-        }
-        return started
     }
 
     private fun addSegment(file: File, durationUs: Long) {
@@ -223,10 +163,5 @@ class ReplayBuffer(
     private companion object {
         const val TAG = "RoutAirReplay"
         const val SEGMENT_US = 5_000_000L
-        const val SEGMENT_GAP_US = 10_000L
-        const val BUFFER_BYTES = 1 shl 20
-        const val SAMPLE_FLAG_MASK =
-            android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME or
-                android.media.MediaCodec.BUFFER_FLAG_PARTIAL_FRAME
     }
 }

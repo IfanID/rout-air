@@ -17,10 +17,13 @@ import java.util.UUID
  * Memakai `org.json` bawaan Android supaya tidak menambah dependensi baru;
  * formatnya tetap mudah dibaca dan bisa diimpor dari OBS nanti.
  */
-class SceneStore(context: Context) {
+class SceneStore(
+    context: Context,
+    val collectionId: String = DEFAULT_ID,
+) {
     private val appContext = context.applicationContext
-    private val file = File(appContext.filesDir, FILE_NAME)
-    private val backup = File(appContext.filesDir, BACKUP_NAME)
+    private val file = dataFile(appContext, collectionId)
+    private val backup = backupFile(appContext, collectionId)
     private val assets = File(appContext.filesDir, ASSET_DIR).apply { mkdirs() }
 
     fun load(): SceneCollection? {
@@ -65,7 +68,7 @@ class SceneStore(context: Context) {
         runCatching {
             // Tulis ke berkas sementara lalu ganti nama: crash di tengah
             // penulisan tidak meninggalkan JSON setengah jadi.
-            val temp = File(appContext.filesDir, "$FILE_NAME.tmp")
+            val temp = File(file.parentFile, "${file.name}.tmp")
             temp.writeText(text)
             if (file.exists()) runCatching { file.copyTo(backup, overwrite = true) }
             if (!temp.renameTo(file)) {
@@ -106,10 +109,59 @@ class SceneStore(context: Context) {
         }.getOrNull()
     }
 
-    private companion object {
-        const val FILE_NAME = "scene_collection.json"
-        const val BACKUP_NAME = "scene_collection.bak.json"
-        const val ASSET_DIR = "scene_assets"
+    /** Menghapus berkas koleksi ini beserta cadangannya. */
+    fun deleteFiles() {
+        runCatching { file.delete() }
+        runCatching { backup.delete() }
+        runCatching { File(file.parentFile, "${file.name}.tmp").delete() }
+    }
+
+    /** Ekspor koleksi aktif ke URI pilihan pengguna (SAF). */
+    fun export(uri: Uri, collection: SceneCollection): Boolean = runCatching {
+        val output = appContext.contentResolver.openOutputStream(uri) ?: return false
+        output.use { it.write(SceneJson.encode(collection).toByteArray()) }
+        true
+    }.getOrDefault(false)
+
+    /** Membaca koleksi dari URI hasil impor. */
+    fun readFrom(uri: Uri): SceneCollection? = runCatching {
+        val text = appContext.contentResolver.openInputStream(uri)?.use {
+            it.readBytes().toString(Charsets.UTF_8)
+        } ?: return null
+        SceneJson.decode(text)
+    }.getOrNull()
+
+    companion object {
+        const val DEFAULT_ID = "default"
+        private const val FILE_NAME = "scene_collection.json"
+        private const val BACKUP_NAME = "scene_collection.bak.json"
+        private const val ASSET_DIR = "scene_assets"
+        private const val PREFIX = "collection_"
+
+        fun dataFile(context: Context, id: String): File =
+            if (id == DEFAULT_ID) {
+                File(context.filesDir, FILE_NAME)
+            } else {
+                File(context.filesDir, "$PREFIX$id.json")
+            }
+
+        fun backupFile(context: Context, id: String): File =
+            if (id == DEFAULT_ID) {
+                File(context.filesDir, BACKUP_NAME)
+            } else {
+                File(context.filesDir, "$PREFIX$id.bak.json")
+            }
+
+        /** Id koleksi yang tersimpan; koleksi default selalu di urutan pertama. */
+        fun ids(context: Context): List<String> = buildList {
+            if (dataFile(context, DEFAULT_ID).exists()) add(DEFAULT_ID)
+            context.filesDir.listFiles { file ->
+                file.isFile &&
+                    file.name.startsWith(PREFIX) &&
+                    file.name.endsWith(".json") &&
+                    !file.name.endsWith(".bak.json")
+            }?.mapTo(this) { it.name.removePrefix(PREFIX).removeSuffix(".json") }
+        }.distinct()
     }
 }
 
@@ -138,12 +190,27 @@ object SceneManager {
     private var store: SceneStore? = null
     private var appContext: Context? = null
 
+    /** Id koleksi yang sedang dipakai. */
+    @Volatile
+    var activeCollectionId: String = SceneStore.DEFAULT_ID
+        private set
+
     fun attach(context: Context) {
         if (store != null) return
-        val s = SceneStore(context)
+        val settings = SettingsStore(context)
+        // Koleksi yang tercatat bisa saja sudah dihapus; kembali ke default.
+        val savedId = settings.activeCollection()
+        val id = if (SceneStore.dataFile(context, savedId).exists()) {
+            savedId
+        } else {
+            SceneStore.DEFAULT_ID
+        }
+        settings.setActiveCollection(id)
+        val s = SceneStore(context, id)
         store = s
+        activeCollectionId = id
         appContext = context.applicationContext
-        val config = SettingsStore(context).load()
+        val config = settings.load()
         val width = config.width.coerceAtLeast(2)
         val height = config.height.coerceAtLeast(2)
 
@@ -353,6 +420,103 @@ object SceneManager {
 
     fun save() {
         collection?.let { store?.save(it) }
+    }
+
+    /** Ringkasan koleksi untuk halaman Setelan → Adegan. */
+    data class CollectionInfo(val id: String, val title: String, val active: Boolean)
+
+    fun collections(): List<CollectionInfo> {
+        val context = appContext ?: return emptyList()
+        return SceneStore.ids(context).map { id ->
+            val title = if (id == activeCollectionId) {
+                collection?.title.orEmpty()
+            } else {
+                SceneStore(context, id).load()?.title.orEmpty()
+            }
+            CollectionInfo(id = id, title = title, active = id == activeCollectionId)
+        }
+    }
+
+    /** Mengganti koleksi aktif tanpa menutup aplikasi. */
+    fun switchCollection(id: String): Boolean {
+        val context = appContext ?: return false
+        if (id == activeCollectionId) return false
+        val target = SceneStore(context, id)
+        val loaded = target.load() ?: return false
+        save()
+        store = target
+        activeCollectionId = id
+        SettingsStore(context).setActiveCollection(id)
+        programBeforeScreensaver = null
+        collection = loaded
+        programCollection = loaded
+        _state.value = loaded
+        _program.value = loaded
+        editListeners.forEach { it(loaded) }
+        listeners.forEach { it(loaded) }
+        DiagLog.line("koleksi: beralih ke \"${loaded.title.ifBlank { id }}\"")
+        return true
+    }
+
+    /** Menyalin sebuah koleksi (atau koleksi aktif) ke id baru. */
+    fun duplicateCollection(id: String = activeCollectionId, newTitle: String): String? {
+        val context = appContext ?: return null
+        if (id == activeCollectionId) save()
+        val source = SceneStore(context, id).load() ?: return null
+        val newId = java.util.UUID.randomUUID().toString().take(8)
+        val copy = source.copy(title = newTitle)
+        SceneStore(context, newId).save(copy)
+        DiagLog.line("koleksi: duplikat \"${source.title}\" -> \"$newTitle\"")
+        return newId
+    }
+
+    fun renameCollection(id: String, title: String): Boolean {
+        val context = appContext ?: return false
+        val storeForId = if (id == activeCollectionId) {
+            collection?.let { current ->
+                val next = current.copy(title = title)
+                collection = next
+                _state.value = next
+                editListeners.forEach { it(next) }
+                store?.save(next)
+                true
+            } ?: false
+        } else {
+            val other = SceneStore(context, id).load() ?: return false
+            SceneStore(context, id).save(other.copy(title = title))
+            true
+        }
+        return storeForId
+    }
+
+    fun deleteCollection(id: String): Boolean {
+        val context = appContext ?: return false
+        val ids = SceneStore.ids(context)
+        if (ids.size <= 1) return false
+        if (id == activeCollectionId) {
+            val fallback = ids.first { it != id }
+            if (!switchCollection(fallback)) return false
+        }
+        SceneStore(context, id).deleteFiles()
+        DiagLog.line("koleksi: dihapus $id")
+        return true
+    }
+
+    /** Ekspor koleksi aktif ke URI pilihan pengguna. */
+    fun exportActive(uri: android.net.Uri): Boolean {
+        val context = appContext ?: return false
+        val current = current()
+        return (store ?: SceneStore(context, activeCollectionId)).export(uri, current)
+    }
+
+    /** Impor koleksi dari berkas JSON dan jadikan koleksi baru. */
+    fun importCollection(uri: android.net.Uri, title: String): String? {
+        val context = appContext ?: return null
+        val imported = SceneStore(context, activeCollectionId).readFrom(uri) ?: return null
+        val newId = java.util.UUID.randomUUID().toString().take(8)
+        SceneStore(context, newId).save(imported.copy(title = title))
+        DiagLog.line("koleksi: impor \"$title\"")
+        return newId
     }
 
     fun addListener(listener: (SceneCollection) -> Unit) {

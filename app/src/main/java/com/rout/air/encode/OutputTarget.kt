@@ -62,23 +62,7 @@ class OutputTarget private constructor(
             baseName: String? = null,
         ): OutputTarget {
             val resolver = context.contentResolver
-            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestampMs))
-            val time = SimpleDateFormat("HH-mm-ss", Locale.US).format(Date(timestampMs))
-            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
-            var name = baseName ?: nameTemplate
-                .replace("{date}", date)
-                .replace("{time}", time)
-                .replace("{datetime}", stamp)
-                .ifBlank { "RoutAir_$stamp" }
-            if (baseName == null &&
-                !name.contains(stamp) &&
-                !nameTemplate.contains("{date}") &&
-                !nameTemplate.contains("{time}") &&
-                !nameTemplate.contains("{datetime}")
-            ) {
-                name = "${name}_$stamp"
-            }
-            if (noSpaceFileName) name = name.replace(' ', '_')
+            val name = baseName ?: buildName(timestampMs, nameTemplate, noSpaceFileName)
             val finalName = if (part > 1) "${name}_part$part" else name
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, "$finalName.mp4")
@@ -98,6 +82,31 @@ class OutputTarget private constructor(
                 ?: throw IOException(context.getString(com.rout.air.R.string.error_open_file))
 
             return OutputTarget(context.applicationContext, uri, descriptor, finalName)
+        }
+
+        /** Nama berkas tanpa akhiran part, dipakai juga saat pemulihan rekaman. */
+        fun buildName(
+            timestampMs: Long,
+            nameTemplate: String,
+            noSpaceFileName: Boolean,
+        ): String {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(timestampMs))
+            val time = SimpleDateFormat("HH-mm-ss", Locale.US).format(Date(timestampMs))
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
+            var name = nameTemplate
+                .replace("{date}", date)
+                .replace("{time}", time)
+                .replace("{datetime}", stamp)
+                .ifBlank { "RoutAir_$stamp" }
+            if (!name.contains(stamp) &&
+                !nameTemplate.contains("{date}") &&
+                !nameTemplate.contains("{time}") &&
+                !nameTemplate.contains("{datetime}")
+            ) {
+                name = "${name}_$stamp"
+            }
+            if (noSpaceFileName) name = name.replace(' ', '_')
+            return name
         }
 
         /**

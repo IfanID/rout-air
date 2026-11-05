@@ -65,6 +65,7 @@ class SettingsStore(context: Context) {
             cqLevel = prefs.getInt(KEY_CQ_LEVEL, 20).coerceIn(0, 51),
             recordVideoBitrate = prefs.getInt(KEY_RECORD_BITRATE, 0),
             videoCodec = enumValue(prefs.getString(KEY_VIDEO_CODEC, null), VideoCodec.AVC),
+            preferHevcRecording = prefs.getBoolean(KEY_PREFER_HEVC, false),
             videoProfile = enumValue(prefs.getString(KEY_PROFILE, null), VideoProfile.Auto),
             colorSpace = enumValue(prefs.getString(KEY_COLOR_SPACE, null), ColorSpaceMode.BT709),
             colorRange = enumValue(prefs.getString(KEY_COLOR_RANGE, null), ColorRangeMode.Limited),
@@ -75,6 +76,8 @@ class SettingsStore(context: Context) {
             thermalThrottleEnabled = prefs.getBoolean(KEY_THERMAL_THROTTLE, false),
             splitMinutes = prefs.getInt(KEY_SPLIT_MINUTES, 0).coerceIn(0, 240),
             splitSizeMb = prefs.getInt(KEY_SPLIT_SIZE_MB, 0).coerceAtLeast(0),
+            safeRecording = prefs.getBoolean(KEY_SAFE_RECORDING, true),
+            safeSegmentMinutes = prefs.getInt(KEY_SAFE_SEGMENT_MINUTES, 5).coerceIn(1, 30),
             replayBufferEnabled = prefs.getBoolean(KEY_REPLAY_ENABLED, false),
             replaySeconds = prefs.getInt(KEY_REPLAY_SECONDS, 60).coerceIn(10, 300),
         )
@@ -114,6 +117,7 @@ class SettingsStore(context: Context) {
             .putInt(KEY_CQ_LEVEL, config.cqLevel)
             .putInt(KEY_RECORD_BITRATE, config.recordVideoBitrate)
             .putString(KEY_VIDEO_CODEC, config.videoCodec.name)
+            .putBoolean(KEY_PREFER_HEVC, config.preferHevcRecording)
             .putString(KEY_PROFILE, config.videoProfile.name)
             .putString(KEY_COLOR_SPACE, config.colorSpace.name)
             .putString(KEY_COLOR_RANGE, config.colorRange.name)
@@ -123,6 +127,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_THERMAL_THROTTLE, config.thermalThrottleEnabled)
             .putInt(KEY_SPLIT_MINUTES, config.splitMinutes)
             .putInt(KEY_SPLIT_SIZE_MB, config.splitSizeMb)
+            .putBoolean(KEY_SAFE_RECORDING, config.safeRecording)
+            .putInt(KEY_SAFE_SEGMENT_MINUTES, config.safeSegmentMinutes)
             .putBoolean(KEY_REPLAY_ENABLED, config.replayBufferEnabled)
             .putInt(KEY_REPLAY_SECONDS, config.replaySeconds)
             .putInt(KEY_SETTINGS_VERSION, SETTINGS_VERSION)
@@ -141,6 +147,15 @@ class SettingsStore(context: Context) {
 
     fun setWizardDone() {
         prefs.edit().putBoolean(KEY_WIZARD_DONE, true).apply()
+    }
+
+    /** Id koleksi scene yang terakhir dipakai. */
+    fun activeCollection(): String =
+        prefs.getString(KEY_ACTIVE_COLLECTION, SceneStore.DEFAULT_ID)
+            ?: SceneStore.DEFAULT_ID
+
+    fun setActiveCollection(id: String) {
+        prefs.edit().putString(KEY_ACTIVE_COLLECTION, id).apply()
     }
 
     /** Pengenalan singkat sebelum aplikasi dipakai pertama kali. */
@@ -240,10 +255,12 @@ class SettingsStore(context: Context) {
         const val KEY_CQ_LEVEL = "cq_level"
         const val KEY_RECORD_BITRATE = "record_video_bitrate"
         const val KEY_VIDEO_CODEC = "video_codec"
+        const val KEY_PREFER_HEVC = "prefer_hevc_recording"
         const val KEY_SETTINGS_VERSION = "settings_version"
         const val KEY_WIZARD_DONE = "auto_config_done"
         const val KEY_WIZARD_RESULT = "auto_config_result"
         const val KEY_ONBOARDING_DONE = "onboarding_done"
+        const val KEY_ACTIVE_COLLECTION = "active_scene_collection"
         const val KEY_ACCENT = "theme_accent"
         const val KEY_AMOLED = "theme_amoled"
         const val KEY_LANGUAGE = "app_language"
@@ -257,6 +274,8 @@ class SettingsStore(context: Context) {
         const val KEY_THERMAL_THROTTLE = "thermal_throttle"
         const val KEY_SPLIT_MINUTES = "split_minutes"
         const val KEY_SPLIT_SIZE_MB = "split_size_mb"
+        const val KEY_SAFE_RECORDING = "safe_recording"
+        const val KEY_SAFE_SEGMENT_MINUTES = "safe_segment_minutes"
         const val KEY_REPLAY_ENABLED = "replay_enabled"
         const val KEY_REPLAY_SECONDS = "replay_seconds"
 
