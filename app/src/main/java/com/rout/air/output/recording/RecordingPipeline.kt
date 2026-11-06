@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
@@ -72,6 +73,8 @@ import com.rout.air.encode.mux.Mp4Writer
 import com.rout.air.encode.video.OutputTarget
 import com.rout.air.encode.mux.TeeSink
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import com.rout.air.encode.video.VideoEncoder
 import com.rout.air.engine.gl.EglCore
 import com.rout.air.engine.gl.GlCompositor
@@ -1699,12 +1702,17 @@ class RecordingPipeline(
 
                 SourceType.Browser -> {
                     val browser = ensureBrowser(source) ?: continue
-                    SourceMetrics.report(source.id, browser.width, browser.height)
+                    // Untuk URL gambar, ukuran intrinsik = ukuran gambar yang
+                    // dimuat, bukan viewport WebView.
+                    val bitmap = browser.bitmap
+                    val browserWidth = bitmap?.width ?: browser.width
+                    val browserHeight = bitmap?.height ?: browser.height
+                    SourceMetrics.report(source.id, browserWidth, browserHeight)
                     layers += RenderLayer(
                         type = SourceType.Browser,
                         textureId = browser.textureId,
-                        naturalWidth = browser.width,
-                        naturalHeight = browser.height,
+                        naturalWidth = browserWidth,
+                        naturalHeight = browserHeight,
                         transform = transform,
                         crop = item.crop,
                         colorArgb = 0,
@@ -1811,9 +1819,67 @@ class RecordingPipeline(
             reloadToken = source.settings.browserReloadToken
         }
         browserSources[source.id] = entry
-        mainHandler.post { createBrowserView(entry) }
-        diag("browser: $url ${width}x$height")
+        if (isImageUrl(url)) {
+            // URL berupa gambar: ambil langsung supaya ukuran sumber mengikuti
+            // gambar aslinya, bukan viewport WebView yang memberi bar hitam.
+            diag("browser: gambar $url ${width}x$height")
+            Thread({ loadBrowserImage(source, entry) }, "rout-browser-image").start()
+        } else {
+            mainHandler.post { createBrowserView(entry) }
+            diag("browser: $url ${width}x$height")
+        }
         return entry
+    }
+
+    /** True bila URL menunjuk berkas gambar, bukan halaman web. */
+    private fun isImageUrl(raw: String): Boolean {
+        val path = raw.substringBefore('?').substringBefore('#').lowercase()
+        return path.endsWith(".png") || path.endsWith(".jpg") ||
+            path.endsWith(".jpeg") || path.endsWith(".webp") ||
+            path.endsWith(".gif") || path.endsWith(".bmp") ||
+            path.endsWith(".avif")
+    }
+
+    /**
+     * Muat gambar dari URL di thread latar, lalu pakai ukurannya sebagai
+     * ukuran intrinsik sumber (seperti sumber gambar biasa).
+     */
+    private fun loadBrowserImage(source: SceneSource, entry: BrowserTexture) {
+        val bitmap = runCatching {
+            val connection = URL(entry.url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 20_000
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", ROOMMATE_USER_AGENT)
+            connection.inputStream.use { BitmapFactory.decodeStream(it) }
+        }.getOrNull()
+        if (bitmap == null) {
+            diag("browser: gagal memuat gambar ${entry.url}")
+            return
+        }
+        mainHandler.post {
+            if (entry.released) {
+                bitmap.recycle()
+                return@post
+            }
+            entry.bitmap = bitmap
+            entry.dirty = true
+            val width = bitmap.width
+            val height = bitmap.height
+            SourceMetrics.report(source.id, width, height)
+            val collection = SceneManager.current()
+            val current = collection.source(source.id) ?: return@post
+            if (current.settings.width != width || current.settings.height != height) {
+                diag("browser: intrinsik ${current.settings.width}x${current.settings.height} -> ${width}x$height")
+                SceneManager.update(
+                    collection.updateSource(
+                        current.copy(
+                            settings = current.settings.copy(width = width, height = height),
+                        ),
+                    ),
+                )
+            }
+        }
     }
 
     private fun createBrowserView(entry: BrowserTexture) {
@@ -3490,6 +3556,8 @@ class RecordingPipeline(
     private companion object {
         const val TAG = "RoutAirPipeline"
         /** UA desktop untuk sumber Browser. */
+        /** UA untuk mengunduh URL gambar pada sumber Browser. */
+        const val ROOMMATE_USER_AGENT = "RoutAir"
         const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
