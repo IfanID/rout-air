@@ -4,6 +4,12 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import com.rout.air.live.youtube.ChatMessage
+import com.rout.air.live.youtube.ChatRole
+import com.rout.air.live.youtube.parseActiveBroadcast
+import com.rout.air.live.youtube.parseChannelTitle
+import com.rout.air.live.youtube.parseChatPage
+import com.rout.air.live.youtube.parseStreamTarget
 
 /** Memastikan pembacaan respons YouTube konsisten dengan bentuk JSON aslinya. */
 class YouTubeChatTest {

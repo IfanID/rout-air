@@ -1,10 +1,11 @@
 package com.rout.air.live
 
-import com.rout.air.core.VideoCodec
+import com.rout.air.core.model.VideoCodec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.live.format.FlvCodec
 
 class FlvCodecTest {
 

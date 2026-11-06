@@ -1,10 +1,10 @@
 package com.rout.air.data
 
-import com.rout.air.core.Scene
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SceneItem
-import com.rout.air.core.SceneSource
-import com.rout.air.core.SourceType
+import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SceneItem
+import com.rout.air.core.model.SceneSource
+import com.rout.air.core.model.SourceType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -13,6 +13,15 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.model.newId
+import com.rout.air.data.scene.addScreenItem
+import com.rout.air.data.scene.duplicateItem
+import com.rout.air.data.scene.duplicateScene
+import com.rout.air.data.scene.moveLayer
+import com.rout.air.data.scene.moveLayerToEdge
+import com.rout.air.data.scene.moveScene
+import com.rout.air.data.scene.removeItem
+import com.rout.air.data.scene.removeScene
 
 /** Menguji operasi edit scene collection yang murni. */
 class SceneOpsTest {

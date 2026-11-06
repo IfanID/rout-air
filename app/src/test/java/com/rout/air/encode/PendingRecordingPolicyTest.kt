@@ -3,6 +3,7 @@ package com.rout.air.encode
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.encode.policy.PendingRecordingPolicy
 
 class PendingRecordingPolicyTest {
 

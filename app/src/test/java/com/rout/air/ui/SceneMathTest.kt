@@ -1,20 +1,27 @@
 package com.rout.air.ui
 
-import com.rout.air.core.Align
-import com.rout.air.core.CaptureConfig
-import com.rout.air.core.Crop
-import com.rout.air.core.Scene
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SceneItem
-import com.rout.air.core.SceneSource
-import com.rout.air.core.SourceSettings
-import com.rout.air.core.SourceType
-import com.rout.air.core.Transform
+import com.rout.air.core.model.Align
+import com.rout.air.core.model.CaptureConfig
+import com.rout.air.core.model.Crop
+import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SceneItem
+import com.rout.air.core.model.SceneSource
+import com.rout.air.core.model.SourceSettings
+import com.rout.air.core.model.SourceType
+import com.rout.air.core.model.Transform
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.ui.components.CropEdge
+import com.rout.air.ui.components.anchorOffset
+import com.rout.air.ui.components.hitTestItems
+import com.rout.air.ui.components.isAxisAligned
+import com.rout.air.ui.components.itemCanvasRect
+import com.rout.air.ui.components.naturalSize
+import com.rout.air.ui.components.adjustCrop
 
 /** Menguji matematika transform yang dipakai pratinjau dan panel Studio. */
 class SceneMathTest {

@@ -1,17 +1,18 @@
 package com.rout.air.data
 
-import com.rout.air.core.Scene
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SceneItem
-import com.rout.air.core.SceneSource
-import com.rout.air.core.SourceType
-import com.rout.air.core.VideoFilter
-import com.rout.air.core.chromaKey
-import com.rout.air.engine.FilterState
+import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SceneItem
+import com.rout.air.core.model.SceneSource
+import com.rout.air.core.model.SourceType
+import com.rout.air.core.model.VideoFilter
+import com.rout.air.engine.filter.FilterState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.model.chromaKey
+import com.rout.air.data.scene.SceneJson
 
 /** Filter GPU: serialisasi JSON dan pemetaan ke nilai shader. */
 class VideoFilterTest {

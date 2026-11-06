@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.model.CaptureConfig
+import com.rout.air.core.model.VideoBitrateMode
+import com.rout.air.core.model.VideoCodec
 
 /** Mengunci aturan Rescale Output dan bitrate rekaman agar sesuai OBS. */
 class CaptureConfigTest {

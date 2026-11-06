@@ -4,6 +4,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.audio.AudioCaptureKind
+import com.rout.air.core.audio.AudioChannel
+import com.rout.air.core.audio.AudioChannelId
+import com.rout.air.core.audio.AudioFilter
+import com.rout.air.core.audio.AudioFilterType
+import com.rout.air.core.audio.AudioMix
+import com.rout.air.core.audio.ChannelMix
+import com.rout.air.core.audio.FaderScale
+import com.rout.air.core.audio.MonitorMode
+import com.rout.air.core.audio.PeakMeterType
 
 /** Mengunci perilaku skala fader dan model mixer agar cocok dengan OBS. */
 class AudioMixTest {

@@ -58,12 +58,12 @@
         </activity>
 
         <service
-            android:name=".service.CaptureService"
+            android:name=".service.capture.CaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection|microphone" />
 
         <service
-            android:name=".service.OverlayRecordingService"
+            android:name=".service.overlay.OverlayRecordingService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -72,7 +72,7 @@
         </service>
 
         <service
-            android:name=".service.OverlayLiveService"
+            android:name=".service.overlay.OverlayLiveService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -81,7 +81,7 @@
         </service>
 
         <service
-            android:name=".service.RecordTileService"
+            android:name=".service.tile.RecordTileService"
             android:exported="true"
             android:icon="@drawable/ic_qs_record"
             android:label="@string/qs_tile_record"
@@ -92,7 +92,7 @@
         </service>
 
         <service
-            android:name=".service.ReplayTileService"
+            android:name=".service.tile.ReplayTileService"
             android:exported="true"
             android:icon="@drawable/ic_replay"
             android:label="@string/qs_tile_replay"

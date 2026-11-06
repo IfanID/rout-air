@@ -6,6 +6,7 @@ import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.rout.air.encode.video.OutputTarget
 
 /** Nama berkas dipakai juga saat memulihkan rekaman aman. */
 class OutputNameTest {

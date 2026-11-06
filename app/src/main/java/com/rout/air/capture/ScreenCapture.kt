@@ -5,6 +5,8 @@ import android.hardware.display.VirtualDisplay
 import android.media.projection.MediaProjection
 import android.util.Log
 import android.view.Surface
+import com.rout.air.engine.gl.GlCompositor
+import com.rout.air.output.recording.RecordingPipeline
 
 /**
  * Menyalin layar ke sebuah Surface lewat MediaProjection yang sudah dibuat

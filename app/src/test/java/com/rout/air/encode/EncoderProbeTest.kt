@@ -1,10 +1,12 @@
 package com.rout.air.encode
 
-import com.rout.air.core.VideoCodec
+import com.rout.air.core.model.VideoCodec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
+import com.rout.air.encode.probe.EncoderCaps
+import com.rout.air.encode.probe.EncoderProbe
 
 /** Mengunci aturan pemilihan encoder tanpa perlu perangkat Android. */
 class EncoderProbeTest {

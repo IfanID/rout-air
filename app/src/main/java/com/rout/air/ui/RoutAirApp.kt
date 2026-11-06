@@ -2,8 +2,6 @@ package com.rout.air.ui
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -14,7 +12,6 @@ import android.provider.Settings
 import android.text.format.Formatter
 import android.os.Build
 import android.os.PowerManager
-import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,9 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -32,11 +27,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,56 +39,56 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import com.rout.air.core.LiveService
-import com.rout.air.live.GoogleAuthStore
-import com.rout.air.live.prepareYouTubeBroadcast
+import com.rout.air.core.model.LiveService
+import com.rout.air.live.youtube.GoogleAuthStore
+import com.rout.air.live.session.prepareYouTubeBroadcast
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
-import com.rout.air.core.CanvasOrientation
-import com.rout.air.core.CaptureConfig
-import com.rout.air.core.ContentMode
-import com.rout.air.core.RecordingState
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SourceType
-import com.rout.air.data.AudioMixer
-import com.rout.air.data.SceneManager
-import com.rout.air.data.ScreensaverStore
-import com.rout.air.data.SettingsStore
-import com.rout.air.data.updateItem
-import com.rout.air.output.CaptureEngine
-import com.rout.air.output.SafeRecordingStore
-import com.rout.air.service.CaptureService
-import com.rout.air.service.OverlayLiveService
-import com.rout.air.service.OverlayRecordingService
+import com.rout.air.core.model.CaptureConfig
+import com.rout.air.core.model.RecordingState
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SourceType
+import com.rout.air.data.audio.AudioMixer
+import com.rout.air.data.scene.SceneManager
+import com.rout.air.data.screensaver.ScreensaverStore
+import com.rout.air.data.settings.SettingsStore
+import com.rout.air.output.recording.CaptureEngine
+import com.rout.air.output.recording.SafeRecordingStore
+import com.rout.air.service.capture.CaptureService
+import com.rout.air.service.overlay.OverlayLiveService
+import com.rout.air.service.overlay.OverlayRecordingService
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
-import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.rout.air.R
-
-/**
- * Enam halaman meniru dock OBS: Siaran, Studio Mode, Adegan, Audio,
- * Rekaman, dan Setelan. Studio Mode sengaja jadi halaman sendiri, bukan
- * disatukan ke Siaran.
- */
-enum class AppTab(@StringRes val labelRes: Int, val symbol: String) {
-    Home(R.string.tab_siaran, "●"),
-    Studio(R.string.tab_studio, "◫"),
-    Scenes(R.string.tab_adegan, "▤"),
-    Audio(R.string.tab_audio, "♪"),
-    Recordings(R.string.tab_rekaman, "▶"),
-    Settings(R.string.tab_setelan, "⚙"),
-}
+import com.rout.air.ui.dialogs.AutoConfigWizardDialog
+import com.rout.air.ui.dialogs.LiveSetupDialog
+import com.rout.air.ui.pages.audio.AudioScreen
+import com.rout.air.ui.pages.home.HomeScreen
+import com.rout.air.ui.pages.onboarding.OnboardingScreen
+import com.rout.air.ui.pages.recordings.RecordingsScreen
+import com.rout.air.ui.pages.scenes.ScenesScreen
+import com.rout.air.ui.pages.settings.SettingsScreen
+import com.rout.air.ui.pages.studio.StudioScreen
+import com.rout.air.core.model.Scene
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.unit.dp
+import com.rout.air.data.scene.updateItem
+import kotlinx.coroutines.launch
+import com.rout.air.ui.navigation.AppTab
+import com.rout.air.ui.util.buildCanvasConfig
+import com.rout.air.ui.util.findActivity
 
 /** Overlay mana yang diminta pengguna; keduanya tidak boleh jalan bersamaan. */
 private enum class OverlayTarget { Recording, Live }
+
 
 @Composable
 fun RoutAirApp(
@@ -154,10 +147,10 @@ fun RoutAirApp(
 
     // Overlay dapat meminta membuka tab Studio atau Setelan.
     LaunchedEffect(Unit) {
-        com.rout.air.data.UiEvents.openStudio.collect { tab = AppTab.Studio }
+        com.rout.air.data.common.UiEvents.openStudio.collect { tab = AppTab.Studio }
     }
     LaunchedEffect(Unit) {
-        com.rout.air.data.UiEvents.openSettings.collect { tab = AppTab.Settings }
+        com.rout.air.data.common.UiEvents.openSettings.collect { tab = AppTab.Settings }
     }
     var elapsedMs by remember { mutableStateOf(0L) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -460,7 +453,7 @@ fun RoutAirApp(
     // Mulai siaran tanpa dialog; juga dipakai setelah dialog disetujui.
     val startLive: () -> Unit = {
         when {
-            liveStats.status == com.rout.air.core.LiveStatus.Error -> {
+            liveStats.status == com.rout.air.core.model.LiveStatus.Error -> {
                 if (CaptureEngine.sessionActive.value) {
                     CaptureEngine.restartLive(liveConfig)
                 } else {
@@ -496,7 +489,7 @@ fun RoutAirApp(
 
     val toggleLive: () -> Unit = {
         when {
-            liveStats.status == com.rout.air.core.LiveStatus.Error -> startLive()
+            liveStats.status == com.rout.air.core.model.LiveStatus.Error -> startLive()
             liveStats.active -> CaptureEngine.stopLive()
             !liveConfig.isConfigured -> Unit
             else -> openSetupOrStart()
@@ -506,7 +499,7 @@ fun RoutAirApp(
     // Membuka dialog siap-siaran bila memungkinkan; kalau tidak (bukan
     // YouTube atau belum login), langsung mulai siaran.
     LaunchedEffect(Unit) {
-        com.rout.air.data.UiEvents.openLiveSetup.collect { openSetupOrStart() }
+        com.rout.air.data.common.UiEvents.openLiveSetup.collect { openSetupOrStart() }
     }
     // Overlay membuka aplikasi dengan permintaan yang sama.
     LaunchedEffect(initialLiveSetup) {
@@ -603,7 +596,7 @@ fun RoutAirApp(
         val screenSource = current.source(item.sourceId)
         val template = screenSource?.settings?.screenDisplay
         if (screenSource?.type == SourceType.Screen && template != null &&
-            template != com.rout.air.core.ScreenDisplay.Auto
+            template != com.rout.air.core.model.ScreenDisplay.Auto
         ) {
             val boxWidth = canvasConfig.width * nextScaleX
             val boxHeight = canvasConfig.height * nextScaleY
@@ -902,44 +895,6 @@ fun RoutAirApp(
     }
 }
 
-internal fun Context.findActivity(): Activity? {
-    var current: Context = this
-    while (current is ContextWrapper) {
-        if (current is Activity) return current
-        current = current.baseContext
-    }
-    return null
-}
-
-/**
- * Ukuran kanvas = base resolution ala OBS, sekaligus orientasi video.
- * Auto mengikuti orientasi HP saat rekaman dimulai; Portrait/Landscape
- * mengunci dimensi video tanpa memaksa layar berputar.
- */
-internal fun buildCanvasConfig(
-    config: CaptureConfig,
-    metrics: DisplayMetrics,
-    devicePortrait: Boolean,
-): CaptureConfig {
-    val portrait = when (config.canvasOrientation) {
-        CanvasOrientation.Auto -> devicePortrait
-        CanvasOrientation.Portrait -> true
-        CanvasOrientation.Landscape -> false
-    }
-
-    val displayShort = minOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
-    val displayLong = maxOf(metrics.widthPixels, metrics.heightPixels)
-    val shortSide = minOf(config.width, config.height)
-
-    var longSide = (shortSide.toDouble() * displayLong / displayShort).roundToInt()
-    if (longSide % 2 != 0) longSide += 1
-
-    return if (portrait) {
-        config.copy(width = shortSide, height = longSide)
-    } else {
-        config.copy(width = longSide, height = shortSide)
-    }
-}
 
 /**
  * Intent izin tangkap layar. Memakai dialog bawaan sistem supaya pengguna
@@ -955,43 +910,4 @@ private fun createCaptureIntent(manager: MediaProjectionManager): Intent {
     } else {
         manager.createScreenCaptureIntent()
     }
-}
-
-/** Label mode isi untuk ditampilkan di halaman Siaran/Studio/Setelan. */
-@Composable
-internal fun contentModeLabel(config: CaptureConfig): String =
-    when (config.contentMode) {
-        ContentMode.Fit -> stringResource(R.string.common_pas_letterbox)
-        ContentMode.Crop -> stringResource(R.string.common_penuh_crop)
-        ContentMode.Stretch -> stringResource(R.string.common_peregangan)
-    }
-
-/** Orientasi video yang sedang dipakai (bukan orientasi layar). */
-@Composable
-internal fun orientationLabel(config: CaptureConfig): String = when {
-    config.width > config.height -> stringResource(R.string.common_horizontal)
-    config.width < config.height -> stringResource(R.string.common_vertikal)
-    else -> stringResource(R.string.common_persegi)
-}
-
-internal fun formatDuration(milliseconds: Long): String {
-    val totalSeconds = milliseconds / 1000
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%02d:%02d".format(minutes, seconds)
-    }
-}
-
-/** Ukuran berkas untuk statistik rekaman; satuannya mengikuti besar nilai. */
-internal fun formatRecordSize(bytes: Long): String {
-    if (bytes < 1024L) return "$bytes B"
-    val kb = bytes / 1024.0
-    if (kb < 1024.0) return "%.1f KB".format(kb)
-    val mb = kb / 1024.0
-    if (mb < 1024.0) return "%.1f MB".format(mb)
-    return "%.2f GB".format(mb / 1024.0)
 }

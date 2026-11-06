@@ -1,13 +1,14 @@
 package com.rout.air.data
 
-import com.rout.air.core.Align
-import com.rout.air.core.Scene
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SourceType
+import com.rout.air.core.model.Align
+import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SourceType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.data.scene.ObsImport
 
 class ObsImportTest {
     private val sample = """

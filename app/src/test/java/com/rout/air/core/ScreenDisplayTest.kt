@@ -3,6 +3,8 @@ package com.rout.air.core
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.model.ScreenDisplay
+import com.rout.air.core.model.screenNeedsRotation
 
 /** Aturan putar otomatis untuk template Vertikal/Horizontal sumber Layar. */
 class ScreenDisplayTest {

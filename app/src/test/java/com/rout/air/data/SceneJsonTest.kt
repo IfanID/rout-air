@@ -1,17 +1,18 @@
 package com.rout.air.data
 
-import com.rout.air.core.Align
-import com.rout.air.core.BlendMode
-import com.rout.air.core.Crop
-import com.rout.air.core.Scene
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SceneItem
-import com.rout.air.core.SceneSource
-import com.rout.air.core.SourceSettings
-import com.rout.air.core.SourceType
-import com.rout.air.core.Transform
+import com.rout.air.core.model.Align
+import com.rout.air.core.model.BlendMode
+import com.rout.air.core.model.Crop
+import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SceneItem
+import com.rout.air.core.model.SceneSource
+import com.rout.air.core.model.SourceSettings
+import com.rout.air.core.model.SourceType
+import com.rout.air.core.model.Transform
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.rout.air.data.scene.SceneJson
 
 /** Menguji roundtrip JSON dan kompatibilitas nilai lama. */
 class SceneJsonTest {

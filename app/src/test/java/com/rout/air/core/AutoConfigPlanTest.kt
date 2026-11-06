@@ -3,6 +3,8 @@ package com.rout.air.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.core.model.VideoCodec
+import com.rout.air.core.planning.AutoConfigPlan
 
 /** Mengunci logika setup otomatis tanpa perlu perangkat Android. */
 class AutoConfigPlanTest {

@@ -2,6 +2,8 @@ package com.rout.air.output
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.rout.air.output.monitor.WatchdogAction
+import com.rout.air.output.monitor.WatchdogPolicy
 
 class WatchdogPolicyTest {
 

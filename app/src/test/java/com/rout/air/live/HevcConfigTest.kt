@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.live.format.HevcConfig
 
 /** Mengunci pembentukan hvcC dari VPS/SPS/PPS hasil encoder HEVC Android. */
 class HevcConfigTest {

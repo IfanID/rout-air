@@ -2,6 +2,10 @@ package com.rout.air.live
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.rout.air.live.youtube.ChatRole
+import com.rout.air.live.youtube.bubbleDurationMs
+import com.rout.air.live.youtube.emoji
+import com.rout.air.live.youtube.nameColor
 
 /** Lencana peran pada bubble chat overlay Live. */
 class ChatPresentationTest {

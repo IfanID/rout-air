@@ -1,0 +1,319 @@
+package com.rout.air.service.capture
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.rout.air.MainActivity
+import com.rout.air.R
+import com.rout.air.core.model.CaptureConfig
+import com.rout.air.core.model.ContentMode
+import com.rout.air.core.model.LiveStats
+import com.rout.air.core.model.LiveStatus
+import com.rout.air.core.model.RecordingState
+import com.rout.air.core.model.SaveLocation
+import com.rout.air.data.audio.AudioMixer
+import com.rout.air.output.recording.CaptureEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+
+/**
+ * Foreground service bertipe mediaProjection: wajib ada selama tangkap layar
+ * berjalan, sekaligus menjadi tempat tombol Stop di luar aplikasi.
+ */
+class CaptureService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var sawActiveState = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val off = intent?.action == Intent.ACTION_SCREEN_OFF
+            com.rout.air.data.logging.DiagLog.line(
+                if (off) "layar: SCREEN_OFF" else "layar: SCREEN_ON",
+            )
+            if (off) {
+                com.rout.air.data.logging.DiagLog.writeToDownloads(this@CaptureService)
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        runCatching {
+            registerReceiver(
+                screenReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                },
+            )
+        }
+        AudioMixer.attach(this)
+        createChannel()
+
+        scope.launch {
+            CaptureEngine.state.collect { state ->
+                when (state) {
+                    RecordingState.Preparing,
+                    RecordingState.Previewing,
+                    is RecordingState.Recording,
+                    -> {
+                        sawActiveState = true
+                        notificationManager().notify(
+                NOTIFICATION_ID,
+                buildNotification(state, CaptureEngine.liveStats.value),
+            )
+                    }
+
+                    RecordingState.Idle,
+                    is RecordingState.Error,
+                    -> Unit
+                }
+            }
+        }
+
+        scope.launch {
+            CaptureEngine.liveStats.collect {
+                val state = CaptureEngine.state.value
+                if (state is RecordingState.Recording || state is RecordingState.Previewing) {
+                    notificationManager().notify(NOTIFICATION_ID, buildNotification(state, it))
+                }
+            }
+        }
+
+        // Sesi berakhir (pratinjau ditutup atau gagal disiapkan): matikan
+        // foreground service. Error tetap tampil di aplikasi.
+        scope.launch {
+            CaptureEngine.sessionActive.collect { active ->
+                if (!active && sawActiveState) {
+                    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                // Saat merekam, tombol notifikasi menghentikan rekaman;
+                // saat hanya pratinjau, tombol menutup sesi.
+                if (CaptureEngine.state.value is RecordingState.Recording) {
+                    CaptureEngine.stopRecording()
+                } else {
+                    CaptureEngine.closeSession()
+                }
+                return START_NOT_STICKY
+            }
+
+            ACTION_TOGGLE_PAUSE -> {
+                CaptureEngine.togglePause()
+                return START_NOT_STICKY
+            }
+        }
+
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(RecordingState.Preparing, CaptureEngine.liveStats.value),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                if (hasAudioPermission()) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    0
+                },
+        )
+
+        val request = intent ?: run {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        val projectionData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            request.getParcelableExtra(EXTRA_PROJECTION_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            request.getParcelableExtra(EXTRA_PROJECTION_DATA)
+        }
+        val resultCode = request.getIntExtra(EXTRA_RESULT_CODE, 0)
+        if (projectionData == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val config = CaptureConfig(
+            width = request.getIntExtra(EXTRA_WIDTH, 1920),
+            height = request.getIntExtra(EXTRA_HEIGHT, 1080),
+            fps = request.getIntExtra(EXTRA_FPS, 30),
+            videoBitrate = request.getIntExtra(EXTRA_BITRATE, 6_000_000),
+            contentMode = runCatching {
+                ContentMode.valueOf(
+                    request.getStringExtra(EXTRA_CONTENT_MODE) ?: ContentMode.Fit.name,
+                )
+            }.getOrDefault(ContentMode.Fit),
+            saveLocation = SaveLocation.fromName(request.getStringExtra(EXTRA_SAVE_LOCATION)),
+        )
+
+        CaptureEngine.startSession(
+            context = this,
+            resultCode = resultCode,
+            projectionData = projectionData,
+            config = config,
+            autoRecord = request.getBooleanExtra(EXTRA_AUTO_RECORD, false),
+        )
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(screenReceiver) }
+        com.rout.air.data.logging.DiagLog.line("CaptureService: onDestroy")
+        if (CaptureEngine.sessionActive.value) {
+            CaptureEngine.closeSession()
+        }
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun buildNotification(state: RecordingState, live: LiveStats): Notification {
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, CaptureService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val pauseIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, CaptureService::class.java).setAction(ACTION_TOGGLE_PAUSE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val recording = state as? RecordingState.Recording
+        val liveOn = live.status == LiveStatus.Live
+        val text = when (state) {
+            RecordingState.Preparing -> getString(R.string.notif_preparing)
+            RecordingState.Previewing -> getString(
+                if (liveOn) R.string.notif_live_active
+                else R.string.notif_preview_ready,
+            )
+
+            is RecordingState.Recording -> getString(
+                when {
+                    liveOn && state.isPaused -> R.string.notif_paused_live
+                    liveOn -> R.string.notif_recording_live
+                    state.isPaused -> R.string.notif_paused
+                    else -> R.string.notif_recording
+                },
+            )
+
+            is RecordingState.Error -> state.message
+            RecordingState.Idle -> getString(R.string.notif_idle)
+        }
+        val actionLabel = getString(
+            if (recording != null) R.string.notif_action_stop else R.string.notif_action_close,
+        )
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("RoutAir")
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setOngoing(true)
+            .setContentIntent(contentIntent)
+        if (recording != null) {
+            builder.addAction(
+                0,
+                getString(
+                    if (recording.isPaused) R.string.notif_action_resume
+                    else R.string.notif_action_pause,
+                ),
+                pauseIntent,
+            )
+        }
+        return builder
+            .addAction(0, actionLabel, stopIntent)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
+    private fun createChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.notif_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.notif_channel_desc)
+            setShowBadge(false)
+        }
+        notificationManager().createNotificationChannel(channel)
+    }
+
+    private fun notificationManager(): NotificationManager =
+        getSystemService(NotificationManager::class.java)
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    companion object {
+        const val ACTION_START = "com.rout.air.action.START"
+        const val ACTION_STOP = "com.rout.air.action.STOP"
+        const val ACTION_TOGGLE_PAUSE = "com.rout.air.action.TOGGLE_PAUSE"
+
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_PROJECTION_DATA = "projection_data"
+        const val EXTRA_WIDTH = "width"
+        const val EXTRA_HEIGHT = "height"
+        const val EXTRA_FPS = "fps"
+        const val EXTRA_BITRATE = "bitrate"
+        const val EXTRA_CONTENT_MODE = "content_mode"
+        const val EXTRA_SAVE_LOCATION = "save_location"
+        const val EXTRA_AUTO_RECORD = "auto_record"
+
+        private const val CHANNEL_ID = "rout_air_capture"
+        private const val NOTIFICATION_ID = 1001
+
+        /** Intent siap pakai untuk memulai service dari Activity. */
+        fun startIntent(
+            context: Context,
+            resultCode: Int,
+            projectionData: Intent,
+            config: CaptureConfig,
+            autoRecord: Boolean = false,
+        ): Intent = Intent(context, CaptureService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_RESULT_CODE, resultCode)
+            putExtra(EXTRA_PROJECTION_DATA, projectionData)
+            putExtra(EXTRA_WIDTH, config.width)
+            putExtra(EXTRA_HEIGHT, config.height)
+            putExtra(EXTRA_FPS, config.fps)
+            putExtra(EXTRA_BITRATE, config.videoBitrate)
+            putExtra(EXTRA_CONTENT_MODE, config.contentMode.name)
+            putExtra(EXTRA_SAVE_LOCATION, config.saveLocation.name)
+            putExtra(EXTRA_AUTO_RECORD, autoRecord)
+        }
+
+        fun stopIntent(context: Context): Intent =
+            Intent(context, CaptureService::class.java).apply { action = ACTION_STOP }
+    }
+}

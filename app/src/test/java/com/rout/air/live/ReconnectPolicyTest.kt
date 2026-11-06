@@ -3,6 +3,7 @@ package com.rout.air.live
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import com.rout.air.live.rtmp.ReconnectPolicy
 
 class ReconnectPolicyTest {
 

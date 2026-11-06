@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.live.youtube.GoogleAuth
+import com.rout.air.live.youtube.GoogleTokens
 
 /** Mengunci masa berlaku token tanpa perlu perangkat. */
 class GoogleAuthTest {

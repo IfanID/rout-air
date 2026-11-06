@@ -2,6 +2,7 @@ package com.rout.air.live
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.rout.air.live.rtmp.RtmpEndpoint
 
 class RtmpEndpointTest {
 

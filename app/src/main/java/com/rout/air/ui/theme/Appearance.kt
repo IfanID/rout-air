@@ -2,7 +2,7 @@ package com.rout.air.ui.theme
 
 import android.content.Context
 import androidx.compose.ui.graphics.Color
-import com.rout.air.data.SettingsStore
+import com.rout.air.data.settings.SettingsStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

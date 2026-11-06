@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import com.rout.air.service.overlay.OverlayLayout
+import com.rout.air.service.overlay.OverlayPanelSize
 
 class OverlayLayoutTest {
 

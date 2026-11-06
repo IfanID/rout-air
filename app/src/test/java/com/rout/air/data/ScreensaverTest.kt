@@ -1,11 +1,17 @@
 package com.rout.air.data
 
-import com.rout.air.core.SceneCollection
-import com.rout.air.core.SourceType
+import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.SourceType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.data.screensaver.SCREENSAVER_SCENE_NAME
+import com.rout.air.data.screensaver.addScreensaverScene
+import com.rout.air.data.screensaver.buildScreensaverScene
+import com.rout.air.data.screensaver.screensaverScenes
+import com.rout.air.data.screensaver.upgradeScreensaverScenes
+import com.rout.air.data.screensaver.withScreensaverScene
 
 /** Layar jeda bawaan: latar hitam, judul RoutAir, subteks di bawahnya. */
 class ScreensaverTest {
@@ -128,15 +134,15 @@ class ScreensaverTest {
         val base = SceneCollection.default(1080, 2400, "Layar", "Adegan 1")
         val (withJeda, id) = base.withScreensaverScene(1080, 2400, measure)
         val scene = withJeda.scenes.first { it.id == id }
-        val foto = com.rout.air.core.SceneSource(
-            type = com.rout.air.core.SourceType.Image,
+        val foto = com.rout.air.core.model.SceneSource(
+            type = com.rout.air.core.model.SourceType.Image,
             name = "Foto",
-            settings = com.rout.air.core.SourceSettings(imagePath = "/tmp/a.png", width = 800, height = 600),
+            settings = com.rout.air.core.model.SourceSettings(imagePath = "/tmp/a.png", width = 800, height = 600),
         )
         val withFoto = withJeda.copy(
             sources = withJeda.sources + foto,
             scenes = withJeda.scenes.map {
-                if (it.id == id) it.copy(items = it.items + com.rout.air.core.SceneItem(sourceId = foto.id, z = 3)) else it
+                if (it.id == id) it.copy(items = it.items + com.rout.air.core.model.SceneItem(sourceId = foto.id, z = 3)) else it
             },
         )
         val next = withFoto.upgradeScreensaverScenes(1080, 2400, measure)

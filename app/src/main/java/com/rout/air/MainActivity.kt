@@ -6,24 +6,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import com.rout.air.ui.RoutAirApp
 import com.rout.air.ui.theme.RoutAirTheme
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.ui.graphics.toArgb
 
 class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.getStringExtra("open_tab") == "studio") {
-            com.rout.air.data.UiEvents.openStudio.tryEmit(Unit)
+            com.rout.air.data.common.UiEvents.openStudio.tryEmit(Unit)
         } else if (intent.getStringExtra("open_tab") == "live") {
-            com.rout.air.data.UiEvents.openLiveSetup.tryEmit(Unit)
+            com.rout.air.data.common.UiEvents.openLiveSetup.tryEmit(Unit)
         } else if (intent.getStringExtra("open_tab") == "settings") {
-            com.rout.air.data.UiEvents.openSettings.tryEmit(Unit)
+            com.rout.air.data.common.UiEvents.openSettings.tryEmit(Unit)
         }
     }
 

@@ -1,9 +1,11 @@
 package com.rout.air.encode
 
-import com.rout.air.core.AudioFilter
-import com.rout.air.core.AudioFilterType
+import com.rout.air.core.audio.AudioFilter
+import com.rout.air.core.audio.AudioFilterType
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import com.rout.air.encode.audio.ChannelFilterChain
+import com.rout.air.encode.policy.SyncAligner
 
 /** Uji DSP inti yang tidak membutuhkan Android (gain, delay, sync offset). */
 class AudioDspTest {

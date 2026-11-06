@@ -3,6 +3,7 @@ package com.rout.air.encode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.rout.air.encode.benchmark.GameLoadBenchmark
 
 /** Mengunci perhitungan beban benchmark tanpa perlu perangkat Android. */
 class GameLoadBenchmarkTest {
