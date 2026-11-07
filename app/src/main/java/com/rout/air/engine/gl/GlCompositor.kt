@@ -200,10 +200,13 @@ class GlCompositor {
         val scaleU = (1f - cropLeft - cropRight) * if (flipH) -1f else 1f
         val scaleV = (1f - cropTop - cropBottom) * if (flipV) -1f else 1f
         GLES20.glUniform2f(externalUvScale, scaleU, scaleV)
+        // Quad tekstur eksternal punya v=0 di bawah layar (kebalikan quad 2D),
+        // jadi crop "atas" harus memotong v tinggi. Tanpa ini crop atas/bawah
+        // tertukar dibanding pratinjau.
         GLES20.glUniform2f(
             externalUvBias,
             if (flipH) 1f - cropLeft else cropLeft,
-            if (flipV) 1f - cropBottom else cropBottom,
+            if (flipV) 1f - cropTop else cropBottom,
         )
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)

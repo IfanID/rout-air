@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -77,6 +78,8 @@ import com.rout.air.ui.pages.settings.SettingsScreen
 import com.rout.air.ui.pages.studio.StudioScreen
 import com.rout.air.core.model.Scene
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.unit.dp
@@ -210,28 +213,15 @@ fun RoutAirApp(
         defaultSceneName,
     )
 
-    // Scene layar jeda dibuat sebelum orientasi diketahui; posisinya
-    // disesuaikan dengan kanvas yang benar-benar dipakai.
-    var lastCanvasSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    // Scene disesuaikan dengan kanvas aktif. Saat sesi berjalan pipeline yang
+    // mengurusnya; tanpa sesi UI memakai acuan kanvas tersimpan sehingga
+    // rotasi beruntun tidak menggeser item dua kali.
     LaunchedEffect(canvasConfig.width, canvasConfig.height) {
-        val previous = lastCanvasSize
         val currentSize = canvasConfig.width to canvasConfig.height
-        if (previous != null && previous != currentSize) {
-            val sessionActive = CaptureEngine.sessionActive.value
-            if (!sessionActive) {
-                // Tanpa sesi: UI yang menyesuaikan scene.
-                SceneManager.rescaleCanvas(
-                    previous.first,
-                    previous.second,
-                    currentSize.first,
-                    currentSize.second,
-                )
-            }
-            // Sesi aktif: pipeline memperbarui kanvas sekaligus menyesuaikan
-            // scene, jadi jangan lakukan dua kali di sini.
-            CaptureEngine.updateCanvas(currentSize.first, currentSize.second)
-        }
-        lastCanvasSize = currentSize
+        // Selalu jalankan dari UI: sesi aktif pun tetap butuh scene mengikuti
+        // orientasi. Pipeline memakai acuan yang sama sehingga tidak dobel.
+        SceneManager.ensureCanvas(currentSize.first, currentSize.second)
+        CaptureEngine.updateCanvas(currentSize.first, currentSize.second)
         store.saveSceneCanvas(currentSize.first, currentSize.second)
     }
 
@@ -620,13 +610,33 @@ fun RoutAirApp(
         modifier = modifier,
         // Navbar selalu tampil, termasuk saat pratinjau penuh di Studio.
         bottomBar = {
-            NavigationBar {
+            val landscape =
+                LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+            NavigationBar(
+                // Landscape: baris ikon saja tanpa label supaya tidak makan
+                // tinggi layar. Inset sistem tetap ditambahkan di luar tinggi.
+                modifier = if (landscape) {
+                    Modifier.navigationBarsPadding().height(48.dp)
+                } else {
+                    Modifier
+                },
+                windowInsets = if (landscape) {
+                    WindowInsets(0, 0, 0, 0)
+                } else {
+                    NavigationBarDefaults.windowInsets
+                },
+            ) {
                 AppTab.entries.forEach { item ->
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = { tab = item },
                         icon = { Text(item.symbol) },
-                        label = { Text(stringResource(item.labelRes)) },
+                        label = if (landscape) {
+                            null
+                        } else {
+                            { Text(stringResource(item.labelRes)) }
+                        },
+                        alwaysShowLabel = !landscape,
                     )
                 }
             }

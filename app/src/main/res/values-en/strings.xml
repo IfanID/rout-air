@@ -314,8 +314,6 @@
     <string name="onboarding_step_locked">Finish this step before continuing.</string>
     <string name="onboarding_perm_mic">Microphone</string>
     <string name="onboarding_perm_mic_desc">Records audio for the recording and stream audio track.</string>
-    <string name="onboarding_perm_camera">Camera</string>
-    <string name="onboarding_perm_camera_desc">Adds the camera as a scene source.</string>
     <string name="onboarding_perm_notif">Notifications</string>
     <string name="onboarding_perm_notif_desc">Pause and stop controls while the app is in the background.</string>
     <string name="onboarding_perm_bluetooth">Bluetooth</string>
@@ -795,9 +793,6 @@
     <string name="scenes_media_speed_n">%1$s×</string>
     <string name="scenes_media_loop">Loop automatically</string>
     <string name="scenes_media_restart">Play from start</string>
-    <string name="scenes_kamera_resolusi">Camera resolution</string>
-    <string name="scenes_kamera_zoom">Camera zoom</string>
-    <string name="scenes_kamera_torch">Flashlight</string>
     <string name="settings_entry_adegan">Scene collections</string>
     <string name="settings_entry_adegan_desc">Multiple scene projects: rename, duplicate, export, and import JSON.</string>
     <string name="collections_hint">Each collection holds its scenes and sources. The video canvas in Settings → Video applies to every collection.</string>
@@ -827,7 +822,6 @@
     <string name="settings_prefer_hevc_desc">While recording without live and a hardware HEVC encoder exists, use H.265 to keep files smaller.</string>
     <string name="settings_prefer_hevc_unavailable">No hardware HEVC encoder detected; the H.265 recording option is hidden.</string>
     <string name="scenes_slideshow_fade">Fade between images</string>
-    <string name="scenes_kamera_lensa">Camera lens</string>
     <string name="scenes_media_seek">Video position: %1$s</string>
     <string name="settings_language_id">Indonesian</string>
     <string name="settings_language_en">English</string>
@@ -902,10 +896,6 @@
     <string name="scenes_media_pilih">Choose video</string>
     <string name="scenes_media_ganti">Change video</string>
     <string name="scenes_media_hint">The video loops. Media audio is not mixed into the recording; use a separate audio source if needed.</string>
-    <string name="scenes_kamera_belakang">Back camera</string>
-    <string name="scenes_kamera_depan">Front camera</string>
-    <string name="scenes_kamera_izin">Camera permission is required to add a camera source</string>
-    <string name="scenes_kamera_hint">The camera appears in the preview while a capture session is active; the editor only shows its frame.</string>
     <string name="scenes_intrinsic_screen">follows canvas</string>
     <string name="scenes_intrinsic_audio">audio</string>
     <string name="scenes_app_ditambahkan">%1$s added to the Audio tab</string>
@@ -981,4 +971,14 @@
     <string name="overlay_record_text">Floating record panel is active</string>
     <string name="overlay_record_ready">Ready to record</string>
     <string name="overlay_record_stats">%1$s • %2$s Mb/s • %3$d frames • %4$d dropped</string>
+    <string name="scenes_kamera_stream_url">H.264 camera stream (TCP)</string>
+    <string name="scenes_kamera_stream_hint">Enter the IP and port, then press Connect. If RoutAirCam is on the same phone, use 127.0.0.1. Audio is not supported yet.</string>
+    <string name="scenes_kamera_host">IP / Host</string>
+    <string name="scenes_kamera_port">Port</string>
+    <string name="scenes_kamera_connect">Connect</string>
+    <string name="scenes_kamera_connecting">Connecting…</string>
+    <string name="scenes_kamera_connected">Connected to %1$s:%2$d</string>
+    <string name="scenes_kamera_streaming">Stream active • %1$d×%2$d</string>
+    <string name="scenes_kamera_connect_error">Failed: %1$s</string>
+    <string name="scenes_kamera_disconnected">Disconnected</string>
 </resources>

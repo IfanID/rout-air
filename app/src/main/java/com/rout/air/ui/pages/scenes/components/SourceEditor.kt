@@ -31,13 +31,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import com.rout.air.R
 import com.rout.air.core.model.Align
+import com.rout.air.core.model.CameraStreamState
+import com.rout.air.core.model.CameraStreamStatus
 import com.rout.air.core.model.CaptureConfig
 import com.rout.air.core.model.Crop
 import com.rout.air.core.model.SceneCollection
@@ -57,6 +59,8 @@ import com.rout.air.ui.components.ItemContextMenu
 import com.rout.air.ui.components.ScenePreview
 import com.rout.air.ui.dialogs.AudioDevicePickerDialog
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -65,6 +69,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.rout.air.data.scene.moveLayer
 import kotlin.math.roundToInt
+
 
 @Composable
 internal fun SourceEditor(
@@ -83,27 +88,9 @@ internal fun SourceEditor(
     onEditBrowser: () -> Unit,
     onAddSlides: () -> Unit,
 ) {
-    var name by remember(source.id) { mutableStateOf(source.name) }
-    var text by remember(source.id) { mutableStateOf(source.settings.text) }
-    var textSize by remember(source.id) { mutableStateOf(source.settings.textSize) }
-    var showDevicePicker by remember(source.id) { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
-    val context = LocalContext.current
-    val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-    val previewHeight = if (portrait) {
-        (configuration.screenHeightDp * 0.46f).dp.coerceIn(300.dp, 440.dp)
-    } else {
-        (configuration.screenHeightDp * 0.55f).dp.coerceIn(220.dp, 380.dp)
-    }
-    val isAudioSource = source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput
-
-    // Menu konteks dari pratinjau (tahan lama / klik dua kali).
-    var menuTarget by remember(item.id) { mutableStateOf<Pair<SceneItem, Offset>?>(null) }
-
-    fun updateSource(next: SceneSource) = onCollectionChange(collection.updateSource(next))
-    fun updateItem(next: SceneItem) = onCollectionChange(collection.updateItem(next))
-    fun updateTransform(block: (Transform) -> Transform) =
-        updateItem(item.copy(transform = block(item.transform)))
+    val isAudioSource = source.type == SourceType.AudioInput ||
+        source.type == SourceType.AudioOutput
 
     if (isAudioSource) {
         AudioSourceEditor(
@@ -118,113 +105,251 @@ internal fun SourceEditor(
         return
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text(stringResource(R.string.common_kembali_panah)) }
-            Text(
-                text = source.name,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            // Kunci/unlock item langsung dari halaman sumber.
-            RowIconAction(
-                onClick = { updateItem(item.copy(locked = !item.locked)) },
-                background = if (item.locked) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                } else {
-                    null
-                },
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val toggleLock: () -> Unit = {
+        onCollectionChange(collection.updateItem(item.copy(locked = !item.locked)))
+    }
+
+    if (landscape) {
+        // HP diputar: pratinjau di kiri dan panel pengaturan yang bergulir di
+        // kanan, supaya semua kontrol terjangkau tanpa mengecilkan pratinjau.
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1.3f)
+                    .fillMaxHeight(),
             ) {
-                Icon(
-                    painter = painterResource(
-                        if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
-                    ),
-                    contentDescription = stringResource(
-                        if (item.locked) R.string.icon_unlock else R.string.icon_lock,
-                    ),
-                    tint = if (item.locked) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    modifier = Modifier.size(22.dp),
+                EditorHeader(
+                    source = source,
+                    item = item,
+                    onBack = onBack,
+                    onToggleLock = toggleLock,
+                )
+                Spacer(Modifier.height(6.dp))
+                PreviewPane(
+                    canvas = canvas,
+                    collection = collection,
+                    item = item,
+                    onTransform = onTransform,
+                    onSelectItem = onSelectItem,
+                    onCollectionChange = onCollectionChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                 )
             }
-        }
-
-        // Pratinjau menempel di atas, sedangkan pengaturan di bawahnya yang
-        // bergulir. Hasil geser slider jadi selalu terlihat.
-        Spacer(Modifier.height(8.dp))
-        // Saat sesi aktif, tampilkan render pipeline (termasuk kamera) supaya
-        // pratinjau sumber sama persis dengan Studio.
-        val sessionActive by CaptureEngine.sessionActive.collectAsState()
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(previewHeight),
-        ) {
-            ScenePreview(
+            PropertyPanel(
                 canvas = canvas,
                 collection = collection,
-                selectedItemId = item.id,
-                onSelectItem = {},
-                onTransform = onTransform,
-                onItemMenu = { target, position -> menuTarget = target to position },
-                gestureTargetItemId = item.id,
-                liveBackground = sessionActive,
-                modifier = Modifier.fillMaxSize(),
+                item = item,
+                source = source,
+                density = density,
+                onCollectionChange = onCollectionChange,
+                onDelete = onDelete,
+                onPickImage = onPickImage,
+                onPickMedia = onPickMedia,
+                onEditBrowser = onEditBrowser,
+                onAddSlides = onAddSlides,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
             )
-            menuTarget?.let { (target, position) ->
-                // Menu digeser ke titik ketukan di dalam pratinjau.
-                Box(
-                    modifier = Modifier.offset {
-                        IntOffset(position.x.roundToInt(), position.y.roundToInt())
-                    },
-                ) {
-                    ItemContextMenu(
-                        collection = collection,
-                        item = target,
-                        source = collection.source(target.sourceId),
-                        canvas = canvas,
-                        onDismiss = { menuTarget = null },
-                        onCollectionChange = onCollectionChange,
-                        onSelectItem = onSelectItem,
-                    )
-                }
-            }
+        }
+    } else {
+        // Pratinjau menempel di atas, sedangkan pengaturan di bawahnya yang
+        // bergulir. Hasil geser slider jadi selalu terlihat.
+        val previewHeight = (configuration.screenHeightDp * 0.46f).dp.coerceIn(300.dp, 440.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+        ) {
+            EditorHeader(
+                source = source,
+                item = item,
+                onBack = onBack,
+                onToggleLock = toggleLock,
+            )
+            Spacer(Modifier.height(8.dp))
+            PreviewPane(
+                canvas = canvas,
+                collection = collection,
+                item = item,
+                onTransform = onTransform,
+                onSelectItem = onSelectItem,
+                onCollectionChange = onCollectionChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(previewHeight),
+            )
+            Spacer(Modifier.height(10.dp))
+            PropertyPanel(
+                canvas = canvas,
+                collection = collection,
+                item = item,
+                source = source,
+                density = density,
+                onCollectionChange = onCollectionChange,
+                onDelete = onDelete,
+                onPickImage = onPickImage,
+                onPickMedia = onPickMedia,
+                onEditBrowser = onEditBrowser,
+                onAddSlides = onAddSlides,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            )
+        }
+    }
+}
 
-            val hasScreen = collection.activeScene()?.items?.any {
-                collection.source(it.sourceId)?.type == SourceType.Screen
-            } == true
-            if (hasScreen) {
-                Text(
-                    text = stringResource(R.string.scenes_layar_pratinjau_langsung_ada_di_tab_stud),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFB8C2CC),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xCC000000))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+/** Baris judul editor sumber: kembali, nama, dan kunci item. */
+@Composable
+private fun EditorHeader(
+    source: SceneSource,
+    item: SceneItem,
+    onBack: () -> Unit,
+    onToggleLock: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onBack) { Text(stringResource(R.string.common_kembali_panah)) }
+        Text(
+            text = source.name,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // Kunci/unlock item langsung dari halaman sumber.
+        RowIconAction(
+            onClick = onToggleLock,
+            background = if (item.locked) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+            } else {
+                null
+            },
+        ) {
+            Icon(
+                painter = painterResource(
+                    if (item.locked) R.drawable.ic_lock else R.drawable.ic_lock_open,
+                ),
+                contentDescription = stringResource(
+                    if (item.locked) R.string.icon_unlock else R.string.icon_lock,
+                ),
+                tint = if (item.locked) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Pratinjau adegan untuk satu item. Dipakai baik saat portrait (di atas
+ * pengaturan) maupun landscape (di panel kiri).
+ */
+@Composable
+private fun PreviewPane(
+    canvas: CaptureConfig,
+    collection: SceneCollection,
+    item: SceneItem,
+    onTransform: (String?, Float, Float, Float, Float, Float) -> Unit,
+    onSelectItem: (String?) -> Unit,
+    onCollectionChange: (SceneCollection) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Menu konteks dari pratinjau (tahan lama / klik dua kali).
+    var menuTarget by remember(item.id) { mutableStateOf<Pair<SceneItem, Offset>?>(null) }
+    // Saat sesi aktif, tampilkan render pipeline (termasuk kamera) supaya
+    // pratinjau sumber sama persis dengan Studio.
+    val sessionActive by CaptureEngine.sessionActive.collectAsState()
+    Box(modifier = modifier) {
+        ScenePreview(
+            canvas = canvas,
+            collection = collection,
+            selectedItemId = item.id,
+            onSelectItem = {},
+            onTransform = onTransform,
+            onItemMenu = { target, position -> menuTarget = target to position },
+            gestureTargetItemId = item.id,
+            liveBackground = sessionActive,
+            modifier = Modifier.fillMaxSize(),
+        )
+        menuTarget?.let { (target, position) ->
+            // Menu digeser ke titik ketukan di dalam pratinjau.
+            Box(
+                modifier = Modifier.offset {
+                    IntOffset(position.x.roundToInt(), position.y.roundToInt())
+                },
+            ) {
+                ItemContextMenu(
+                    collection = collection,
+                    item = target,
+                    source = collection.source(target.sourceId),
+                    canvas = canvas,
+                    onDismiss = { menuTarget = null },
+                    onCollectionChange = onCollectionChange,
+                    onSelectItem = onSelectItem,
                 )
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        val hasScreen = collection.activeScene()?.items?.any {
+            collection.source(it.sourceId)?.type == SourceType.Screen
+        } == true
+        if (hasScreen) {
+            Text(
+                text = stringResource(R.string.scenes_layar_pratinjau_langsung_ada_di_tab_stud),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFB8C2CC),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xCC000000))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
 
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-        ) {
+/** Panel pengaturan sumber; selalu bisa digulir penuh. */
+@Composable
+private fun PropertyPanel(
+    canvas: CaptureConfig,
+    collection: SceneCollection,
+    item: SceneItem,
+    source: SceneSource,
+    density: Float,
+    onCollectionChange: (SceneCollection) -> Unit,
+    onDelete: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickMedia: () -> Unit,
+    onEditBrowser: () -> Unit,
+    onAddSlides: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var name by remember(source.id) { mutableStateOf(source.name) }
+    var text by remember(source.id) { mutableStateOf(source.settings.text) }
+    var textSize by remember(source.id) { mutableStateOf(source.settings.textSize) }
+    var showDevicePicker by remember(source.id) { mutableStateOf(false) }
+
+    fun updateSource(next: SceneSource) = onCollectionChange(collection.updateSource(next))
+    fun updateItem(next: SceneItem) = onCollectionChange(collection.updateItem(next))
+    fun updateTransform(block: (Transform) -> Transform) =
+        updateItem(item.copy(transform = block(item.transform)))
+
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState()),
+    ) {
         OutlinedTextField(
             value = name,
             onValueChange = {
@@ -575,151 +700,124 @@ internal fun SourceEditor(
             }
 
             SourceType.Camera -> {
+                // Kamera lokal sudah dihapus. Sumber ini menerima stream
+                // H.264 dari HP lain lewat Wi-Fi lokal.
                 Spacer(Modifier.height(8.dp))
-                Text(stringResource(R.string.scenes_tipe_camera), style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        0 to stringResource(R.string.scenes_kamera_belakang),
-                        1 to stringResource(R.string.scenes_kamera_depan),
-                    ).forEach { (facing, label) ->
-                        FilterChip(
-                            selected = source.settings.cameraFacing == facing,
-                            onClick = {
-                                // Ganti menghadap juga melepas pilihan lensa
-                                // supaya tidak tertahan di lensa arah lama.
-                                updateSource(
-                                    source.copy(
-                                        settings = source.settings.copy(
-                                            cameraFacing = facing,
-                                            cameraId = null,
-                                        ),
-                                    ),
-                                )
-                            },
-                            label = { Text(label) },
-                        )
-                    }
-                }
-                val lenses = remember {
-                    val manager = context.getSystemService(
-                        android.hardware.camera2.CameraManager::class.java,
-                    )
-                    manager?.cameraIdList?.mapNotNull { id ->
-                        val info = runCatching {
-                            manager.getCameraCharacteristics(id)
-                        }.getOrNull() ?: return@mapNotNull null
-                        val front = info.get(
-                            android.hardware.camera2.CameraCharacteristics.LENS_FACING,
-                        ) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
-                        val focal = info.get(
-                            android.hardware.camera2.CameraCharacteristics
-                                .LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
-                        )?.firstOrNull()
-                        Triple(id, front, focal)
-                    }.orEmpty()
-                }
-                if (lenses.size > 1) {
-                    Text(
-                        stringResource(R.string.scenes_kamera_lensa),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        FilterChip(
-                            selected = source.settings.cameraId == null,
-                            onClick = {
-                                updateSource(
-                                    source.copy(
-                                        settings = source.settings.copy(cameraId = null),
-                                    ),
-                                )
-                            },
-                            label = { Text(stringResource(R.string.settings_otomatis)) },
-                        )
-                        lenses.forEach { (id, front, focal) ->
-                            val prefix = stringResource(
-                                if (front) R.string.scenes_kamera_depan
-                                else R.string.scenes_kamera_belakang,
-                            )
-                            FilterChip(
-                                selected = source.settings.cameraId == id,
-                                onClick = {
-                                    updateSource(
-                                        source.copy(
-                                            settings = source.settings.copy(cameraId = id),
-                                        ),
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        if (focal != null) {
-                                            "$prefix ${"%.0f".format(focal)} mm"
-                                        } else {
-                                            prefix
-                                        },
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
                 Text(
-                    stringResource(R.string.scenes_kamera_resolusi),
+                    stringResource(R.string.scenes_kamera_stream_url),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(
-                        0 to stringResource(R.string.settings_otomatis),
-                        720 to "720p",
-                        1080 to "1080p",
-                    ).forEach { (height, label) ->
-                        FilterChip(
-                            selected = source.settings.cameraHeight == height,
-                            onClick = {
-                                updateSource(
-                                    source.copy(
-                                        settings = source.settings.copy(cameraHeight = height),
-                                    ),
-                                )
-                            },
-                            label = { Text(label) },
-                        )
-                    }
-                }
-                LabeledSlider(
-                    label = stringResource(R.string.scenes_kamera_zoom),
-                    value = source.settings.cameraZoom,
-                    range = 1f..3f,
-                    format = { "%.1f×".format(it) },
-                    onReset = {
-                        updateSource(
-                            source.copy(settings = source.settings.copy(cameraZoom = 1f)),
-                        )
-                    },
-                ) { value ->
-                    updateSource(
-                        source.copy(settings = source.settings.copy(cameraZoom = value)),
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(R.string.scenes_kamera_torch),
+                val existingUrl = source.settings.cameraUrl.orEmpty()
+                val existingEndpoint = existingUrl.removePrefix("tcp://")
+                val initialHost = existingEndpoint.substringBefore(':')
+                    .ifBlank { "192.168.43.57" }
+                val initialPort = existingEndpoint.substringAfter(':', "3333")
+                    .substringBefore('/')
+                    .ifBlank { "3333" }
+                var cameraHost by remember(item.id) { mutableStateOf(initialHost) }
+                var cameraPort by remember(item.id) { mutableStateOf(initialPort) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = cameraHost,
+                        onValueChange = { cameraHost = it },
+                        label = { Text(stringResource(R.string.scenes_kamera_host)) },
+                        singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
-                    androidx.compose.material3.Switch(
-                        checked = source.settings.cameraTorch,
-                        onCheckedChange = { enabled ->
+                    OutlinedTextField(
+                        value = cameraPort,
+                        onValueChange = { input ->
+                            cameraPort = input.filter { it.isDigit() }.take(5)
+                        },
+                        label = { Text(stringResource(R.string.scenes_kamera_port)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(110.dp),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            val host = cameraHost.trim()
+                            val port = cameraPort.toIntOrNull()?.coerceIn(1, 65535) ?: 3333
                             updateSource(
                                 source.copy(
-                                    settings = source.settings.copy(cameraTorch = enabled),
+                                    settings = source.settings.copy(
+                                        cameraUrl = if (host.isBlank()) {
+                                            null
+                                        } else {
+                                            "tcp://$host:$port"
+                                        },
+                                    ),
                                 ),
                             )
                         },
+                    ) { Text(stringResource(R.string.common_simpan)) }
+                    TextButton(
+                        onClick = {
+                            val host = cameraHost.trim()
+                            val port = cameraPort.toIntOrNull()?.coerceIn(1, 65535) ?: 3333
+                            CameraStreamStatus.report(
+                                source.id,
+                                CameraStreamState.Connecting,
+                            )
+                            updateSource(
+                                source.copy(
+                                    settings = source.settings.copy(
+                                        cameraUrl = if (host.isBlank()) {
+                                            null
+                                        } else {
+                                            "tcp://$host:$port"
+                                        },
+                                        // Token baru memaksa receiver menyambung
+                                        // ulang walau URL tidak berubah.
+                                        cameraConnectToken =
+                                            source.settings.cameraConnectToken + 1,
+                                    ),
+                                ),
+                            )
+                        },
+                    ) { Text(stringResource(R.string.scenes_kamera_connect)) }
+                }
+                val streamStates by CameraStreamStatus.states.collectAsState()
+                val streamState = streamStates[source.id]
+                if (streamState != null) {
+                    val statusText = when (streamState) {
+                        CameraStreamState.Connecting ->
+                            stringResource(R.string.scenes_kamera_connecting)
+                        is CameraStreamState.Connected -> stringResource(
+                            R.string.scenes_kamera_connected,
+                            streamState.host,
+                            streamState.port,
+                        )
+                        is CameraStreamState.Streaming -> stringResource(
+                            R.string.scenes_kamera_streaming,
+                            streamState.width,
+                            streamState.height,
+                        )
+                        is CameraStreamState.Error -> stringResource(
+                            R.string.scenes_kamera_connect_error,
+                            streamState.message,
+                        )
+                        CameraStreamState.Disconnected ->
+                            stringResource(R.string.scenes_kamera_disconnected)
+                    }
+                    val statusColor = when (streamState) {
+                        is CameraStreamState.Error -> MaterialTheme.colorScheme.error
+                        is CameraStreamState.Connected,
+                        is CameraStreamState.Streaming -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor,
                     )
                 }
-                Hint(stringResource(R.string.scenes_kamera_hint))
+                Hint(stringResource(R.string.scenes_kamera_stream_hint))
             }
 
             SourceType.Screen -> {
@@ -844,8 +942,6 @@ internal fun SourceEditor(
                 Hint(stringResource(R.string.scenes_audio_output_hint))
             }
         }
-
-        if (!isAudioSource) {
         Spacer(Modifier.height(20.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -985,9 +1081,6 @@ internal fun SourceEditor(
         CropSlider(stringResource(R.string.scenes_bawah), item.crop.bottom) { value ->
             updateItem(item.copy(crop = item.crop.copy(bottom = value)))
         }
-        }
-
-        if (!isAudioSource) {
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
@@ -997,12 +1090,9 @@ internal fun SourceEditor(
                 onClick = { onCollectionChange(collection.moveLayer(item.id, -1)) },
             ) { Text(stringResource(R.string.scenes_turunkan_lapisan)) }
         }
-        }
-
         Spacer(Modifier.height(8.dp))
         // Menghapus item ini saja; sumber dibuang hanya bila tak terpakai lagi.
         TextButton(onClick = onDelete) { Text(stringResource(R.string.scenes_hapus_item)) }
-        }
     }
 
     if (showDevicePicker) {

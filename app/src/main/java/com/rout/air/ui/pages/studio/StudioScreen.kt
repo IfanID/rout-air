@@ -29,6 +29,7 @@ import com.rout.air.core.model.RecordingStats
 import com.rout.air.core.model.SceneCollection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import com.rout.air.R
 import com.rout.air.ui.components.LiveButton
 import com.rout.air.ui.components.RecordButton
@@ -203,25 +204,49 @@ fun StudioScreen(
         Spacer(Modifier.height(10.dp))
 
         Column {
-            Text(formatDuration(elapsedMs), style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
-                    "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (isActive) {
-                Text(
-                    text = stringResource(
+            if (landscape) {
+                // Landscape: satu baris saja supaya pratinjau tetap tinggi.
+                val info = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
+                    "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}"
+                val statsLine = if (isActive) {
+                    " • " + stringResource(
                         R.string.home_statistik,
                         formatRecordSize(stats.bytes),
                         String.format("%.1f", stats.bitrateKbps / 1000.0),
                         stats.frames,
                         stats.droppedFrames,
-                    ),
+                    )
+                } else {
+                    ""
+                }
+                Text(
+                    text = formatDuration(elapsedMs) + " • " + info + statsLine,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(formatDuration(elapsedMs), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
+                        "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (isActive) {
+                    Text(
+                        text = stringResource(
+                            R.string.home_statistik,
+                            formatRecordSize(stats.bytes),
+                            String.format("%.1f", stats.bitrateKbps / 1000.0),
+                            stats.frames,
+                            stats.droppedFrames,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

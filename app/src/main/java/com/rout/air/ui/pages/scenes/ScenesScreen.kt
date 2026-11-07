@@ -1,5 +1,7 @@
 package com.rout.air.ui.pages.scenes
 
+import android.content.res.Configuration
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -36,6 +39,7 @@ import com.rout.air.core.model.Align
 import com.rout.air.core.audio.AudioChannelId
 import com.rout.air.core.model.CaptureConfig
 import com.rout.air.core.model.Crop
+import com.rout.air.core.model.Scene
 import com.rout.air.core.model.SceneCollection
 import com.rout.air.core.model.SceneItem
 import com.rout.air.core.model.SceneSource
@@ -60,6 +64,7 @@ import com.rout.air.data.scene.SceneManager
 import com.rout.air.live.youtube.nameColor
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -109,6 +114,7 @@ fun ScenesScreen(
     val context = LocalContext.current
     val store = remember(context) { SceneStore(context) }
     val density = LocalDensity.current.density
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     var showAddScene by remember { mutableStateOf(false) }
     var showRenameScene by remember { mutableStateOf(false) }
@@ -315,36 +321,20 @@ fun ScenesScreen(
         }
     }
 
-    val cameraPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (!granted) {
-            android.widget.Toast.makeText(
-                context,
-                context.getString(R.string.scenes_kamera_izin),
-                android.widget.Toast.LENGTH_LONG,
-            ).show()
-            return@rememberLauncherForActivityResult
-        }
-        // Ukuran intrinsik kamera mengikuti OBS: baca karakteristik perangkat
-        // (tanpa membuka kamera) supaya sumber langsung punya rasio yang benar.
-        val cameraSize = com.rout.air.capture.CameraSizing.resolve(
-            context = context,
-            facing = 0,
-            cameraId = null,
-            canvasWidth = canvasConfig.width,
-            canvasHeight = canvasConfig.height,
-        )
-        val intrinsicWidth = cameraSize?.visual?.width ?: 1280
-        val intrinsicHeight = cameraSize?.visual?.height ?: 720
+    // Sumber kamera kini menerima stream MJPEG dari perangkat lain lewat
+    // Wi-Fi lokal. Tambah sumber dengan URL kosong; pengguna mengisi URL
+    // stream di panel editor sumber.
+    val addCameraSource: () -> Unit = {
+        val width = canvasConfig.width
+        val height = canvasConfig.height
         val source = SceneSource(
             type = SourceType.Camera,
             name = uniqueSourceName(collection, nameCamera),
-            settings = SourceSettings(width = intrinsicWidth, height = intrinsicHeight),
+            settings = SourceSettings(width = width, height = height),
         )
         val item = SceneItem(
             sourceId = source.id,
-            transform = fitTransform(intrinsicWidth, intrinsicHeight, canvasConfig),
+            transform = fitTransform(width, height, canvasConfig),
         )
         onCollectionChange(collection.addSource(source, item))
         onSelectItem(item.id)
@@ -443,202 +433,86 @@ fun ScenesScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(
+                horizontal = if (landscape) 16.dp else 20.dp,
+                vertical = if (landscape) 10.dp else 16.dp,
+            ),
     ) {
-        Text(stringResource(R.string.scenes_adegan), style = MaterialTheme.typography.headlineSmall)
-        Text(
-            text = stringResource(R.string.scenes_scene_sumber_dan_transisi),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.scenes_scene), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = { obsPicker.launch(arrayOf("application/json", "text/plain", "*/*")) }) {
-                Text(stringResource(R.string.scenes_import_obs))
-            }
-            TextButton(onClick = { showAddScene = true }) { Text(stringResource(R.string.scenes_tambah_2)) }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            collection.scenes.filterNot { it.isScreensaverScene() }.forEach { scene ->
-                val active = scene.id == collection.activeSceneId
-                Surface(
-                    color = if (active) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.clickable {
-                        onCollectionChange(collection.setActiveScene(scene.id))
-                        onSelectItem(null)
-                    },
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Text(
-                            text = scene.name,
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            text = stringResource(R.string.scenes_n_sumber, scene.items.size),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(onClick = { showRenameScene = true }) { Text(stringResource(R.string.audio_ganti_nama)) }
-            if (collection.scenes.size > 1) {
-                TextButton(
-                    onClick = {
-                        // Urutan scene di daftar: kiri = lebih awal.
-                        activeScene?.let { onCollectionChange(collection.moveScene(it.id, -1)) }
-                    },
-                ) {
-                    Text(stringResource(R.string.scenes_kiri))
-                }
-                TextButton(
-                    onClick = {
-                        activeScene?.let { onCollectionChange(collection.moveScene(it.id, +1)) }
-                    },
-                ) {
-                    Text(stringResource(R.string.scenes_kanan))
-                }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(
-                onClick = {
-                    activeScene?.let { onCollectionChange(collection.duplicateScene(it.id)) }
-                    onSelectItem(null)
-                },
-            ) {
-                Text(stringResource(R.string.scenes_duplikat_scene))
-            }
-            if (collection.scenes.size > 1) {
-                TextButton(
-                    onClick = {
-                        activeScene?.let { onCollectionChange(collection.removeScene(it.id)) }
-                        onSelectItem(null)
-                    },
-                ) {
-                    Text(stringResource(R.string.scenes_hapus_scene_aktif))
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.scenes_sumber), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = { showAddSource = true }) { Text(stringResource(R.string.scenes_sumber_2)) }
-        }
-
-        if (activeScene == null || activeScene.items.isEmpty()) {
-            Hint(stringResource(R.string.scenes_belum_ada_sumber_di_scene_ini_tambahkan))
-        } else {
-            val ordered = activeScene.items.sortedByDescending { it.z }
-            ordered.forEach { item ->
-                val source = collection.source(item.sourceId) ?: return@forEach
-                SourceRow(
-                    item = item,
-                    source = source,
-                    selected = item.id == selectedItemId,
-                    onSelect = { onSelectItem(item.id) },
-                    onReset = {
-                        // Reset hanya item ini: posisi/skala/rotasi dan crop.
-                        onCollectionChange(
-                            collection.updateItem(
-                                item.copy(
-                                    transform = defaultTransform(source, canvasConfig),
-                                    crop = Crop(),
-                                ),
-                            ),
-                        )
-                    },
-                    onToggleVisible = {
-                        onCollectionChange(
-                            collection.updateItem(item.copy(visible = !item.visible)),
-                        )
-                        if (source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput) {
-                            AudioMixer.setEnabled(
-                                AudioChannelId.forSource(source.id),
-                                !item.visible,
-                            )
-                        }
-                    },
-                    onToggleLock = {
-                        onCollectionChange(
-                            collection.updateItem(item.copy(locked = !item.locked)),
-                        )
-                    },
-                    onDelete = {
-                        // Swipe kiri: hapus item ini saja; sumber dibuang bila
-                        // sudah tidak dipakai item lain di scene mana pun.
-                        var next = collection.removeItem(item.id)
-                        val stillUsed = next.scenes.any { scene ->
-                            scene.items.any { it.sourceId == item.sourceId }
-                        }
-                        if (!stillUsed) next = next.removeSource(item.sourceId)
-                        onCollectionChange(next)
-                        if (selectedItemId == item.id) onSelectItem(null)
-                    },
-                    onMove = { delta ->
-                        onCollectionChange(collection.moveLayer(item.id, delta))
-                    },
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Hint(
-            stringResource(R.string.scenes_hint_order),
-        )
-
-        // Layar jeda punya bagian sendiri, terpisah dari daftar scene.
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = stringResource(R.string.scenes_screensaver),
-            style = MaterialTheme.typography.titleSmall,
-        )
-        Spacer(Modifier.height(6.dp))
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showScreensaverPage = true },
-        ) {
+        if (landscape) {
+            // Landscape: Adegan di kolom kiri, daftar sumber di kolom kanan.
             Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_screensaver),
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    PageTitle()
+                    ScenesPanel(
+                        collection = collection,
+                        onCollectionChange = onCollectionChange,
+                        onSelectItem = onSelectItem,
+                        onImportObs = {
+                            obsPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        onAddScene = { showAddScene = true },
+                        onRenameScene = { showRenameScene = true },
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    ScreensaverEntry(onOpenScreensaver = { showScreensaverPage = true })
+                }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    SourcesPanel(
+                        collection = collection,
+                        activeScene = activeScene,
+                        canvasConfig = canvasConfig,
+                        selectedItemId = selectedItemId,
+                        onCollectionChange = onCollectionChange,
+                        onSelectItem = onSelectItem,
+                        onAddSource = { showAddSource = true },
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Hint(stringResource(R.string.scenes_hint_order))
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                PageTitle()
+                ScenesPanel(
+                    collection = collection,
+                    onCollectionChange = onCollectionChange,
+                    onSelectItem = onSelectItem,
+                    onImportObs = {
+                        obsPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    },
+                    onAddScene = { showAddScene = true },
+                    onRenameScene = { showRenameScene = true },
                 )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = stringResource(R.string.screensaver_section_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
+                SourcesPanel(
+                    collection = collection,
+                    activeScene = activeScene,
+                    canvasConfig = canvasConfig,
+                    selectedItemId = selectedItemId,
+                    onCollectionChange = onCollectionChange,
+                    onSelectItem = onSelectItem,
+                    onAddSource = { showAddSource = true },
                 )
-                Text(text = "›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(16.dp))
+                Hint(stringResource(R.string.scenes_hint_order))
+                Spacer(Modifier.height(16.dp))
+                ScreensaverEntry(onOpenScreensaver = { showScreensaverPage = true })
             }
         }
     }
@@ -776,7 +650,7 @@ fun ScenesScreen(
             },
             onCamera = {
                 showAddSource = false
-                cameraPermission.launch(android.Manifest.permission.CAMERA)
+                addCameraSource()
             },
             onMedia = {
                 showAddSource = false
@@ -968,5 +842,227 @@ fun ScenesScreen(
                 }
             },
         )
+    }
+}
+
+/** Judul halaman Adegan. */
+@Composable
+private fun PageTitle() {
+    Text(stringResource(R.string.scenes_adegan), style = MaterialTheme.typography.headlineSmall)
+    Text(
+        text = stringResource(R.string.scenes_scene_sumber_dan_transisi),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** Daftar adegan: pemilih scene dan aksi kelola scene. */
+@Composable
+private fun ScenesPanel(
+    collection: SceneCollection,
+    onCollectionChange: (SceneCollection) -> Unit,
+    onSelectItem: (String?) -> Unit,
+    onImportObs: () -> Unit,
+    onAddScene: () -> Unit,
+    onRenameScene: () -> Unit,
+) {
+val activeScene = collection.activeScene()
+    Spacer(Modifier.height(16.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.scenes_scene), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onImportObs) {
+            Text(stringResource(R.string.scenes_import_obs))
+        }
+        TextButton(onClick = onAddScene) { Text(stringResource(R.string.scenes_tambah_2)) }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        collection.scenes.filterNot { it.isScreensaverScene() }.forEach { scene ->
+            val active = scene.id == collection.activeSceneId
+            Surface(
+                color = if (active) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.clickable {
+                    onCollectionChange(collection.setActiveScene(scene.id))
+                    onSelectItem(null)
+                },
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text(
+                        text = scene.name,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = stringResource(R.string.scenes_n_sumber, scene.items.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = onRenameScene) { Text(stringResource(R.string.audio_ganti_nama)) }
+        if (collection.scenes.size > 1) {
+            TextButton(
+                onClick = {
+                    // Urutan scene di daftar: kiri = lebih awal.
+                    activeScene?.let { onCollectionChange(collection.moveScene(it.id, -1)) }
+                },
+            ) {
+                Text(stringResource(R.string.scenes_kiri))
+            }
+            TextButton(
+                onClick = {
+                    activeScene?.let { onCollectionChange(collection.moveScene(it.id, +1)) }
+                },
+            ) {
+                Text(stringResource(R.string.scenes_kanan))
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(
+            onClick = {
+                activeScene?.let { onCollectionChange(collection.duplicateScene(it.id)) }
+                onSelectItem(null)
+            },
+        ) {
+            Text(stringResource(R.string.scenes_duplikat_scene))
+        }
+        if (collection.scenes.size > 1) {
+            TextButton(
+                onClick = {
+                    activeScene?.let { onCollectionChange(collection.removeScene(it.id)) }
+                    onSelectItem(null)
+                },
+            ) {
+                Text(stringResource(R.string.scenes_hapus_scene_aktif))
+            }
+        }
+    }
+}
+
+/** Daftar sumber pada adegan aktif beserta aksinya. */
+@Composable
+private fun SourcesPanel(
+    collection: SceneCollection,
+    activeScene: Scene?,
+    canvasConfig: CaptureConfig,
+    selectedItemId: String?,
+    onCollectionChange: (SceneCollection) -> Unit,
+    onSelectItem: (String?) -> Unit,
+    onAddSource: () -> Unit,
+) {
+    Spacer(Modifier.height(16.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.scenes_sumber), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onAddSource) { Text(stringResource(R.string.scenes_sumber_2)) }
+    }
+
+    if (activeScene == null || activeScene.items.isEmpty()) {
+        Hint(stringResource(R.string.scenes_belum_ada_sumber_di_scene_ini_tambahkan))
+    } else {
+        val ordered = activeScene.items.sortedByDescending { it.z }
+        ordered.forEach { item ->
+            val source = collection.source(item.sourceId) ?: return@forEach
+            SourceRow(
+                item = item,
+                source = source,
+                selected = item.id == selectedItemId,
+                onSelect = { onSelectItem(item.id) },
+                onReset = {
+                    // Reset hanya item ini: posisi/skala/rotasi dan crop.
+                    onCollectionChange(
+                        collection.updateItem(
+                            item.copy(
+                                transform = defaultTransform(source, canvasConfig),
+                                crop = Crop(),
+                            ),
+                        ),
+                    )
+                },
+                onToggleVisible = {
+                    onCollectionChange(
+                        collection.updateItem(item.copy(visible = !item.visible)),
+                    )
+                    if (source.type == SourceType.AudioInput || source.type == SourceType.AudioOutput) {
+                        AudioMixer.setEnabled(
+                            AudioChannelId.forSource(source.id),
+                            !item.visible,
+                        )
+                    }
+                },
+                onToggleLock = {
+                    onCollectionChange(
+                        collection.updateItem(item.copy(locked = !item.locked)),
+                    )
+                },
+                onDelete = {
+                    // Swipe kiri: hapus item ini saja; sumber dibuang bila
+                    // sudah tidak dipakai item lain di scene mana pun.
+                    var next = collection.removeItem(item.id)
+                    val stillUsed = next.scenes.any { scene ->
+                        scene.items.any { it.sourceId == item.sourceId }
+                    }
+                    if (!stillUsed) next = next.removeSource(item.sourceId)
+                    onCollectionChange(next)
+                    if (selectedItemId == item.id) onSelectItem(null)
+                },
+                onMove = { delta ->
+                    onCollectionChange(collection.moveLayer(item.id, delta))
+                },
+            )
+        }
+    }
+}
+
+/** Pintasan menuju halaman layar jeda. */
+@Composable
+private fun ScreensaverEntry(onOpenScreensaver: () -> Unit) {
+    // Layar jeda punya bagian sendiri, terpisah dari daftar scene.
+    Text(
+        text = stringResource(R.string.scenes_screensaver),
+        style = MaterialTheme.typography.titleSmall,
+    )
+    Spacer(Modifier.height(6.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenScreensaver),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_screensaver),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = stringResource(R.string.screensaver_section_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = "›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

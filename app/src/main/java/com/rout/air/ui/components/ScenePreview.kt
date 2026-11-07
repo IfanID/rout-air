@@ -559,6 +559,14 @@ private fun buildPreviewLayers(
                 }
 
                 SourceType.Media, SourceType.Camera, SourceType.Browser -> {
+                    // Kamera baru digambar setelah stream mengirim frame
+                    // pertama (ukuran dilaporkan pipeline). Sebelum itu jangan
+                    // tampilkan kotak/outline agar tidak menyesatkan.
+                    if (source.type == SourceType.Camera &&
+                        SourceMetrics.sizes.value[source.id] == null
+                    ) {
+                        return@mapNotNull null
+                    }
                     // Ukuran dasar harus sama dengan pipeline (ukuran visual
                     // setelah rotasi). Jangan paksa minimal 1280x720, karena
                     // kamera portrait 1080x1920 akan membuat border lebih

@@ -1,5 +1,7 @@
 package com.rout.air.ui.pages.screensaver
 
+import android.content.res.Configuration
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -29,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,11 +88,16 @@ internal fun ScreensaverPage(
         )
     }
 
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(
+                horizontal = if (landscape) 16.dp else 20.dp,
+                vertical = if (landscape) 10.dp else 16.dp,
+            ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) {
@@ -108,13 +116,39 @@ internal fun ScreensaverPage(
         )
         Spacer(Modifier.height(14.dp))
 
-        entries.forEach { entry ->
-            ScreensaverRow(
-                entry = entry,
-                deletable = !ScreensaverStore.isDefault(entry.id),
-                onDelete = { ScreensaverStore.remove(entry.id) },
-            )
-            Spacer(Modifier.height(8.dp))
+        if (landscape) {
+            // Landscape: dua kolom supaya daftar tidak memanjang ke bawah.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    entries.filterIndexed { index, _ -> index % 2 == 0 }.forEach { entry ->
+                        ScreensaverRow(
+                            entry = entry,
+                            deletable = !ScreensaverStore.isDefault(entry.id),
+                            onDelete = { ScreensaverStore.remove(entry.id) },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    entries.filterIndexed { index, _ -> index % 2 == 1 }.forEach { entry ->
+                        ScreensaverRow(
+                            entry = entry,
+                            deletable = !ScreensaverStore.isDefault(entry.id),
+                            onDelete = { ScreensaverStore.remove(entry.id) },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        } else {
+            entries.forEach { entry ->
+                ScreensaverRow(
+                    entry = entry,
+                    deletable = !ScreensaverStore.isDefault(entry.id),
+                    onDelete = { ScreensaverStore.remove(entry.id) },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
         }
 
         Spacer(Modifier.height(6.dp))

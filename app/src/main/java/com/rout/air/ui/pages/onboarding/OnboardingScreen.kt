@@ -363,7 +363,6 @@ private data class Step(
 /** Daftar izin runtime yang diminta sekaligus. */
 private fun runtimePermissions(): List<String> = buildList {
     add(Manifest.permission.RECORD_AUDIO)
-    add(Manifest.permission.CAMERA)
     add(Manifest.permission.BLUETOOTH_CONNECT)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         add(Manifest.permission.POST_NOTIFICATIONS)
@@ -392,12 +391,6 @@ private fun RuntimePermissionStep(allGranted: Boolean, onRequest: () -> Unit) {
                 title = stringResource(R.string.onboarding_perm_mic),
                 detail = stringResource(R.string.onboarding_perm_mic_desc),
                 enabled = permissionGranted(context, Manifest.permission.RECORD_AUDIO),
-            ),
-            PermissionItem(
-                symbol = "▣",
-                title = stringResource(R.string.onboarding_perm_camera),
-                detail = stringResource(R.string.onboarding_perm_camera_desc),
-                enabled = permissionGranted(context, Manifest.permission.CAMERA),
             ),
             PermissionItem(
                 symbol = "✉",

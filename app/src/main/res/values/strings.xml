@@ -314,8 +314,6 @@
     <string name="onboarding_step_locked">Selesaikan langkah ini dulu untuk melanjutkan.</string>
     <string name="onboarding_perm_mic">Mikrofon</string>
     <string name="onboarding_perm_mic_desc">Merekam suara untuk trek audio rekaman dan siaran.</string>
-    <string name="onboarding_perm_camera">Kamera</string>
-    <string name="onboarding_perm_camera_desc">Menambah kamera sebagai sumber di adegan.</string>
     <string name="onboarding_perm_notif">Notifikasi</string>
     <string name="onboarding_perm_notif_desc">Tombol jeda dan hentikan saat aplikasi di latar belakang.</string>
     <string name="onboarding_perm_bluetooth">Bluetooth</string>
@@ -795,9 +793,6 @@
     <string name="scenes_media_speed_n">%1$s×</string>
     <string name="scenes_media_loop">Ulangi otomatis</string>
     <string name="scenes_media_restart">Putar dari awal</string>
-    <string name="scenes_kamera_resolusi">Resolusi kamera</string>
-    <string name="scenes_kamera_zoom">Zoom kamera</string>
-    <string name="scenes_kamera_torch">Senter</string>
     <string name="settings_entry_adegan">Koleksi adegan</string>
     <string name="settings_entry_adegan_desc">Beberapa proyek adegan, ganti nama, duplikat, ekspor, dan impor JSON.</string>
     <string name="collections_hint">Satu koleksi berisi daftar adegan beserta sumbernya. Kanvas video di Setelan → Video tetap berlaku untuk semua koleksi.</string>
@@ -827,7 +822,6 @@
     <string name="settings_prefer_hevc_desc">Saat merekam tanpa live dan encoder HEVC hardware ada, rekaman memakai H.265 agar berkas lebih kecil.</string>
     <string name="settings_prefer_hevc_unavailable">Encoder HEVC hardware tidak terdeteksi; opsi rekaman H.265 tidak ditampilkan.</string>
     <string name="scenes_slideshow_fade">Fade antar gambar</string>
-    <string name="scenes_kamera_lensa">Lensa kamera</string>
     <string name="scenes_media_seek">Posisi video: %1$s</string>
     <string name="settings_language_id">Indonesia</string>
     <string name="settings_language_en">Inggris</string>
@@ -902,10 +896,6 @@
     <string name="scenes_media_pilih">Pilih video</string>
     <string name="scenes_media_ganti">Ganti video</string>
     <string name="scenes_media_hint">Video diputar berulang. Audio media tidak ikut mixer rekaman; gunakan sumber audio terpisah bila perlu.</string>
-    <string name="scenes_kamera_belakang">Kamera belakang</string>
-    <string name="scenes_kamera_depan">Kamera depan</string>
-    <string name="scenes_kamera_izin">Izin kamera diperlukan untuk menambah sumber kamera</string>
-    <string name="scenes_kamera_hint">Kamera tampil di pratinjau saat sesi tangkap aktif; panel editor hanya menampilkan bingkainya.</string>
     <string name="scenes_intrinsic_screen">mengikuti kanvas</string>
     <string name="scenes_intrinsic_audio">audio</string>
     <string name="scenes_app_ditambahkan">%1$s ditambahkan ke tab Audio</string>
@@ -981,4 +971,14 @@
     <string name="overlay_record_text">Panel rekaman melayang aktif</string>
     <string name="overlay_record_ready">Siap merekam</string>
     <string name="overlay_record_stats">%1$s • %2$s Mb/s • %3$d frame • %4$d drop</string>
+    <string name="scenes_kamera_stream_url">Stream kamera H.264 (TCP)</string>
+    <string name="scenes_kamera_stream_hint">Isi IP dan port, lalu tekan Hubungkan. Jika RoutAirCam ada di HP yang sama, gunakan 127.0.0.1. Audio belum didukung.</string>
+    <string name="scenes_kamera_host">IP / Host</string>
+    <string name="scenes_kamera_port">Port</string>
+    <string name="scenes_kamera_connect">Hubungkan</string>
+    <string name="scenes_kamera_connecting">Menghubungkan…</string>
+    <string name="scenes_kamera_connected">Terhubung ke %1$s:%2$d</string>
+    <string name="scenes_kamera_streaming">Stream aktif • %1$d×%2$d</string>
+    <string name="scenes_kamera_connect_error">Gagal: %1$s</string>
+    <string name="scenes_kamera_disconnected">Terputus</string>
 </resources>

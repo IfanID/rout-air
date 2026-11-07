@@ -36,6 +36,7 @@ import com.rout.air.core.model.CaptureConfig
 import com.rout.air.core.model.LiveStats
 import com.rout.air.core.model.LiveStatus
 import com.rout.air.core.model.RecordingState
+import com.rout.air.core.model.SceneCollection
 import com.rout.air.core.model.RecordingStats
 import com.rout.air.data.scene.SceneManager
 import com.rout.air.output.recording.CaptureEngine
@@ -45,10 +46,15 @@ import com.rout.air.ui.components.LiveButton
 import com.rout.air.ui.components.RecordButton
 import com.rout.air.ui.components.ScenePreview
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -88,274 +94,132 @@ fun HomeScreen(
     // dibatalkan tanpa dialog izin Android lagi.
     var confirmEndSession by remember { mutableStateOf(false) }
     val program by SceneManager.program.collectAsState()
-    val isActive = state is RecordingState.Recording
-    val paused = (state as? RecordingState.Recording)?.isPaused == true
     val sessionOnly = state is RecordingState.Previewing
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.home_siaran), style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    text = statusText(state),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (state is RecordingState.Error) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    if (landscape) {
+        // HP diputar: pratinjau memakai seluruh tinggi panel kiri, kontrol
+        // rekam dan statistik bergulir di panel kanan.
+        Row(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Column(modifier = Modifier.weight(1.35f).fillMaxHeight()) {
+                HomeHeader(
+                    state = state,
+                    sessionOnly = sessionOnly,
+                    onClearError = onClearError,
+                    onRequestPermission = onRequestPermission,
+                    onEndSession = { confirmEndSession = true },
+                )
+                Spacer(Modifier.height(8.dp))
+                ProgramPreview(
+                    state = state,
+                    canvasConfig = canvasConfig,
+                    program = program,
+                    previewReady = previewReady,
+                    onPreviewReadyChange = { previewReady = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                 )
             }
-            if (state is RecordingState.Error) {
-                TextButton(onClick = onClearError) { Text(stringResource(R.string.common_tutup)) }
-            }
-            // Cadangan izin rekam layar: tampil hanya saat sesi belum aktif.
-            if (state is RecordingState.Idle || state is RecordingState.Error) {
-                IconButton(onClick = onRequestPermission) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_screen_permission),
-                        contentDescription = stringResource(R.string.home_izin_rekam_layar),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            // Mengakhiri sesi sekaligus melepas izin MediaProjection. Setelah
-            // ini izin harus diminta ulang saat sesi dibuka lagi.
-            if (sessionOnly) {
-                IconButton(onClick = { confirmEndSession = true }) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_end_session),
-                        contentDescription = stringResource(R.string.home_akhiri_sesi),
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center,
-        ) {
-            val canvasAspect = canvasConfig.aspectRatio
-            var frameWidth = maxWidth
-            var frameHeight = frameWidth / canvasAspect
-            if (frameHeight > maxHeight) {
-                frameHeight = maxHeight
-                frameWidth = frameHeight * canvasAspect
-            }
-
-            Box(
+            Column(
                 modifier = Modifier
-                    .size(width = frameWidth, height = frameHeight)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center,
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.Center,
             ) {
-                val sessionActive = state is RecordingState.Previewing ||
-                    state is RecordingState.Recording
-                if (!sessionActive) {
-                    // Tanpa sesi: tampilkan program lewat renderer yang sama
-                    // dengan panel Program Studio, supaya isinya 1:1.
-                    val snapshot = program
-                    if (snapshot != null) {
-                        ScenePreview(
-                            canvas = canvasConfig,
-                            collection = snapshot,
-                            selectedItemId = null,
-                            onSelectItem = {},
-                            onTransform = { _, _, _, _, _, _ -> },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        CanvasGuideBackground(
-                            canvasAspect = canvasAspect,
-                            showEmptyLabel = true,
-                            modifier = Modifier.matchParentSize(),
-                        )
-                    }
-                } else {
-                AndroidView(
-                    factory = { ctx ->
-                        SurfaceView(ctx).apply {
-                            // Secure: pratinjau terlihat di layar, tetapi tidak
-                            // ikut tertangkap MediaProjection (mencegah cermin
-                            // berulang saat sumber Layar direkam).
-                            setSecure(true)
-                            holder.addCallback(object : SurfaceHolder.Callback {
-                                override fun surfaceCreated(holder: SurfaceHolder) {
-                                    previewReady = true
-                                    attachPreview(holder)
-                                }
-
-                                override fun surfaceChanged(
-                                    holder: SurfaceHolder,
-                                    format: Int,
-                                    width: Int,
-                                    height: Int,
-                                ) {
-                                    previewReady = true
-                                    attachPreview(holder)
-                                }
-
-                                override fun surfaceDestroyed(holder: SurfaceHolder) {
-                                    previewReady = false
-                                    // Lepas hanya surface ini, bukan surface lain
-                                    // yang mungkin sudah terpasang dari tab lain.
-                                    CaptureEngine.attachProgram(holder.surface, 0, 0)
-                                }
-
-                                private fun attachPreview(holder: SurfaceHolder) {
-                                    val frame = holder.surfaceFrame
-                                    // Halaman Siaran menampilkan keluaran Program,
-                                    // bukan hasil edit pratinjau.
-                                    CaptureEngine.attachProgram(
-                                        holder.surface,
-                                        frame.width(),
-                                        frame.height(),
-                                    )
-                                }
-                            })
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
+                HomeStats(
+                    state = state,
+                    stats = stats,
+                    liveStats = liveStats,
+                    canvasConfig = canvasConfig,
+                    fps = fps,
+                    elapsedMs = elapsedMs,
                 )
-
-                if (!previewReady) {
-                    Text(
-                        text = if (isActive) {
-                            stringResource(R.string.home_program_ready)
-                        } else {
-                            stringResource(R.string.home_program)
-                        },
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                }
+                Spacer(Modifier.height(10.dp))
+                HomeActions(
+                    state = state,
+                    liveStats = liveStats,
+                    liveConfigured = liveConfigured,
+                    onStart = onStart,
+                    onStop = onStop,
+                    onPause = onPause,
+                    onResume = onResume,
+                    onToggleLive = onToggleLive,
+                )
+                Spacer(Modifier.height(8.dp))
+                HomeOverlays(
+                    recordingOverlayEnabled = recordingOverlayEnabled,
+                    liveOverlayEnabled = liveOverlayEnabled,
+                    onToggleRecordingOverlay = onToggleRecordingOverlay,
+                    onToggleLiveOverlay = onToggleLiveOverlay,
+                )
             }
         }
-
-        Spacer(Modifier.height(12.dp))
-
-        Column {
-                Text(
-                    text = formatDuration(elapsedMs),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
-                        "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (isActive) {
-                    Text(
-                        text = stringResource(
-                            R.string.home_statistik,
-                            formatRecordSize(stats.bytes),
-                            String.format("%.1f", stats.bitrateKbps / 1000.0),
-                            stats.frames,
-                            stats.droppedFrames,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (liveStats.status != LiveStatus.Idle) {
-                    Text(
-                        text = stringResource(
-                            R.string.home_live_stats,
-                            formatRecordSize(liveStats.bytesSent),
-                            String.format("%.1f", liveStats.bitrateKbps / 1000.0),
-                            liveStats.droppedTags,
-                            liveStats.reconnects,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (liveStats.status == LiveStatus.Error) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
-
-        Spacer(Modifier.height(10.dp))
-
-        // Sejajar seperti OBS: tombol Rekam dan Live bersebelahan.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    } else {
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
         ) {
-            RecordButton(
-                isActive = isActive,
-                enabled = state !is RecordingState.Preparing,
-                preparing = state is RecordingState.Preparing,
-                paused = paused,
-                neutralWhenReady = true,
-                modifier = Modifier.weight(1f),
-                onClick = { if (isActive) onStop() else onStart() },
+            HomeHeader(
+                state = state,
+                sessionOnly = sessionOnly,
+                onClearError = onClearError,
+                onRequestPermission = onRequestPermission,
+                onEndSession = { confirmEndSession = true },
             )
-            LiveButton(
-                stats = liveStats,
-                configured = liveConfigured,
-                modifier = Modifier.weight(1f),
-                onClick = onToggleLive,
-            )
-            if (isActive && !liveStats.active) {
-                IconButton(
-                    onClick = if (paused) onResume else onPause,
-                    modifier = Modifier.size(52.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (paused) R.drawable.ic_play else R.drawable.ic_pause,
-                        ),
-                        contentDescription = stringResource(
-                            if (paused) R.string.home_lanjutkan_rekaman
-                            else R.string.home_jeda_rekaman,
-                        ),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
 
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OverlayToggleButton(
-                label = if (recordingOverlayEnabled) {
-                    stringResource(R.string.home_overlay_record_hide)
-                } else {
-                    stringResource(R.string.home_overlay_record)
-                },
-                active = recordingOverlayEnabled,
-                modifier = Modifier.weight(1f),
-                onClick = onToggleRecordingOverlay,
+            ProgramPreview(
+                state = state,
+                canvasConfig = canvasConfig,
+                program = program,
+                previewReady = previewReady,
+                onPreviewReadyChange = { previewReady = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
             )
-            OverlayToggleButton(
-                label = if (liveOverlayEnabled) {
-                    stringResource(R.string.home_overlay_live_hide)
-                } else {
-                    stringResource(R.string.home_overlay_live)
-                },
-                active = liveOverlayEnabled,
-                modifier = Modifier.weight(1f),
-                onClick = onToggleLiveOverlay,
+
+            Spacer(Modifier.height(12.dp))
+
+            HomeStats(
+                state = state,
+                stats = stats,
+                liveStats = liveStats,
+                canvasConfig = canvasConfig,
+                fps = fps,
+                elapsedMs = elapsedMs,
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            HomeActions(
+                state = state,
+                liveStats = liveStats,
+                liveConfigured = liveConfigured,
+                onStart = onStart,
+                onStop = onStop,
+                onPause = onPause,
+                onResume = onResume,
+                onToggleLive = onToggleLive,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            HomeOverlays(
+                recordingOverlayEnabled = recordingOverlayEnabled,
+                liveOverlayEnabled = liveOverlayEnabled,
+                onToggleRecordingOverlay = onToggleRecordingOverlay,
+                onToggleLiveOverlay = onToggleLiveOverlay,
             )
         }
     }
@@ -382,6 +246,314 @@ fun HomeScreen(
     }
 }
 
+/** Judul halaman Siaran beserta aksi sesi. */
+@Composable
+private fun HomeHeader(
+    state: RecordingState,
+    sessionOnly: Boolean,
+    onClearError: () -> Unit,
+    onRequestPermission: () -> Unit,
+    onEndSession: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.home_siaran), style = MaterialTheme.typography.headlineSmall)
+            Text(
+                text = statusText(state),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state is RecordingState.Error) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        if (state is RecordingState.Error) {
+            TextButton(onClick = onClearError) { Text(stringResource(R.string.common_tutup)) }
+        }
+        // Cadangan izin rekam layar: tampil hanya saat sesi belum aktif.
+        if (state is RecordingState.Idle || state is RecordingState.Error) {
+            IconButton(onClick = onRequestPermission) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_screen_permission),
+                    contentDescription = stringResource(R.string.home_izin_rekam_layar),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        // Mengakhiri sesi sekaligus melepas izin MediaProjection. Setelah
+        // ini izin harus diminta ulang saat sesi dibuka lagi.
+        if (sessionOnly) {
+            IconButton(onClick = onEndSession) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_end_session),
+                    contentDescription = stringResource(R.string.home_akhiri_sesi),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+/** Pratinjau Program: snapshot scene atau surface dari pipeline sesi. */
+@Composable
+private fun ProgramPreview(
+    state: RecordingState,
+    canvasConfig: CaptureConfig,
+    program: SceneCollection?,
+    previewReady: Boolean,
+    onPreviewReadyChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+val isActive = state is RecordingState.Recording
+BoxWithConstraints(
+    modifier = modifier,
+    contentAlignment = Alignment.Center,
+) {
+        val canvasAspect = canvasConfig.aspectRatio
+        var frameWidth = maxWidth
+        var frameHeight = frameWidth / canvasAspect
+        if (frameHeight > maxHeight) {
+            frameHeight = maxHeight
+            frameWidth = frameHeight * canvasAspect
+        }
+
+        Box(
+            modifier = Modifier
+                .size(width = frameWidth, height = frameHeight)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            val sessionActive = state is RecordingState.Previewing ||
+                state is RecordingState.Recording
+            if (!sessionActive) {
+                // Tanpa sesi: tampilkan program lewat renderer yang sama
+                // dengan panel Program Studio, supaya isinya 1:1.
+                val snapshot = program
+                if (snapshot != null) {
+                    ScenePreview(
+                        canvas = canvasConfig,
+                        collection = snapshot,
+                        selectedItemId = null,
+                        onSelectItem = {},
+                        onTransform = { _, _, _, _, _, _ -> },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    CanvasGuideBackground(
+                        canvasAspect = canvasAspect,
+                        showEmptyLabel = true,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+            } else {
+            AndroidView(
+                factory = { ctx ->
+                    SurfaceView(ctx).apply {
+                        // Secure: pratinjau terlihat di layar, tetapi tidak
+                        // ikut tertangkap MediaProjection (mencegah cermin
+                        // berulang saat sumber Layar direkam).
+                        setSecure(true)
+                        holder.addCallback(object : SurfaceHolder.Callback {
+                            override fun surfaceCreated(holder: SurfaceHolder) {
+                                onPreviewReadyChange(true)
+                                attachPreview(holder)
+                            }
+
+                            override fun surfaceChanged(
+                                holder: SurfaceHolder,
+                                format: Int,
+                                width: Int,
+                                height: Int,
+                            ) {
+                                onPreviewReadyChange(true)
+                                attachPreview(holder)
+                            }
+
+                            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                onPreviewReadyChange(false)
+                                // Lepas hanya surface ini, bukan surface lain
+                                // yang mungkin sudah terpasang dari tab lain.
+                                CaptureEngine.attachProgram(holder.surface, 0, 0)
+                            }
+
+                            private fun attachPreview(holder: SurfaceHolder) {
+                                val frame = holder.surfaceFrame
+                                // Halaman Siaran menampilkan keluaran Program,
+                                // bukan hasil edit pratinjau.
+                                CaptureEngine.attachProgram(
+                                    holder.surface,
+                                    frame.width(),
+                                    frame.height(),
+                                )
+                            }
+                        })
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            if (!previewReady) {
+                Text(
+                    text = if (isActive) {
+                        stringResource(R.string.home_program_ready)
+                    } else {
+                        stringResource(R.string.home_program)
+                    },
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            }
+        }
+    }
+}
+
+/** Durasi, resolusi, dan statistik rekaman/live. */
+@Composable
+private fun HomeStats(
+    state: RecordingState,
+    stats: RecordingStats,
+    liveStats: LiveStats,
+    canvasConfig: CaptureConfig,
+    fps: Int,
+    elapsedMs: Long,
+) {
+val isActive = state is RecordingState.Recording
+    Column {
+            Text(
+                text = formatDuration(elapsedMs),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = "${canvasConfig.width}x${canvasConfig.height} • $fps fps • " +
+                    "${orientationLabel(canvasConfig)} • ${contentModeLabel(canvasConfig)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (isActive) {
+                Text(
+                    text = stringResource(
+                        R.string.home_statistik,
+                        formatRecordSize(stats.bytes),
+                        String.format("%.1f", stats.bitrateKbps / 1000.0),
+                        stats.frames,
+                        stats.droppedFrames,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (liveStats.status != LiveStatus.Idle) {
+                Text(
+                    text = stringResource(
+                        R.string.home_live_stats,
+                        formatRecordSize(liveStats.bytesSent),
+                        String.format("%.1f", liveStats.bitrateKbps / 1000.0),
+                        liveStats.droppedTags,
+                        liveStats.reconnects,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (liveStats.status == LiveStatus.Error) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+}
+
+/** Tombol Rekam, Live, dan jeda. */
+@Composable
+private fun HomeActions(
+    state: RecordingState,
+    liveStats: LiveStats,
+    liveConfigured: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onToggleLive: () -> Unit,
+) {
+val isActive = state is RecordingState.Recording
+val paused = (state as? RecordingState.Recording)?.isPaused == true
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RecordButton(
+            isActive = isActive,
+            enabled = state !is RecordingState.Preparing,
+            preparing = state is RecordingState.Preparing,
+            paused = paused,
+            neutralWhenReady = true,
+            modifier = Modifier.weight(1f),
+            onClick = { if (isActive) onStop() else onStart() },
+        )
+        LiveButton(
+            stats = liveStats,
+            configured = liveConfigured,
+            modifier = Modifier.weight(1f),
+            onClick = onToggleLive,
+        )
+        if (isActive && !liveStats.active) {
+            IconButton(
+                onClick = if (paused) onResume else onPause,
+                modifier = Modifier.size(52.dp),
+            ) {
+                Icon(
+                    painter = painterResource(
+                        if (paused) R.drawable.ic_play else R.drawable.ic_pause,
+                    ),
+                    contentDescription = stringResource(
+                        if (paused) R.string.home_lanjutkan_rekaman
+                        else R.string.home_jeda_rekaman,
+                    ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** Tombol tampil/sembunyi overlay rekam dan live. */
+@Composable
+private fun HomeOverlays(
+    recordingOverlayEnabled: Boolean,
+    liveOverlayEnabled: Boolean,
+    onToggleRecordingOverlay: () -> Unit,
+    onToggleLiveOverlay: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OverlayToggleButton(
+            label = if (recordingOverlayEnabled) {
+                stringResource(R.string.home_overlay_record_hide)
+            } else {
+                stringResource(R.string.home_overlay_record)
+            },
+            active = recordingOverlayEnabled,
+            modifier = Modifier.weight(1f),
+            onClick = onToggleRecordingOverlay,
+        )
+        OverlayToggleButton(
+            label = if (liveOverlayEnabled) {
+                stringResource(R.string.home_overlay_live_hide)
+            } else {
+                stringResource(R.string.home_overlay_live)
+            },
+            active = liveOverlayEnabled,
+            modifier = Modifier.weight(1f),
+            onClick = onToggleLiveOverlay,
+        )
+    }
+}
 @Composable
 private fun statusText(state: RecordingState): String = when (state) {
     RecordingState.Idle -> stringResource(R.string.home_siap_merekam_layar)

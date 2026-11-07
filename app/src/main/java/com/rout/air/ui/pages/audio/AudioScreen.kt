@@ -61,6 +61,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.unit.dp
 
 /**
@@ -87,6 +89,7 @@ fun AudioScreen(
     var deviceTarget by remember { mutableStateOf<AudioChannelId?>(null) }
 
     val sessionLive = state is RecordingState.Recording || state is RecordingState.Previewing
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val activeIds = mix.channels.filter { channel ->
         channel.enabled && sessionLive && runtime.running && runtime.ready(channel.id)
     }.mapTo(HashSet()) { it.id }
@@ -98,8 +101,11 @@ fun AudioScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = if (landscape) 8.dp else 12.dp),
         ) {
+            val hasMic = mix.channels.any {
+                it.global && it.capture == com.rout.air.core.audio.AudioCaptureKind.Microphone
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(stringResource(R.string.audio_audio_mixer), style = MaterialTheme.typography.headlineSmall)
@@ -127,19 +133,35 @@ fun AudioScreen(
                         },
                     )
                 }
+                // Landscape: aksi dipindah ke baris judul supaya mixer dapat
+                // tinggi lebih banyak.
+                if (landscape) {
+                    Spacer(Modifier.width(8.dp))
+                    AudioHeaderAction(stringResource(R.string.audio_add_app_capture)) {
+                        appPickerOpen = true
+                    }
+                    if (hasMic) {
+                        Spacer(Modifier.width(8.dp))
+                        AudioHeaderAction(stringResource(R.string.audio_change_mic)) {
+                            deviceTarget = AudioChannelId.Microphone
+                        }
+                    }
+                }
             }
 
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AudioHeaderAction(stringResource(R.string.audio_add_app_capture)) {
-                    appPickerOpen = true
-                }
-                if (mix.channels.any { it.global && it.capture == com.rout.air.core.audio.AudioCaptureKind.Microphone }) {
-                    AudioHeaderAction(stringResource(R.string.audio_change_mic)) {
-                        deviceTarget = AudioChannelId.Microphone
+            if (!landscape) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AudioHeaderAction(stringResource(R.string.audio_add_app_capture)) {
+                        appPickerOpen = true
+                    }
+                    if (hasMic) {
+                        AudioHeaderAction(stringResource(R.string.audio_change_mic)) {
+                            deviceTarget = AudioChannelId.Microphone
+                        }
                     }
                 }
             }

@@ -2,6 +2,7 @@ package com.rout.air.ui.pages.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.unit.dp
 import com.rout.air.core.audio.AudioChannel
 import com.rout.air.core.audio.AudioMix
@@ -67,6 +70,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var page by remember { mutableStateOf(SettingsPage.Root) }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     // Satu posisi gulir untuk seluruh halaman; tab Output memakainya untuk
     // kembali ke atas saat berpindah tab.
     val scrollState = rememberScrollState()
@@ -77,7 +81,10 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(
+                horizontal = if (landscape) 16.dp else 20.dp,
+                vertical = if (landscape) 10.dp else 16.dp,
+            ),
     ) {
         if (page == SettingsPage.Root) {
             Text(stringResource(R.string.settings_setelan), style = MaterialTheme.typography.headlineSmall)
@@ -88,34 +95,62 @@ fun SettingsScreen(
             )
             Spacer(Modifier.height(16.dp))
 
-            SettingsEntry(
-                stringResource(R.string.settings_entry_umum),
-                stringResource(R.string.settings_entry_umum_desc),
-            ) { page = SettingsPage.General }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_siaran),
-                stringResource(R.string.settings_entry_siaran_desc),
-            ) { page = SettingsPage.Stream }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_output),
-                stringResource(R.string.settings_entry_output_desc),
-            ) { page = SettingsPage.Output }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_audio),
-                stringResource(R.string.settings_entry_audio_desc),
-            ) { page = SettingsPage.Audio }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_video),
-                stringResource(R.string.settings_entry_video_desc),
-            ) { page = SettingsPage.Video }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_adegan),
-                stringResource(R.string.settings_entry_adegan_desc),
-            ) { page = SettingsPage.Collections }
-            SettingsEntry(
-                stringResource(R.string.settings_entry_lanjutan),
-                stringResource(R.string.settings_entry_lanjutan_desc),
-            ) { page = SettingsPage.Advanced }
+            val entries = listOf(
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_umum),
+                    stringResource(R.string.settings_entry_umum_desc),
+                    SettingsPage.General,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_siaran),
+                    stringResource(R.string.settings_entry_siaran_desc),
+                    SettingsPage.Stream,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_output),
+                    stringResource(R.string.settings_entry_output_desc),
+                    SettingsPage.Output,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_audio),
+                    stringResource(R.string.settings_entry_audio_desc),
+                    SettingsPage.Audio,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_video),
+                    stringResource(R.string.settings_entry_video_desc),
+                    SettingsPage.Video,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_adegan),
+                    stringResource(R.string.settings_entry_adegan_desc),
+                    SettingsPage.Collections,
+                ),
+                SettingsEntryData(
+                    stringResource(R.string.settings_entry_lanjutan),
+                    stringResource(R.string.settings_entry_lanjutan_desc),
+                    SettingsPage.Advanced,
+                ),
+            )
+            if (landscape) {
+                // Landscape: dua kolom agar semua pintasan terlihat sekaligus.
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        entries.filterIndexed { index, _ -> index % 2 == 0 }.forEach { entry ->
+                            SettingsEntry(entry.title, entry.subtitle) { page = entry.page }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        entries.filterIndexed { index, _ -> index % 2 == 1 }.forEach { entry ->
+                            SettingsEntry(entry.title, entry.subtitle) { page = entry.page }
+                        }
+                    }
+                }
+            } else {
+                entries.forEach { entry ->
+                    SettingsEntry(entry.title, entry.subtitle) { page = entry.page }
+                }
+            }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { page = SettingsPage.Root }) { Text(stringResource(R.string.common_kembali_panah)) }
@@ -155,6 +190,13 @@ fun SettingsScreen(
     }
 }
 
+
+/** Satu pintasan di halaman utama Setelan. */
+private data class SettingsEntryData(
+    val title: String,
+    val subtitle: String,
+    val page: SettingsPage,
+)
 
 @Composable
 private fun SettingsEntry(title: String, subtitle: String, onClick: () -> Unit) {

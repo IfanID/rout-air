@@ -190,16 +190,13 @@ data class SourceSettings(
     val audioScoEnabled: Boolean = false,
     /** Arah tampil sumber Layar; null/`Auto` mengikuti tangkapan. */
     val screenDisplay: ScreenDisplay? = null,
-    /** 0 = kamera belakang, 1 = depan. */
-    val cameraFacing: Int = 0,
-    /** Id kamera tertentu (mis. lensa ultrawide); null = otomatis. */
-    val cameraId: String? = null,
-    /** Tinggi target kamera: 0 = otomatis, 720/1080 = pilihan pengguna. */
-    val cameraHeight: Int = 0,
-    /** Zoom kamera 1..5 (dibatasi kemampuan perangkat). */
-    val cameraZoom: Float = 1f,
-    /** Senter kamera menyala terus selama sumber dipakai. */
-    val cameraTorch: Boolean = false,
+    /**
+     * Alamat stream kamera H.264 dari perangkat lain (Wi-Fi lokal), mis.
+     * `tcp://192.168.43.57:3333` (Annex B).
+     */
+    val cameraUrl: String? = null,
+    /** Dinaikkan tombol Hubungkan untuk memaksa koneksi ulang. */
+    val cameraConnectToken: Int = 0,
     /** Video Media dijeda tanpa melepas sumber. */
     val mediaPaused: Boolean = false,
     /** Kecepatan putar Media 0,5–2×. */

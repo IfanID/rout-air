@@ -7,13 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Rect
 import android.graphics.SurfaceTexture
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
 import android.hardware.display.DisplayManager
 import android.media.MediaPlayer
 import android.media.projection.MediaProjection
@@ -41,7 +35,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.content.ContextCompat
 import com.rout.air.R
-import com.rout.air.capture.CameraSizing
+import com.rout.air.capture.H264Receiver
 import com.rout.air.capture.ScreenCapture
 import com.rout.air.core.model.Align
 import com.rout.air.core.audio.AudioRuntime
@@ -56,6 +50,8 @@ import com.rout.air.core.model.RecordingState
 import com.rout.air.core.model.RecordingStats
 import com.rout.air.core.timing.RecordingClock
 import com.rout.air.core.model.SceneCollection
+import com.rout.air.core.model.CameraStreamState
+import com.rout.air.core.model.CameraStreamStatus
 import com.rout.air.core.model.SourceMetrics
 import com.rout.air.core.model.SceneSource
 import com.rout.air.core.model.SourceSettings
@@ -78,6 +74,7 @@ import java.net.URL
 import com.rout.air.encode.video.VideoEncoder
 import com.rout.air.engine.gl.EglCore
 import com.rout.air.engine.gl.GlCompositor
+import com.rout.air.decode.H264Decoder
 import com.rout.air.engine.gl.GlUtil
 import com.rout.air.engine.source.SourceBitmap
 import com.rout.air.live.rtmp.RtmpSink
@@ -214,7 +211,7 @@ class RecordingPipeline(
     private val slideFadeStartNs = mutableMapOf<String, Long>()
 
     /** Kamera aktif per sumber; hanya disentuh thread GL. */
-    private val cameraSources = mutableMapOf<String, CameraTexture>()
+    private val streamSources = mutableMapOf<String, StreamTexture>()
     private val mediaSources = mutableMapOf<String, CameraTexture>()
     private val browserSources = mutableMapOf<String, BrowserTexture>()
     private val cameraHandler by lazy { Handler(glThread.looper) }
@@ -300,8 +297,6 @@ class RecordingPipeline(
     private var swapFailures = 0
     private var consecutiveSwapFailures = 0
     private var watchdogTicks = 0
-    private var lastCameraFrames = 0L
-    private var lastCameraFrameNs = 0L
     private var teardownStarted = false
     private var stopReason: String? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -391,33 +386,13 @@ class RecordingPipeline(
             val lastEncoded = lastEncodedWallNs
 
             watchdogTicks++
-            // Kamera berhenti mengirim frame (mis. DISABLED) membuat gambar
-            // diam walau pratinjau layar tetap berjalan.
-            if (cameraSources.isNotEmpty()) {
-                val total = cameraSources.values.sumOf { it.frames }
-                if (total != lastCameraFrames) {
-                    lastCameraFrames = total
-                    lastCameraFrameNs = now
-                } else if (lastCameraFrameNs > 0 &&
-                    now - lastCameraFrameNs > 2_000_000_000L
-                ) {
-                    if (watchdogTicks % 5 == 0) {
-                        diag(
-                            "kamera: tidak ada frame baru " +
-                                "${(now - lastCameraFrameNs) / 1_000_000}ms",
-                        )
-                    }
-                }
-            }
             if (watchdogTicks % 5 == 0) {
                 val seconds = (now - startTimeNs) / 1_000_000_000L
                 diag(
                     "t=${seconds}s frames=$capturedFrames submitted=$submittedFrames " +
                         "encoded=$encodedOutputs fps=$lastPublishedFps " +
                         "swapFail=$swapFailures pace=$pacedFrames " +
-                        "preview=$previewSwaps cam=${cameraSources.values.sumOf { it.frames }}" +
-                        " camFail=${cameraSources.values.sumOf { it.updateFailures }} " +
-                        "src=${sourceWidth}x$sourceHeight " +
+                        "preview=$previewSwaps src=${sourceWidth}x$sourceHeight " +
                         "audio=$audioActive ${telemetryText()}",
                 )
                 DiagLog.flush(context)
@@ -1058,6 +1033,9 @@ class RecordingPipeline(
      * Mengubah ukuran kanvas tanpa memulai ulang sesi. Hanya dipakai saat
      * tidak merekam/menyiarkan, supaya berkas MP4 tidak berubah ukuran.
      */
+    /** Penanda lapisan yang sudah dilaporkan setelah kanvas berubah. */
+    private val layerDiagLogged = HashSet<String>()
+
     fun updateCanvas(width: Int, height: Int) {
         glHandler.post {
             if (width <= 0 || height <= 0) return@post
@@ -1072,7 +1050,11 @@ class RecordingPipeline(
             // tidak melakukannya dua kali.
             com.rout.air.data.scene.SceneManager.rescaleCanvas(oldWidth, oldHeight, width, height)
             com.rout.air.data.settings.SettingsStore(context).saveSceneCanvas(width, height)
-            diag("kanvas: diperbarui ${oldWidth}x$oldHeight -> ${width}x$height")
+            layerDiagLogged.clear()
+            diag(
+                "kanvas: diperbarui ${oldWidth}x$oldHeight -> ${width}x$height " +
+                    "layer=${SceneManager.current().activeScene()?.items?.size ?: 0}",
+            )
         }
     }
 
@@ -1650,16 +1632,18 @@ class RecordingPipeline(
                 }
 
                 SourceType.Camera -> {
-                    val camera = ensureCamera(source) ?: continue
-                    SourceMetrics.report(source.id, camera.visualWidth, camera.visualHeight)
-                    diag("kamera: layer src=${source.id} raw=${camera.width}x${camera.height} visual=${camera.visualWidth}x${camera.visualHeight} setelan=${source.settings.width}x${source.settings.height}")
+                    val stream = ensureStream(source) ?: continue
+                    // Jangan tampilkan layer sebelum ada frame; stream tetap
+                    // hidup dan akan dilaporkan saat frame pertama tiba.
+                    if (stream.width <= 0 || stream.height <= 0) continue
+                    val streamWidth = stream.width
+                    val streamHeight = stream.height
+                    SourceMetrics.report(source.id, streamWidth, streamHeight)
                     layers += RenderLayer(
                         type = SourceType.Camera,
-                        textureId = camera.textureId,
-                        // Ukuran intrinsik = ukuran visual (setelah rotasi),
-                        // seperti obs_source_get_width/height di OBS.
-                        naturalWidth = camera.visualWidth.coerceAtLeast(1),
-                        naturalHeight = camera.visualHeight.coerceAtLeast(1),
+                        textureId = stream.textureId,
+                        naturalWidth = streamWidth.coerceAtLeast(1),
+                        naturalHeight = streamHeight.coerceAtLeast(1),
                         transform = transform,
                         crop = item.crop,
                         colorArgb = 0,
@@ -1672,7 +1656,7 @@ class RecordingPipeline(
                         boundsHeight = source.settings.boundsHeight,
                         boundsAlign = source.settings.boundsAlign,
                         cropToBounds = source.settings.cropToBounds,
-                        camera = camera,
+                        stream = stream,
                     )
                 }
 
@@ -2009,212 +1993,152 @@ class RecordingPipeline(
         var webView: WebView? = null
     }
 
-    /** Kamera untuk sumber ini; dibuat sekali lalu dipakai ulang. */
-    private fun ensureCamera(source: SceneSource): CameraTexture? {
-        val existing = cameraSources[source.id]
-        if (existing != null &&
-            existing.facing == source.settings.cameraFacing &&
-            existing.targetHeight == source.settings.cameraHeight &&
-            existing.cameraId == source.settings.cameraId
+    /** Stream kamera MJPEG dari perangkat lain; dibuat saat URL tersedia. */
+    private fun ensureStream(source: SceneSource): StreamTexture? {
+        val url = source.settings.cameraUrl?.trim().orEmpty()
+        if (url.isBlank()) return null
+        val connectToken = source.settings.cameraConnectToken
+        val existing = streamSources[source.id]
+        if (existing != null && existing.url == url &&
+            existing.connectToken == connectToken
         ) {
-            updateCameraControls(existing, source.settings)
             return existing
         }
-        if (existing != null) releaseCamera(source.id)
-
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            diag("kamera: izin belum diberikan")
-            return null
-        }
-        val manager = context.getSystemService(CameraManager::class.java) ?: return null
-        val id = CameraSizing.cameraIdFor(
-            manager,
-            source.settings.cameraFacing,
-            source.settings.cameraId,
-        ) ?: return null
-        val characteristics = runCatching { manager.getCameraCharacteristics(id) }.getOrNull()
-            ?: return null
-        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: return null
-        val sizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
-        if (sizes.isEmpty()) return null
-
-        // Ukuran intrinsik sumber mengikuti OBS: tekstur diputar oleh
-        // getTransformMatrix, jadi dasar gambar adalah ukuran setelah rotasi.
-        val rotated = CameraSizing.isRotated(characteristics, CameraSizing.displayRotation(context))
-        // Pilih resolusi kamera yang paling dekat dengan orientasi kanvas,
-        // bukan kotak sumber: kotak sumber justru mengikuti hasilnya.
-        val canvasW = config.width.coerceAtLeast(1)
-        val canvasH = config.height.coerceAtLeast(1)
-        val targetAspect = if (rotated) {
-            canvasH.toFloat() / canvasW
-        } else {
-            canvasW.toFloat() / canvasH
-        }
-        val chosen = CameraSizing.pickTextureSize(
-            sizes,
-            targetAspect,
-            source.settings.cameraHeight,
-        ) ?: return null
-        val visualWidth = if (rotated) chosen.height else chosen.width
-        val visualHeight = if (rotated) chosen.width else chosen.height
-
-        // Ukuran sumber berubah (mis. 1280x720 -> 1080x1920). Seperti OBS,
-        // skala item dibiarkan; kotak sumber mengikuti ukuran intrinsik baru.
-        if (source.settings.width != visualWidth ||
-            source.settings.height != visualHeight
-        ) {
-            diag(
-                "kamera: intrinsik ${source.settings.width}x${source.settings.height} -> " +
-                    "$visualWidth x $visualHeight (rotated=$rotated)",
-            )
-            val collection = SceneManager.current()
-            val item = collection.scenes.flatMap { it.items }
-                .firstOrNull { it.sourceId == source.id }
-            if (item != null) {
-                val newSource = source.copy(
-                    settings = source.settings.copy(
-                        width = visualWidth,
-                        height = visualHeight,
-                    ),
-                )
-                SceneManager.update(collection.updateSource(newSource))
-            }
-        }
-        SourceMetrics.report(source.id, visualWidth, visualHeight)
+        if (existing != null) releaseStream(source.id)
 
         val texture = GlUtil.createExternalTexture()
         val surfaceTexture = SurfaceTexture(texture).apply {
-            setDefaultBufferSize(chosen.width, chosen.height)
+            // Ukuran awal wajib > 0 agar MediaCodec punya surface valid.
+            setDefaultBufferSize(1280, 720)
         }
         val surface = Surface(surfaceTexture)
-        val entry = CameraTexture(
-            textureId = texture,
-            surfaceTexture = surfaceTexture,
-            surface = surface,
-            width = chosen.width,
-            height = chosen.height,
-            visualWidth = visualWidth,
-            visualHeight = visualHeight,
-            facing = source.settings.cameraFacing,
-            targetHeight = source.settings.cameraHeight,
-            cameraId = source.settings.cameraId,
-        )
-        surfaceTexture.setOnFrameAvailableListener({
-            // Perbarui tekstur di thread callback supaya gambar tidak berhenti
-            // walau thread pratinjau sibuk; drawCamera hanya memakai hasilnya.
-            val ok = runCatching { surfaceTexture.updateTexImage() }.isSuccess
-            if (ok) {
-                entry.frames++
-                runCatching { surfaceTexture.getTransformMatrix(entry.texMatrix) }
-            } else {
-                entry.updateFailures++
-            }
-            entry.frameAvailable = true
-        }, cameraHandler)
-        cameraSources[source.id] = entry
-
-        runCatching {
-            manager.openCamera(id, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    entry.device = device
-                    entry.sensorRect = characteristics.get(
-                        CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE,
-                    )
-                    entry.maxZoom = characteristics.get(
-                        CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM,
-                    ) ?: 1f
-                    device.createCaptureSession(
-                        listOf(surface),
-                        object : CameraCaptureSession.StateCallback() {
-                            override fun onConfigured(session: CameraCaptureSession) {
-                                entry.session = session
-                                entry.zoom = source.settings.cameraZoom
-                                entry.torch = source.settings.cameraTorch
-                                refreshCameraRequest(entry)
-                            }
-
-                            override fun onConfigureFailed(session: CameraCaptureSession) {
-                                diag("kamera: sesi gagal dikonfigurasi")
-                            }
-                        },
-                        cameraHandler,
-                    )
-                }
-
-                override fun onDisconnected(device: CameraDevice) {
-                    diag("kamera: terputus")
-                    entry.device = null
-                    device.close()
-                }
-
-                override fun onError(device: CameraDevice, error: Int) {
-                    val name = when (error) {
-                        1 -> "IN_USE"
-                        2 -> "MAX_CAMERAS_IN_USE"
-                        3 -> "DISABLED"
-                        4 -> "DEVICE"
-                        5 -> "SERVICE"
-                        else -> "UNKNOWN"
+        val entry = StreamTexture(texture, url, connectToken, surfaceTexture, surface)
+        val sourceId = source.id
+        CameraStreamStatus.report(sourceId, CameraStreamState.Connecting)
+        entry.decoder = runCatching {
+            H264Decoder(
+                surface = surface,
+                onSize = { width, height ->
+                    if (!entry.released && width > 0 && height > 0) {
+                        entry.width = width
+                        entry.height = height
+                        SourceMetrics.report(sourceId, width, height)
+                        persistStreamSize(sourceId, width, height)
+                        CameraStreamStatus.report(
+                            sourceId,
+                            CameraStreamState.Streaming(width, height),
+                        )
+                        diag("kamera: stream $sourceId ${width}x$height")
                     }
-                    diag("kamera: error $error ($name)")
-                    entry.device = null
-                    device.close()
+                },
+                onError = { message ->
+                    CameraStreamStatus.report(sourceId, CameraStreamState.Error(message))
+                    diag("kamera: decode $sourceId: $message")
+                },
+                onLog = { message -> diag("kamera: dec $sourceId $message") },
+            )
+        }.getOrElse { error ->
+            diag("kamera: decoder gagal (${error.message})")
+            runCatching { surface.release() }
+            runCatching { surfaceTexture.release() }
+            runCatching { GLES20.glDeleteTextures(1, intArrayOf(texture), 0) }
+            return null
+        }
+        entry.receiver = H264Receiver(
+            url = url,
+            onNal = { nal -> entry.decoder?.queue(nal) },
+            onLog = { message -> diag("kamera: rc $sourceId $message") },
+            onEvent = { event ->
+                val state = when (event) {
+                    H264Receiver.Event.Connecting -> CameraStreamState.Connecting
+                    is H264Receiver.Event.Connected ->
+                        CameraStreamState.Connected(event.host, event.port)
+                    is H264Receiver.Event.Error -> CameraStreamState.Error(event.message)
+                    H264Receiver.Event.Disconnected -> CameraStreamState.Disconnected
                 }
-            }, cameraHandler)
-        }.onFailure { diag("kamera: gagal dibuka (${it.message})") }
-
-        diag("kamera: ${chosen.width}x${chosen.height} id=$id")
+                CameraStreamStatus.report(sourceId, state)
+                diag("kamera: stream $sourceId $state")
+            },
+        )
+        entry.receiver?.start()
+        streamSources[source.id] = entry
+        diag("kamera: stream $url")
         return entry
     }
 
-    /** Menerapkan zoom/senter tanpa membuat ulang sesi kamera. */
-    private fun updateCameraControls(entry: CameraTexture, settings: SourceSettings) {
-        val zoom = settings.cameraZoom.coerceIn(1f, entry.maxZoom.coerceAtLeast(1f))
-        if (zoom == entry.zoom && settings.cameraTorch == entry.torch) return
-        entry.zoom = zoom
-        entry.torch = settings.cameraTorch
-        refreshCameraRequest(entry)
+    /** Simpan resolusi stream ke sumber supaya ukuran bertahan. */
+    private fun persistStreamSize(sourceId: String, width: Int, height: Int) {
+        val current = SceneManager.current().source(sourceId) ?: return
+        if (current.settings.width == width && current.settings.height == height) return
+        mainHandler.post {
+            val latest = SceneManager.current()
+            val src = latest.source(sourceId) ?: return@post
+            SceneManager.update(
+                latest.updateSource(
+                    src.copy(
+                        settings = src.settings.copy(width = width, height = height),
+                    ),
+                ),
+            )
+        }
     }
 
-    /** Menyusun ulang repeating request sesuai zoom dan senter saat ini. */
-    private fun refreshCameraRequest(entry: CameraTexture) {
-        cameraHandler.post {
-            val device = entry.device ?: return@post
-            val session = entry.session ?: return@post
-            runCatching {
-                val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                    addTarget(entry.surface)
-                    set(
-                        CaptureRequest.CONTROL_AF_MODE,
-                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE,
-                    )
-                    val rect = entry.sensorRect
-                    if (rect != null && entry.zoom > 1.001f) {
-                        val cropWidth = (rect.width() / entry.zoom).toInt().coerceAtLeast(2)
-                        val cropHeight = (rect.height() / entry.zoom).toInt().coerceAtLeast(2)
-                        val cx = rect.centerX()
-                        val cy = rect.centerY()
-                        set(
-                            CaptureRequest.SCALER_CROP_REGION,
-                            Rect(
-                                cx - cropWidth / 2,
-                                cy - cropHeight / 2,
-                                cx + cropWidth / 2,
-                                cy + cropHeight / 2,
-                            ),
-                        )
-                    }
-                    if (entry.torch) {
-                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                        set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH)
-                    }
-                }
-                session.setRepeatingRequest(request.build(), null, cameraHandler)
-            }.onFailure { diag("kamera: kontrol gagal (${it.message})") }
+    /** Unggah frame terbaru ke tekstur dan gambar ke kanvas. */
+    private fun drawStream(
+        painter: GlCompositor,
+        stream: StreamTexture,
+        layer: RenderLayer,
+        left: Float,
+        bottom: Float,
+        width: Float,
+        height: Float,
+    ) {
+        // Ambil frame terbaru dari dekoder, lalu gambar sebagai tekstur OES.
+        runCatching { stream.surfaceTexture.updateTexImage() }
+        runCatching { stream.surfaceTexture.getTransformMatrix(stream.texMatrix) }
+        if (!stream.matrixLogged) {
+            stream.matrixLogged = true
+            // Matriks SurfaceTexture menjelaskan arah flip/crop tekstur; berguna
+            // saat memeriksa crop sumber kamera.
+            diag("kamera: matriks ${layer.sourceId} ${stream.texMatrix.joinToString(",") { "%.3f".format(it) }}")
         }
+        val crop = layer.crop
+        painter.drawExternal(
+            textureId = stream.textureId,
+            texMatrix = stream.texMatrix,
+            left = left,
+            bottom = bottom,
+            width = width,
+            height = height,
+            rotation = layer.transform.rotation,
+            cropLeft = crop.left,
+            cropTop = crop.top,
+            cropRight = crop.right,
+            cropBottom = crop.bottom,
+            flipH = layer.transform.flipH,
+            flipV = layer.transform.flipV,
+            blend = layer.blend,
+            opacity = layer.opacity,
+            filters = layer.filters,
+        )
+    }
+
+    private fun releaseStream(sourceId: String) {
+        val entry = streamSources.remove(sourceId) ?: return
+        entry.released = true
+        entry.receiver?.stop()
+        entry.receiver = null
+        entry.decoder?.stop()
+        entry.decoder = null
+        runCatching { entry.surface.release() }
+        runCatching { entry.surfaceTexture.release() }
+        runCatching { GLES20.glDeleteTextures(1, intArrayOf(entry.textureId), 0) }
+        CameraStreamStatus.clear(sourceId)
+        diag("kamera: stream dilepas $sourceId")
+    }
+
+    private fun releaseAllStreams() {
+        streamSources.keys.toList().forEach { releaseStream(it) }
     }
 
     private fun drawCamera(
@@ -2254,60 +2178,23 @@ class RecordingPipeline(
         }
     }
 
-    private fun releaseCamera(sourceId: String) {
-        val entry = cameraSources.remove(sourceId) ?: return
-        runCatching { entry.session?.close() }
-        entry.session = null
-        runCatching { entry.device?.close() }
-        entry.device = null
-        runCatching { entry.surface.release() }
-        runCatching { entry.surfaceTexture.release() }
-        runCatching { GLES20.glDeleteTextures(1, intArrayOf(entry.textureId), 0) }
-        diag("kamera: dilepas $sourceId")
-    }
-
-    private fun releaseAllCameras() {
-        cameraSources.keys.toList().forEach { releaseCamera(it) }
-    }
-
     /**
-     * Sumber kamera aktif. Objek ini hidup selama sumbernya dipakai dan
-     * menyimpan texture OES, SurfaceTexture, serta sesi Camera2.
+     * Sumber media lokal (MediaPlayer) dengan texture OES. Kamera lokal sudah
+     * dihapus; sumber Kamera kini menerima stream MJPEG lewat [StreamTexture].
      */
     private class CameraTexture(
         val textureId: Int,
         val surfaceTexture: SurfaceTexture,
         val surface: Surface,
-        /** Ukuran tekstur mentah dari kamera (bisa landscape). */
         val width: Int,
         val height: Int,
-        /** Ukuran intrinsik setelah rotasi; ini yang dipakai menggambar. */
-        val visualWidth: Int = width,
-        val visualHeight: Int = height,
-        val facing: Int,
         val mediaPath: String? = null,
-        /** Tinggi kamera yang diminta; berubah berarti sesi dibuat ulang. */
-        val targetHeight: Int = 0,
-        /** Lensa spesifik; berubah berarti sesi dibuat ulang. */
-        val cameraId: String? = null,
     ) {
         val lock = Any()
         val texMatrix = FloatArray(16)
         @Volatile
         var frameAvailable = false
-        @Volatile
-        var frames = 0L
-        @Volatile
-        var updateFailures = 0L
-        var device: CameraDevice? = null
-        var session: CameraCaptureSession? = null
         var player: MediaPlayer? = null
-        // Kontrol kamera
-        var sensorRect: Rect? = null
-        var maxZoom: Float = 1f
-        var zoom: Float = 1f
-        var torch: Boolean = false
-        // Kontrol media
         var prepared = false
         var paused = false
         var speed = 1f
@@ -2315,6 +2202,23 @@ class RecordingPipeline(
         var restartToken = 0
         var seekToken = 0
         var latestSettings: SourceSettings? = null
+    }
+
+    /** Stream H.264 dari HP kamera; decode ke SurfaceTexture (OES). */
+    private class StreamTexture(
+        val textureId: Int,
+        val url: String,
+        val connectToken: Int,
+        val surfaceTexture: SurfaceTexture,
+        val surface: Surface,
+    ) {
+        val texMatrix = FloatArray(16)
+        @Volatile var width = 0
+        @Volatile var height = 0
+        @Volatile var released = false
+        var matrixLogged = false
+        var receiver: H264Receiver? = null
+        var decoder: H264Decoder? = null
     }
 
     /** Video lokal sebagai sumber; diputar berulang tanpa audio. */
@@ -2342,7 +2246,6 @@ class RecordingPipeline(
             surface = surface,
             width = width,
             height = height,
-            facing = 0,
             mediaPath = path,
         )
         entry.latestSettings = source.settings
@@ -2428,8 +2331,12 @@ class RecordingPipeline(
         unused.forEach { sourceId ->
             textureCache.remove(sourceId)?.let { retiredTextures += it.textureId }
         }
-        // Kamera yang tidak lagi dipakai program/pratinjau ikut dilepas.
-        cameraSources.keys.filter { it !in keep }.forEach { releaseCamera(it) }
+        // Stream kamera hanya dilepas bila sumbernya sudah dihapus. Saat
+        // belum ada frame, layer memang kosong sehingga tidak ada di keep.
+        val currentSources = SceneManager.current()
+        streamSources.keys
+            .filter { currentSources.source(it) == null }
+            .forEach { releaseStream(it) }
         mediaSources.keys.filter { it !in keep }.forEach { releaseMedia(it) }
         browserSources.keys.filter { it !in keep }.forEach { releaseBrowser(it) }
         slidePreviousTextures.keys.filter { it !in keep }.forEach { sourceId ->
@@ -2569,7 +2476,7 @@ class RecordingPipeline(
         append('|').append(source.settings.textColor)
         append('|').append(source.settings.width)
         append('|').append(source.settings.height)
-        append('|').append(source.settings.cameraFacing)
+        append('|').append(source.settings.cameraUrl)
         append('|').append(source.settings.imagePaths.joinToString(","))
         append('|').append(source.settings.slideIntervalSec)
         append('|').append(source.settings.slideShuffle)
@@ -2742,6 +2649,20 @@ class RecordingPipeline(
 
         val bottom = canvasHeight - top - drawHeight
 
+        // Setelah kanvas berubah, catat sekali posisi tiap lapisan supaya
+        // ketahuan sumber mana yang berada di luar bingkai.
+        val diagKey = layer.sourceId ?: layer.type.name
+        if (layerDiagLogged.add(diagKey)) {
+            diag(
+                "lapisan ${layer.type} ${layer.sourceId ?: "-"} " +
+                    "n=${layer.naturalWidth}x${layer.naturalHeight} " +
+                    "x=${layer.transform.x.roundToInt()} y=${layer.transform.y.roundToInt()} " +
+                    "rect=${left.roundToInt()},${top.roundToInt()} " +
+                    "${drawWidth.roundToInt()}x${drawHeight.roundToInt()} " +
+                    "canvas=${canvasWidth}x$canvasHeight",
+            )
+        }
+
         when (layer.type) {
             SourceType.Screen -> painter.drawExternal(
                 textureId = layer.textureId,
@@ -2809,7 +2730,12 @@ class RecordingPipeline(
                 }
             }
 
-            SourceType.Camera, SourceType.Media -> {
+            SourceType.Camera -> {
+                val stream = layer.stream ?: return
+                drawStream(painter, stream, layer, left, bottom, drawWidth, drawHeight)
+            }
+
+            SourceType.Media -> {
                 val external = layer.camera ?: return
                 drawCamera(painter, external, layer, left, bottom, drawWidth, drawHeight)
             }
@@ -3190,7 +3116,7 @@ class RecordingPipeline(
         if (owned.isNotEmpty()) {
             runCatching { GLES20.glDeleteTextures(owned.size, owned.toIntArray(), 0) }
         }
-        releaseAllCameras()
+        releaseAllStreams()
         mediaSources.keys.toList().forEach { releaseMedia(it) }
         browserSources.keys.toList().forEach { releaseBrowser(it) }
         slidePreviousTextures.values.forEach { retiredTextures += it }
@@ -3529,7 +3455,10 @@ class RecordingPipeline(
         val sourceId: String? = null,
         val screenDisplay: com.rout.air.core.model.ScreenDisplay? = null,
         val filters: com.rout.air.engine.filter.FilterState = com.rout.air.engine.filter.FilterState.NONE,
+        /** Media lokal (MediaPlayer). */
         val camera: CameraTexture? = null,
+        /** Stream kamera MJPEG dari Wi-Fi lokal. */
+        val stream: StreamTexture? = null,
         val browser: BrowserTexture? = null,
         /** Tekstur slide sebelumnya untuk crossfade; 0 = tanpa fade. */
         val fadeTextureId: Int = 0,

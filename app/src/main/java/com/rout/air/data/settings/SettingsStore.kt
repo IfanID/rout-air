@@ -202,6 +202,13 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    /** Rotasi layar (Surface.ROTATION_*) saat kanvas scene disimpan. */
+    fun saveSceneRotation(rotation: Int) {
+        prefs.edit().putInt(KEY_SCENE_CANVAS_ROTATION, rotation).apply()
+    }
+
+    fun loadSceneRotation(): Int = prefs.getInt(KEY_SCENE_CANVAS_ROTATION, -1)
+
     fun loadLive(): LiveConfig = LiveConfig(
         service = com.rout.air.core.model.LiveService.fromName(prefs.getString(KEY_LIVE_SERVICE, null)),
         serverUrl = prefs.getString(KEY_LIVE_URL, "").orEmpty(),
@@ -249,6 +256,7 @@ class SettingsStore(context: Context) {
         const val KEY_LIVE_ACCOUNT = "live_account_linked"
         const val KEY_SCENE_CANVAS_W = "scene_canvas_width"
         const val KEY_SCENE_CANVAS_H = "scene_canvas_height"
+        const val KEY_SCENE_CANVAS_ROTATION = "scene_canvas_rotation"
 
         const val KEY_OUTPUT_SCALE = "output_scale_percent"
         const val KEY_OUTPUT_WIDTH = "output_width"

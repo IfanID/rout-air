@@ -1,11 +1,19 @@
 package com.rout.air.data.scene
 
 import android.content.Context
+import android.hardware.display.DisplayManager
+import android.view.Display
+import android.view.Surface
 import com.rout.air.core.model.SceneCollection
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.CopyOnWriteArraySet
+import kotlin.math.roundToInt
+import com.rout.air.core.model.Align
 import com.rout.air.core.model.Scene
+import com.rout.air.core.model.SceneItem
+import com.rout.air.core.model.ScreenDisplay
+import com.rout.air.core.model.SourceType
 import com.rout.air.core.model.newId
 import kotlinx.coroutines.flow.asStateFlow
 import com.rout.air.data.logging.DiagLog
@@ -41,6 +49,18 @@ object SceneManager {
     @Volatile
     var activeCollectionId: String = SceneStore.DEFAULT_ID
         private set
+
+    /**
+     * Ukuran kanvas yang benar-benar dipakai koleksi saat ini. Dipakai sebagai
+     * acuan saat menyesuaikan scene, supaya pemanggil dengan ukuran lama yang
+     * basi tidak menggeser item dua kali.
+     */
+    @Volatile
+    private var layoutCanvas: Pair<Int, Int>? = null
+
+    /** Rotasi layar yang sesuai dengan [layoutCanvas]. */
+    @Volatile
+    private var layoutRotation: Int = -1
 
     fun attach(context: Context) {
         if (store != null) return
@@ -97,56 +117,158 @@ object SceneManager {
         programCollection = loaded
         _state.value = loaded
         _program.value = loaded
+        layoutCanvas = settings.loadSceneCanvas()
+        layoutRotation = settings.loadSceneRotation()
+    }
+
+    /**
+     * Pastikan scene mengikuti ukuran kanvas aktif.
+     *
+     * Dipakai UI saat tidak ada sesi: acuan diambil dari [layoutCanvas], bukan
+     * dari pemanggil, sehingga rotasi beruntun tidak pernah menggeser item
+     * dua kali.
+     */
+    fun ensureCanvas(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        val from = layoutCanvas ?: return
+        if (from.first == width && from.second == height) return
+        rescaleCanvas(from.first, from.second, width, height)
     }
 
     /**
      * Menyesuaikan seluruh item ketika ukuran kanvas berubah.
      *
-     * Tanpa ini, item yang tadinya di tengah kanvas portrait bisa berada di
-     * luar kanvas landscape sehingga hasilnya hitam. Posisi diskalakan
-     * proporsional; sumber Layar dengan template dihitung ulang kotaknya.
+     * Kanvas portrait dan landscape adalah layar yang sama, hanya diputar.
+     * Jadi posisi item **diputar** mengikuti arah putaran layar (bukan
+     * diskalakan): ukuran tetap, jarak ke tepi layar tetap, dan tidak ada
+     * sumber yang keluar bingkai.
      */
     fun rescaleCanvas(fromWidth: Int, fromHeight: Int, toWidth: Int, toHeight: Int) {
         if (fromWidth <= 0 || fromHeight <= 0 || toWidth <= 0 || toHeight <= 0) return
         val current = collection ?: return
-        if (fromWidth == toWidth && fromHeight == toHeight) return
-        val factorX = toWidth.toFloat() / fromWidth
-        val factorY = toHeight.toFloat() / fromHeight
+        // Abaikan ukuran asal yang basi: pakai kanvas yang benar-benar dipakai.
+        val reference = layoutCanvas
+        val fromW: Int
+        val fromH: Int
+        if (reference != null && reference != (fromWidth to fromHeight)) {
+            DiagLog.line(
+                "kanvas: acuan disesuaikan ${fromWidth}x$fromHeight -> " +
+                    "${reference.first}x${reference.second}",
+            )
+            fromW = reference.first
+            fromH = reference.second
+        } else {
+            fromW = fromWidth
+            fromH = fromHeight
+        }
+        if (fromW == toWidth && fromH == toHeight) {
+            layoutCanvas = toWidth to toHeight
+            return
+        }
+
+        val toRotation = currentRotation()
+        // Surface.ROTATION_* berupa indeks 0..3; ubah ke derajat.
+        // 90 derajat = perangkat diputar berlawanan jarum jam.
+        val delta = if (layoutRotation >= 0 && toRotation >= 0) {
+            (((toRotation - layoutRotation) % 4 + 4) % 4) * 90
+        } else {
+            -1
+        }
+        val factorX = toWidth.toFloat() / fromW
+        val factorY = toHeight.toFloat() / fromH
+        DiagLog.line(
+            "scene: putar ${fromW}x$fromH -> ${toWidth}x$toHeight " +
+                "arah=${if (delta < 0) "?" else delta.toString()}",
+        )
 
         val next = current.copy(
             scenes = current.scenes.map { scene ->
                 scene.copy(
                     items = scene.items.map { item ->
-                        val source = current.sources.firstOrNull { it.id == item.sourceId }
-                        val display = source?.settings?.screenDisplay
-                        val scale = if (source?.type == com.rout.air.core.model.SourceType.Screen &&
-                            display != null &&
-                            display != com.rout.air.core.model.ScreenDisplay.Auto
-                        ) {
-                            val base = toWidth.toFloat() / toHeight.toFloat()
-                            val aspect = when (display) {
-                                com.rout.air.core.model.ScreenDisplay.Landscape ->
-                                    if (base >= 1f) base else 1f / base
-
-                                com.rout.air.core.model.ScreenDisplay.Portrait ->
-                                    if (base <= 1f) base else 1f / base
-
-                                com.rout.air.core.model.ScreenDisplay.Auto -> base
-                            }
-                            val boxWidth = minOf(toWidth.toFloat(), toHeight * aspect)
-                            val boxHeight = boxWidth / aspect
-                            boxWidth / toWidth to boxHeight / toHeight
+                        val source = current.source(item.sourceId)
+                        // Ukuran kotak sebelum diputar.
+                        val boxWidth: Float
+                        val boxHeight: Float
+                        if (source?.type == SourceType.Screen) {
+                            boxWidth = fromW.toFloat()
+                            boxHeight = fromH.toFloat()
+                        } else if (source != null) {
+                            val size = itemDisplaySize(item, source, fromW, fromH)
+                            boxWidth = size.first
+                            boxHeight = size.second
                         } else {
-                            item.transform.scaleX to item.transform.scaleY
+                            boxWidth = 0f
+                            boxHeight = 0f
                         }
-                        item.copy(
-                            transform = item.transform.copy(
-                                x = item.transform.x * factorX,
-                                y = item.transform.y * factorY,
-                                scaleX = scale.first,
-                                scaleY = scale.second,
-                            ),
+                        val (anchorX, anchorY) = anchorFraction(item.transform.align)
+                        val centerX = item.transform.x - anchorX * boxWidth + boxWidth / 2f
+                        val centerY = item.transform.y - anchorY * boxHeight + boxHeight / 2f
+                        val (newCenterX, newCenterY) = rotateCenter(
+                            centerX,
+                            centerY,
+                            fromW,
+                            fromH,
+                            delta,
+                            factorX,
+                            factorY,
                         )
+
+                        val display = source?.settings?.screenDisplay
+                        val transform = when {
+                            source?.type == SourceType.Screen &&
+                                display != null && display != ScreenDisplay.Auto -> {
+                                // Template layar: kotak dihitung ulang untuk
+                                // orientasi baru, posisi mengikuti pusat.
+                                val base = toWidth.toFloat() / toHeight.toFloat()
+                                val aspect = when (display) {
+                                    ScreenDisplay.Landscape ->
+                                        if (base >= 1f) base else 1f / base
+
+                                    ScreenDisplay.Portrait ->
+                                        if (base <= 1f) base else 1f / base
+
+                                    ScreenDisplay.Auto -> base
+                                }
+                                val boxW = minOf(toWidth.toFloat(), toHeight * aspect)
+                                val boxH = boxW / aspect
+                                item.transform.copy(
+                                    x = newCenterX - boxW / 2f + anchorX * boxW,
+                                    y = newCenterY - boxH / 2f + anchorY * boxH,
+                                    scaleX = boxW / toWidth,
+                                    scaleY = boxH / toHeight,
+                                )
+                            }
+
+                            source?.type == SourceType.Screen -> {
+                                // Layar otomatis: ukuran mengikuti kanvas baru.
+                                item.transform.copy(
+                                    x = newCenterX - toWidth / 2f + anchorX * toWidth,
+                                    y = newCenterY - toHeight / 2f + anchorY * toHeight,
+                                )
+                            }
+
+                            boxWidth <= 0f || boxHeight <= 0f -> item.transform
+
+                            else -> keepInside(
+                                item.transform,
+                                boxWidth,
+                                boxHeight,
+                                newCenterX - boxWidth / 2f + anchorX * boxWidth,
+                                newCenterY - boxHeight / 2f + anchorY * boxHeight,
+                                toWidth,
+                                toHeight,
+                            )
+                        }
+                        if (transform != item.transform) {
+                            DiagLog.line(
+                                "scene:   ${source?.name ?: item.sourceId} " +
+                                    "x=${"%.0f".format(item.transform.x)}->" +
+                                    "${"%.0f".format(transform.x)} y=" +
+                                    "${"%.0f".format(item.transform.y)}->" +
+                                    "${"%.0f".format(transform.y)}",
+                            )
+                        }
+                        item.copy(transform = transform)
                     },
                 )
             },
@@ -157,8 +279,158 @@ object SceneManager {
         if (programBeforeScreensaver == null) {
             programCollection = next
             _program.value = next
+            // Pipeline menyusun ulang layer program dari snapshot ini. Tanpa
+            // pemberitahuan, layer lama (posisi sebelum rotasi) terus dipakai
+            // sehingga sumber tampak hilang.
+            listeners.forEach { it(next) }
+        }
+        editListeners.forEach { it(next) }
+        layoutCanvas = toWidth to toHeight
+        if (toRotation >= 0) {
+            layoutRotation = toRotation
+            appContext?.let { SettingsStore(it).saveSceneRotation(toRotation) }
         }
         store?.save(next)
+    }
+
+    /**
+     * Memutar satu titik mengikuti putaran layar. [delta] 90 berarti perangkat
+     * diputar berlawanan jarum jam, 270 searah jarum jam.
+     */
+    private fun rotateCenter(
+        x: Float,
+        y: Float,
+        fromWidth: Int,
+        fromHeight: Int,
+        delta: Int,
+        factorX: Float,
+        factorY: Float,
+    ): Pair<Float, Float> = when (delta) {
+        90 -> y to (fromWidth - x)
+        180 -> (fromWidth - x) to (fromHeight - y)
+        270 -> (fromHeight - y) to x
+        // Arah tidak diketahui: pakai proporsi kanvas sebagai cadangan.
+        else -> (x * factorX) to (y * factorY)
+    }
+
+    /** Rotasi layar saat ini (Surface.ROTATION_*), -1 bila tidak diketahui. */
+    private fun currentRotation(): Int = runCatching {
+        val context = appContext ?: return -1
+        val manager = context.getSystemService(DisplayManager::class.java) ?: return -1
+        manager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
+    }.getOrDefault(-1)
+
+    /** Ukuran tampil item sebelum crop dalam koordinat kanvas. */
+    private fun itemDisplaySize(
+        item: SceneItem,
+        source: com.rout.air.core.model.SceneSource,
+        canvasWidth: Int,
+        canvasHeight: Int,
+    ): Pair<Float, Float> {
+        if (source.type == SourceType.Screen) {
+            return canvasWidth.toFloat() to canvasHeight.toFloat()
+        }
+        // Ukuran nyata dari pipeline lebih akurat untuk kamera/media/browser;
+        // ukuran tersimpan dipakai bila sumber belum pernah tampil.
+        val reported = com.rout.air.core.model.SourceMetrics.sizes.value[source.id]
+        val naturalWidth = (reported?.first ?: source.settings.width).toFloat()
+        val naturalHeight = (reported?.second ?: source.settings.height).toFloat()
+        if (naturalWidth <= 0f || naturalHeight <= 0f) return 0f to 0f
+        val crop = item.crop
+        val width = naturalWidth * (1f - crop.left - crop.right).coerceIn(0.02f, 1f) *
+            item.transform.scaleX
+        val height = naturalHeight * (1f - crop.top - crop.bottom).coerceIn(0.02f, 1f) *
+            item.transform.scaleY
+        return width to height
+    }
+
+    /**
+     * Posisi item yang dijamin tetap terlihat di kanvas: kotak yang lebih kecil
+     * dari kanvas dipaksa seluruhnya masuk, kotak yang lebih besar dibiarkan
+     * menutupi kanvas (mis. latar yang diperbesar).
+     */
+    private fun keepInside(
+        transform: com.rout.air.core.model.Transform,
+        width: Float,
+        height: Float,
+        x: Float,
+        y: Float,
+        canvasWidth: Int,
+        canvasHeight: Int,
+    ): com.rout.air.core.model.Transform {
+        val (anchorX, anchorY) = anchorFraction(transform.align)
+        val left = clampSide(x - anchorX * width, width, canvasWidth)
+        val top = clampSide(y - anchorY * height, height, canvasHeight)
+        return transform.copy(
+            x = left + anchorX * width,
+            y = top + anchorY * height,
+        )
+    }
+
+    private fun clampSide(value: Float, size: Float, canvas: Int): Float =
+        if (size <= canvas) {
+            value.coerceIn(0f, canvas - size)
+        } else {
+            value.coerceIn(canvas - size, 0f)
+        }
+
+    /**
+     * Menjepit posisi semua item agar tidak ada sumber yang berada di luar
+     * kanvas. Dipanggil setiap koleksi diperbarui (geser, skala, slider).
+     */
+    private fun clampToCanvas(
+        next: SceneCollection,
+        width: Int,
+        height: Int,
+    ): SceneCollection {
+        if (width <= 0 || height <= 0) return next
+        var changed = false
+        val scenes = next.scenes.map { scene ->
+            var sceneChanged = false
+            val items = scene.items.map { item ->
+                val source = next.source(item.sourceId)
+                if (source == null || source.type == SourceType.Screen) return@map item
+                val (itemWidth, itemHeight) = itemDisplaySize(item, source, width, height)
+                if (itemWidth <= 0f || itemHeight <= 0f) return@map item
+                val bounded = keepInside(
+                    item.transform,
+                    itemWidth,
+                    itemHeight,
+                    item.transform.x,
+                    item.transform.y,
+                    width,
+                    height,
+                )
+                val same = kotlin.math.abs(bounded.x - item.transform.x) < 0.01f &&
+                    kotlin.math.abs(bounded.y - item.transform.y) < 0.01f
+                if (same) {
+                    item
+                } else {
+                    sceneChanged = true
+                    item.copy(transform = bounded)
+                }
+            }
+            if (sceneChanged) {
+                changed = true
+                scene.copy(items = items)
+            } else {
+                scene
+            }
+        }
+        return if (changed) next.copy(scenes = scenes) else next
+    }
+
+    /** Titik jangkar item sebagai fraksi 0..1 dari kotaknya. */
+    private fun anchorFraction(align: Align): Pair<Float, Float> = when (align) {
+        Align.TopLeft -> 0f to 0f
+        Align.Top -> 0.5f to 0f
+        Align.TopRight -> 1f to 0f
+        Align.Left -> 0f to 0.5f
+        Align.Center -> 0.5f to 0.5f
+        Align.Right -> 1f to 0.5f
+        Align.BottomLeft -> 0f to 1f
+        Align.Bottom -> 0.5f to 1f
+        Align.BottomRight -> 1f to 1f
     }
 
     fun current(): SceneCollection = collection ?: SceneCollection.default(
@@ -263,9 +535,15 @@ object SceneManager {
         // Gestur mengirim salinan yang sama berkali-kali; abaikan agar
         // listener pipeline dan UI tidak dijalankan tanpa perubahan nyata.
         if (collection == next) return
-        collection = next
-        _state.value = next
-        editListeners.forEach { it(next) }
+        val canvas = layoutCanvas
+        val bounded = if (canvas != null) {
+            clampToCanvas(next, canvas.first, canvas.second)
+        } else {
+            next
+        }
+        collection = bounded
+        _state.value = bounded
+        editListeners.forEach { it(bounded) }
     }
 
     fun save() {

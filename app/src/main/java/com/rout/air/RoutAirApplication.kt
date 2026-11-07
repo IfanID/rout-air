@@ -30,6 +30,8 @@ class RoutAirApplication : Application() {
         // Satu berkas log per sesi aplikasi; ditimpa setiap aplikasi dibuka.
         DiagLog.startSession(this)
         installAnrWatchdog()
+        // Catat penyebab proses mati sesi sebelumnya (termasuk crash native).
+        Thread { com.rout.air.data.logging.ExitReasons.record(this) }.start()
         // File pending dari sesi yang mati tanpa menutup MP4 tidak terlihat di
         // galeri; bersihkan di latar belakang agar tidak menumpuk.
         Thread({ runCatching { OutputTarget.cleanupOrphans(this) } }, "rout-cleanup").start()

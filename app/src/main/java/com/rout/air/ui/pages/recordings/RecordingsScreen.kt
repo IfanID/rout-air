@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -64,6 +69,7 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
     var items by remember { mutableStateOf<List<RecordingItem>>(emptyList()) }
     var refreshKey by remember { mutableIntStateOf(0) }
     var pendingDelete by remember { mutableStateOf<RecordingItem?>(null) }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     LaunchedEffect(refreshKey) {
         items = withContext(Dispatchers.IO) { loadRecordings(context) }
@@ -72,7 +78,10 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(
+                horizontal = if (landscape) 16.dp else 20.dp,
+                vertical = if (landscape) 10.dp else 16.dp,
+            ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
@@ -94,6 +103,22 @@ fun RecordingsScreen(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else if (landscape) {
+            // Landscape: dua kolom supaya daftar rekaman tidak memanjang.
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                gridItems(items, key = { it.uri.toString() }) { item ->
+                    RecordingRow(
+                        item = item,
+                        onOpen = { openRecording(context, item.uri) },
+                        onShare = { shareRecording(context, item.uri) },
+                        onDelete = { pendingDelete = item },
+                    )
+                }
+            }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(items, key = { it.uri.toString() }) { item ->

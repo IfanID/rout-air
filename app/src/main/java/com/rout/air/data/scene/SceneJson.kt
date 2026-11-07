@@ -57,7 +57,8 @@ internal object SceneJson {
                         put("audioDeviceType", s.settings.audioDeviceType)
                         put("audioScoEnabled", s.settings.audioScoEnabled)
                         s.settings.screenDisplay?.let { put("screenDisplay", it.name) }
-                        put("cameraFacing", s.settings.cameraFacing)
+                        s.settings.cameraUrl?.let { put("cameraUrl", it) }
+                        put("cameraConnectToken", s.settings.cameraConnectToken)
                         s.settings.mediaPath?.let { put("mediaPath", it) }
                         s.settings.browserUrl?.let { put("browserUrl", it) }
                         s.settings.groupSceneId?.let { put("groupSceneId", it) }
@@ -156,7 +157,8 @@ internal object SceneJson {
                     audioDeviceName = s.optString("audioDeviceName").takeIf { it.isNotBlank() },
                     audioDeviceType = s.optInt("audioDeviceType", 0),
                     audioScoEnabled = s.optBoolean("audioScoEnabled", false),
-                    cameraFacing = s.optInt("cameraFacing", 0),
+                    cameraUrl = s.optString("cameraUrl").takeIf { it.isNotBlank() },
+                    cameraConnectToken = s.optInt("cameraConnectToken", 0),
                     mediaPath = s.optString("mediaPath").takeIf { it.isNotBlank() },
                     browserUrl = s.optString("browserUrl").takeIf { it.isNotBlank() },
                     groupSceneId = s.optString("groupSceneId").takeIf { it.isNotBlank() },
